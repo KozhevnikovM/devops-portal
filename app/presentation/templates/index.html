@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="space-y-8">
+
+    {# Booking form #}
+    <section class="bg-gray-900 border border-gray-800 rounded-lg p-6">
+        <h2 class="text-sm text-gray-400 uppercase tracking-widest mb-4">New Booking</h2>
+        {% include "partials/booking_form.html" %}
+    </section>
+
+    {# Bookings table #}
+    <section>
+        <h2 class="text-sm text-gray-400 uppercase tracking-widest mb-3">Active Bookings</h2>
+        <div class="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden">
+            <table class="w-full text-sm">
+                <thead class="border-b border-gray-800">
+                    <tr class="text-gray-500 text-xs uppercase tracking-wider">
+                        <th class="text-left px-4 py-3">ID</th>
+                        <th class="text-left px-4 py-3">Status</th>
+                        <th class="text-left px-4 py-3">TTL</th>
+                        <th class="text-left px-4 py-3">Expires</th>
+                        <th class="text-left px-4 py-3">IP Address</th>
+                    </tr>
+                </thead>
+                <tbody id="bookings-list">
+                    {% for booking in bookings %}
+                        {% include "partials/booking_row.html" %}
+                    {% else %}
+                        <tr id="empty-row">
+                            <td colspan="5" class="px-4 py-6 text-center text-gray-600">No bookings yet.</td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </section>
+
+</div>
+{% endblock %}

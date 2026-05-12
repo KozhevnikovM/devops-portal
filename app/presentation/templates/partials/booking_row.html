@@ -1,0 +1,30 @@
+{% set is_terminal = booking.status.value in ('READY', 'FAILED') %}
+<tr
+    id="booking-{{ booking.id }}"
+    class="border-b border-gray-800 last:border-0 hover:bg-gray-800/40 transition-colors"
+    {% if not is_terminal %}
+        hx-ext="sse"
+        sse-connect="/bookings/{{ booking.id }}/status-stream"
+        hx-swap="outerHTML"
+        sse-swap="message"
+    {% endif %}
+>
+    <td class="px-4 py-3 text-gray-400 text-xs">{{ booking.id | string | truncate(8, True, '') }}…</td>
+    <td class="px-4 py-3">
+        <span class="text-xs px-2 py-1 rounded font-semibold status-{{ booking.status.value }}">
+            {% if booking.status.value == 'PROVISIONING' %}
+                <span class="animate-pulse">⬤</span>
+            {% endif %}
+            {{ booking.status.value }}
+        </span>
+    </td>
+    <td class="px-4 py-3 text-gray-400">{{ booking.ttl_hours }}h</td>
+    <td class="px-4 py-3 text-gray-400 text-xs">{{ booking.expires_at.strftime('%Y-%m-%d %H:%M') }} UTC</td>
+    <td class="px-4 py-3 text-gray-300">
+        {% if booking.vm_ip %}
+            <span class="text-green-400">{{ booking.vm_ip }}</span>
+        {% else %}
+            <span class="text-gray-600">—</span>
+        {% endif %}
+    </td>
+</tr>
