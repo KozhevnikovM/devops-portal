@@ -15,7 +15,7 @@ docker compose exec app alembic upgrade head
 DATABASE_URL_SYNC=postgresql+psycopg2://portal:portal@localhost:5432/portal alembic upgrade head
 
 # Install deps for local development
-pip install -e ".[dev]"
+pip install -r requirements-dev.txt
 
 # Run all tests
 pytest tests/

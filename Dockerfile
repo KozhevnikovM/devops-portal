@@ -2,8 +2,13 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-COPY pyproject.toml .
-RUN pip install --no-cache-dir $(python3 -c \
-    "import tomllib; d=tomllib.load(open('pyproject.toml','rb')); print(' '.join(d['project']['dependencies']))")
+ARG PIP_INDEX_URL
+ARG PIP_TRUSTED_HOST
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir \
+    ${PIP_INDEX_URL:+--index-url "${PIP_INDEX_URL}"} \
+    ${PIP_TRUSTED_HOST:+--trusted-host "${PIP_TRUSTED_HOST}"} \
+    -r requirements.txt
 
 COPY . .
