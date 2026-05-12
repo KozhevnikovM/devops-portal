@@ -23,7 +23,7 @@ TERMINAL_STATUSES = {BookingStatus.READY, BookingStatus.FAILED}
 @router.get("/", response_class=HTMLResponse)
 async def index(request: Request, session: AsyncSession = Depends(get_async_session)):
     bookings = await _repo.list_all(session)
-    return templates.TemplateResponse("index.html", {"request": request, "bookings": bookings})
+    return templates.TemplateResponse(request, "index.html", {"bookings": bookings})
 
 
 @router.post("/bookings")
@@ -47,9 +47,7 @@ async def create_booking(
         )
 
     return templates.TemplateResponse(
-        "partials/booking_row.html",
-        {"request": request, "booking": booking},
-        status_code=201,
+        request, "partials/booking_row.html", {"booking": booking}, status_code=201
     )
 
 
@@ -70,7 +68,7 @@ async def booking_status_stream(
                 break
 
             html = templates.get_template("partials/booking_row.html").render(
-                {"request": request, "booking": booking}
+                {"booking": booking}
             )
             yield f"data: {html}\n\n"
 
