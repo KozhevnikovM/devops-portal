@@ -2,7 +2,11 @@
   "permissions": {
     "allow": [
       "Bash(git add *)",
-      "Bash(git commit -m ' *)"
+      "Bash(git commit -m ' *)",
+      "Bash(git commit *)",
+      "Bash(docker compose *)",
+      "Bash(git checkout *)",
+      "Bash(git rm *)"
     ]
   }
 }
