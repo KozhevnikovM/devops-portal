@@ -100,6 +100,7 @@ When a bugfix is complete:
 - Always start a new branch from a fresh main: `git checkout main && git pull && git checkout -b <branch>`.
 - Never force-push to the main branch.
 - Never force-push
+- Never add `Co-Authored-By: Claude` or any AI co-author line to commit messages.
 - Branch naming conventions:
   - Features: `feature/<issue-number>/<short-description>` (e.g. `feature/14/product-group-and-purl`)
   - Bug fixes: `bugfix/<issue-number>/<short-description>` (e.g. `bugfix/13/pypi-missing-licenses`)
