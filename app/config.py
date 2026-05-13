@@ -18,6 +18,8 @@ class Settings(BaseSettings):
     # Terraform / VCD — only required when USE_STUB_TERRAFORM=False
     TF_WORKSPACES_DIR: str = "/tmp/tf-workspaces"
     TF_MODULE_SOURCE: str = "/app/terraform/modules/vapp_vm"
+    TF_APPLY_REFRESH: bool = False
+    TF_APPLY_PARALLELISM: int = 1
     VCD_URL: str = ""
     VCD_VAPP_NAME: str = ""
     VCD_NETWORK_NAME: str = ""

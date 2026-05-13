@@ -122,7 +122,12 @@ class TerraformVcdAdapter:
         self._write_workspace(workspace_dir, config)
 
         await self._run("init", "-no-color", cwd=workspace_dir)
-        await self._run("apply", "-auto-approve", "-no-color", cwd=workspace_dir)
+        await self._run(
+            "apply", "-auto-approve", "-no-color",
+            f"-refresh={str(settings.TF_APPLY_REFRESH).lower()}",
+            f"-parallelism={settings.TF_APPLY_PARALLELISM}",
+            cwd=workspace_dir,
+        )
 
         output_json = await self._run("output", "-json", cwd=workspace_dir)
         outputs = json.loads(output_json)
