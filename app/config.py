@@ -10,6 +10,11 @@ class Settings(BaseSettings):
     USE_STUB_TERRAFORM: bool = True
     DEV_USER_ID: str = "dev-user-00000000"
 
+    # Celery provision task
+    PROVISION_MAX_RETRIES: int = 3
+    PROVISION_RETRY_DELAY: int = 120   # seconds
+    PROVISION_RATE_LIMIT: str = "0.5/m"
+
     # Terraform / VCD — only required when USE_STUB_TERRAFORM=False
     TF_WORKSPACES_DIR: str = "/tmp/tf-workspaces"
     TF_MODULE_SOURCE: str = "/app/terraform/modules/vapp_vm"
