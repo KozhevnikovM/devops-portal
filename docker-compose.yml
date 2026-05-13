@@ -29,6 +29,7 @@ services:
       args:
         PIP_INDEX_URL: ${PIP_INDEX_URL:-}
         PIP_TRUSTED_HOST: ${PIP_TRUSTED_HOST:-}
+        NPM_CONFIG_REGISTRY: ${NPM_CONFIG_REGISTRY:-}
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
     ports:
       - "8000:8000"
@@ -47,6 +48,7 @@ services:
       args:
         PIP_INDEX_URL: ${PIP_INDEX_URL:-}
         PIP_TRUSTED_HOST: ${PIP_TRUSTED_HOST:-}
+        NPM_CONFIG_REGISTRY: ${NPM_CONFIG_REGISTRY:-}
     command: celery -A app.infrastructure.celery_app worker -l info -c 4
     env_file: .env
     volumes:

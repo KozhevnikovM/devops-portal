@@ -1,0 +1,9 @@
+{
+  "private": true,
+  "devDependencies": {
+    "tailwindcss": "^3.4.0"
+  },
+  "dependencies": {
+    "htmx.org": "1.9.12"
+  }
+}
