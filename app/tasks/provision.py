@@ -22,7 +22,12 @@ repo = BookingRepository()
 terraform = StubTerraformAdapter() if settings.USE_STUB_TERRAFORM else TerraformVcdAdapter()
 
 
-@celery_app.task(bind=True, max_retries=3, default_retry_delay=10)
+@celery_app.task(
+    bind=True,
+    max_retries=settings.PROVISION_MAX_RETRIES,
+    default_retry_delay=settings.PROVISION_RETRY_DELAY,
+    rate_limit=settings.PROVISION_RATE_LIMIT,
+)
 def provision_vm_task(self, booking_id: str) -> None:
     booking_uuid = UUID(booking_id)
     workspace_id = f"booking-{booking_id}"

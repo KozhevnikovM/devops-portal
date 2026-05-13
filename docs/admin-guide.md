@@ -46,6 +46,9 @@ The portal is now available at `http://<host>:8000`.
 | `VCD_API_TOKEN` | When real adapter | API refresh token — enables API token auth when set |
 | `VCD_USER` | When real adapter | Username — used when `VCD_API_TOKEN` is empty |
 | `VCD_PASSWORD` | When real adapter | Password — used when `VCD_API_TOKEN` is empty |
+| `PROVISION_MAX_RETRIES` | No | How many times to retry a failed provisioning task. Default: `3` |
+| `PROVISION_RETRY_DELAY` | No | Seconds between retries. Should match VCD token cooldown. Default: `120` |
+| `PROVISION_RATE_LIMIT` | No | Max provision tasks per worker per time window (`0.5/m` = 1 per 2 min). Default: `0.5/m` |
 
 ---
 
@@ -178,8 +181,16 @@ Always commit the generated migration file alongside the model change.
 
 ## Scaling Workers
 
-The Celery worker concurrency defaults to 4 (`-c 4` in `docker-compose.yml`). Each worker slot runs one blocking `provision_vm_task` at a time (5–60s depending on the adapter). Increase concurrency or run multiple worker replicas to handle more concurrent bookings:
+Worker concurrency is set to `-c 1` in `docker-compose.yml`. This is intentional:
+the VCD API token allows only one authentication per ~2 minutes, so a single slot
+ensures tasks are serialised and the rate limit is never hit. `PROVISION_RATE_LIMIT`
+(default `0.5/m`) provides an additional Celery-level guard.
+
+To increase throughput, run additional worker containers — one per VCD API token:
 
 ```bash
-docker compose up -d --scale worker=3
+# Each worker container must have its own VCD_API_TOKEN in its env file
+docker compose up -d --scale worker=2
 ```
+
+Do **not** increase `-c` above 1 per worker container while sharing a single token.
