@@ -13,11 +13,16 @@ class Settings(BaseSettings):
     # Terraform / VCD — only required when USE_STUB_TERRAFORM=False
     TF_WORKSPACES_DIR: str = "/tmp/tf-workspaces"
     TF_MODULE_SOURCE: str = "/app/terraform/modules/vapp_vm"
+    VCD_URL: str = ""
     VCD_VAPP_NAME: str = ""
     VCD_NETWORK_NAME: str = ""
     VCD_VAPP_TEMPLATE_ID: str = ""
     VCD_ORG: str = ""
     VCD_VDC: str = ""
+    VCD_API_TOKEN: str = ""
+    VCD_USER: str = ""
+    VCD_PASSWORD: str = ""
+    VCD_ALLOW_UNVERIFIED_SSL: bool = False
 
 
 settings = Settings()
