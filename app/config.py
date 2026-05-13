@@ -21,7 +21,6 @@ class Settings(BaseSettings):
     TF_APPLY_REFRESH: bool = False
     TF_APPLY_PARALLELISM: int = 1
     VCD_URL: str = ""
-    VCD_VAPP_NAME: str = ""
     VCD_NETWORK_NAME: str = ""
     VCD_VAPP_TEMPLATE_ID: str = ""
     VCD_ORG: str = ""

@@ -39,7 +39,6 @@ The portal is now available at `http://<host>:8000`.
 | `VCD_URL` | When real adapter | VCD API URL, e.g. `https://vcd.example.com/api` |
 | `VCD_ORG` | When real adapter | VCD organisation name |
 | `VCD_VDC` | When real adapter | VCD virtual datacenter name |
-| `VCD_VAPP_NAME` | When real adapter | Target vApp for provisioned VMs |
 | `VCD_NETWORK_NAME` | When real adapter | Network to attach the VM to |
 | `VCD_VAPP_TEMPLATE_ID` | When real adapter | VM template ID |
 | `VCD_ALLOW_UNVERIFIED_SSL` | No | `true` to skip TLS verification (self-signed certs). Default: `false` |
@@ -118,7 +117,6 @@ USE_STUB_TERRAFORM=false
 VCD_URL=https://vcd.example.com/api
 VCD_ORG=my-org
 VCD_VDC=my-vdc
-VCD_VAPP_NAME=my-vapp
 VCD_NETWORK_NAME=my-network
 VCD_VAPP_TEMPLATE_ID=my-template-id-here
 VCD_ALLOW_UNVERIFIED_SSL=false
