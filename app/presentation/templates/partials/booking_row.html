@@ -11,7 +11,7 @@
     <td class="px-4 py-3 text-gray-400 text-xs">{{ booking.id | string | truncate(8, True, '') }}…</td>
     <td class="px-4 py-3">
         <span class="text-xs px-2 py-1 rounded font-semibold status-{{ booking.status.value }}">
-            {% if booking.status.value == 'PROVISIONING' %}
+            {% if booking.status.value in ('PENDING', 'PROVISIONING') %}
                 <span class="animate-pulse">⬤</span>
             {% endif %}
             {{ booking.status.value }}
