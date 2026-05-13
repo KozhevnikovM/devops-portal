@@ -3,10 +3,9 @@
     id="booking-{{ booking.id }}"
     class="border-b border-gray-800 last:border-0 hover:bg-gray-800/40 transition-colors"
     {% if not is_terminal %}
-        hx-ext="sse"
-        sse-connect="/bookings/{{ booking.id }}/status-stream"
+        hx-get="/bookings/{{ booking.id }}/row"
+        hx-trigger="load, every 3s"
         hx-swap="outerHTML"
-        sse-swap="message"
     {% endif %}
 >
     <td class="px-4 py-3 text-gray-400 text-xs">{{ booking.id | string | truncate(8, True, '') }}…</td>
