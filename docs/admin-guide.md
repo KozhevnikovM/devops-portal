@@ -43,112 +43,99 @@ The portal is now available at `http://<host>:8000`.
 
 ### How the adapter system works
 
-The application communicates with Terraform through a `TerraformAdapter` Protocol defined in [app/infrastructure/terraform/adapter.py](../app/infrastructure/terraform/adapter.py). Any class that implements `apply()` and `destroy()` can be used — no base class inheritance required.
+The application communicates with Terraform through a `TerraformAdapter` Protocol defined in [app/infrastructure/terraform/adapter.py](../app/infrastructure/terraform/adapter.py). Two implementations are included:
 
-The active adapter is instantiated in [app/tasks/provision.py](../app/tasks/provision.py). By default it uses `StubTerraformAdapter`. To switch to a real implementation, replace the import there.
+- `StubTerraformAdapter` — sleeps 5 s and returns a fake IP. Default, no infrastructure required.
+- `TerraformVcdAdapter` — runs the `terraform` CLI against VMware Cloud Director.
 
-### Switching from stub to real VMware adapter
+The active adapter is selected in [app/tasks/provision.py](../app/tasks/provision.py) based on `USE_STUB_TERRAFORM`.
 
-**Step 1 — Write the real adapter**
+---
 
-Create `app/infrastructure/terraform/vmware_adapter.py`. The class must satisfy this interface:
+### Enabling the real VCD adapter
 
-```python
-async def apply(self, workspace_id: str, config: dict) -> dict:
-    # Must return a dict containing at minimum: {"ip": "<vm-ip-address>"}
-    ...
+#### Step 1 — Obtain the vmware/vcd provider binary
 
-async def destroy(self, workspace_id: str) -> None:
-    ...
-```
+The server has no internet access, so the provider must be downloaded on a machine that does and then baked into the Docker image.
 
-The `config` dict passed by the task contains:
-
-```python
-{
-    "cpu": 2,
-    "ram_gb": 4,
-    "disk_gb": 40,
-    "image": "ubuntu-22.04",
-}
-```
-
-A typical implementation will:
-1. Write a Terraform workspace directory under a configurable path (e.g. `/var/tf-workspaces/{workspace_id}/`)
-2. Render a `main.tf` from the config dict (use Jinja2 or string templates)
-3. Run `terraform init` then `terraform apply -auto-approve -json` via `asyncio.create_subprocess_exec`
-4. Parse the JSON output to extract the VM IP
-5. On `destroy`: run `terraform destroy -auto-approve` then clean up the workspace directory
-
-**Step 2 — Configure Terraform state backend**
-
-Each workspace must use a remote state backend to survive worker restarts. The recommended backend for this stack is PostgreSQL:
-
-```hcl
-terraform {
-  backend "pg" {
-    conn_str = "postgres://portal:portal@postgres:5432/portal?sslmode=disable"
-    schema_name = "tf_state"
-  }
-}
-```
-
-Create the schema before first use:
+On any machine with internet access and Terraform installed:
 
 ```bash
-docker compose exec postgres psql -U portal -d portal -c "CREATE SCHEMA IF NOT EXISTS tf_state;"
+# In the repo root
+terraform providers mirror ./terraform/providers-mirror
 ```
 
-**Step 3 — Add VMware provider credentials**
+This reads `terraform/modules/vapp_vm/main.tf` (which declares `vmware/vcd >= 3.10.0`),
+downloads the matching provider binary for `linux_amd64`, and saves it under
+`terraform/providers-mirror/` in the correct filesystem mirror layout.
 
-Add the following to `.env` (values from your vCenter):
+> **Tip:** Run this once per provider version upgrade. The `providers-mirror/`
+> directory is gitignored — keep it alongside the repo on your build machine or
+> in a shared network path accessible at build time.
+
+#### Step 2 — Build the Docker image
 
 ```bash
-VSPHERE_USER=administrator@vsphere.local
-VSPHERE_PASSWORD=<password>
-VSPHERE_SERVER=<vcenter-hostname-or-ip>
-VSPHERE_ALLOW_UNVERIFIED_SSL=false
+docker compose build
 ```
 
-Pass these as environment variables into the Terraform subprocess inside `apply()`.
+The `Dockerfile` copies `terraform/` (including `providers-mirror/`) into the
+image and sets `TF_CLI_CONFIG_FILE=/app/terraform/terraformrc`. At runtime,
+`terraform init` reads providers from the baked-in mirror — no network required.
 
-**Step 4 — Wire the real adapter into the task**
-
-In [app/tasks/provision.py](../app/tasks/provision.py), replace:
-
-```python
-from app.infrastructure.terraform.stub_adapter import StubTerraformAdapter
-terraform = StubTerraformAdapter()
-```
-
-with:
-
-```python
-from app.infrastructure.terraform.vmware_adapter import VMwareTerraformAdapter
-terraform = VMwareTerraformAdapter()
-```
-
-Set `USE_STUB_TERRAFORM=false` in `.env` (the variable is available in `settings` for conditional logic if needed).
-
-**Step 5 — Test the adapter in isolation**
-
-Before deploying, run a smoke test against your vCenter:
+To verify the binary and provider are present in a built image:
 
 ```bash
-python - <<'EOF'
-import asyncio
-from app.infrastructure.terraform.vmware_adapter import VMwareTerraformAdapter
-
-async def main():
-    adapter = VMwareTerraformAdapter()
-    result = await adapter.apply("smoke-test-01", {"cpu": 2, "ram_gb": 4, "disk_gb": 40, "image": "ubuntu-22.04"})
-    print("VM IP:", result["ip"])
-    await adapter.destroy("smoke-test-01")
-    print("Destroyed.")
-
-asyncio.run(main())
-EOF
+docker compose run --rm app terraform version
+docker compose run --rm app ls /app/terraform/providers-mirror/registry.terraform.io/vmware/vcd/
 ```
+
+#### Step 3 — Set VCD credentials and configuration
+
+Add the following to `.env`:
+
+```bash
+USE_STUB_TERRAFORM=false
+
+# VCD provider connection — read natively by the vmware/vcd terraform provider
+VCD_URL=https://vcd.example.com/api
+VCD_USER=administrator
+VCD_PASSWORD=secret
+
+# VCD topology
+VCD_ORG=my-org
+VCD_VDC=my-vdc
+VCD_VAPP_NAME=my-vapp
+VCD_NETWORK_NAME=my-network
+VCD_VAPP_TEMPLATE_ID=my-template-id-here
+```
+
+#### Step 4 — Verify end-to-end
+
+```bash
+docker compose up -d
+# Open http://localhost:8000, book a VM, watch status reach READY with a real IP.
+# Or use the API:
+curl -s -X POST http://localhost:8000/bookings \
+     -H "Accept: application/json" \
+     -d "ttl_hours=1" | python3 -m json.tool
+```
+
+Check worker logs to follow terraform output:
+
+```bash
+docker compose logs -f worker
+```
+
+#### Step 5 — Roll back to stub
+
+Set `USE_STUB_TERRAFORM=true` in `.env` and restart:
+
+```bash
+docker compose up -d app worker
+```
+
+No rebuild needed — the flag is read at worker startup.
 
 ---
 
