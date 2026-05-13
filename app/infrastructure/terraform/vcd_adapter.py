@@ -21,9 +21,10 @@ class TerraformVcdAdapter:
     def _workspace_dir(self, workspace_id: str) -> Path:
         return Path(settings.TF_WORKSPACES_DIR) / workspace_id
 
-    def _provider_block(self) -> str:
+    def _provider_block(self, api_token: str | None = None) -> str:
         ssl = str(settings.VCD_ALLOW_UNVERIFIED_SSL).lower()
-        if settings.VCD_API_TOKEN:
+        token = api_token or settings.VCD_API_TOKEN
+        if token:
             return textwrap.dedent(f"""\
                 provider "vcd" {{
                   url                  = "{settings.VCD_URL}"
@@ -32,7 +33,7 @@ class TerraformVcdAdapter:
                   user                 = "none"
                   password             = "none"
                   auth_type            = "api_token"
-                  api_token            = "{settings.VCD_API_TOKEN}"
+                  api_token            = "{token}"
                   allow_api_token_file = true
                   max_retry_timeout    = 1800
                   allow_unverified_ssl = {ssl}
@@ -49,7 +50,7 @@ class TerraformVcdAdapter:
               allow_unverified_ssl = {ssl}
             }}""")
 
-    def _write_workspace(self, workspace_dir: Path, config: dict) -> None:
+    def _write_workspace(self, workspace_dir: Path, config: dict, api_token: str | None = None) -> None:
         workspace_dir.mkdir(parents=True, exist_ok=True)
 
         main_tf = textwrap.dedent(f"""\
@@ -63,7 +64,7 @@ class TerraformVcdAdapter:
               required_version = ">= 1.5.5"
             }}
 
-            {self._provider_block()}
+            {self._provider_block(api_token)}
 
             module "vm" {{
               source           = "{settings.TF_MODULE_SOURCE}"
@@ -117,9 +118,9 @@ class TerraformVcdAdapter:
             raise TerraformError(f"terraform {args[0]} failed (exit {proc.returncode}):\n{output}")
         return output
 
-    async def apply(self, workspace_id: str, config: dict) -> dict:
+    async def apply(self, workspace_id: str, config: dict, api_token: str | None = None) -> dict:
         workspace_dir = self._workspace_dir(workspace_id)
-        self._write_workspace(workspace_dir, config)
+        self._write_workspace(workspace_dir, config, api_token)
 
         await self._run("init", "-no-color", cwd=workspace_dir)
         await self._run("apply", "-auto-approve", "-no-color", cwd=workspace_dir)
