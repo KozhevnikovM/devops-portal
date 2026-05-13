@@ -89,8 +89,10 @@ def provision_vm_task(self, booking_id: str) -> None:
 
             except Exception as exc:
                 logger.error("Provisioning failed for booking %s: %s", booking_id, exc)
+                is_last_attempt = self.request.retries >= self.max_retries
+                new_status = BookingStatus.FAILED if is_last_attempt else BookingStatus.RETRY
                 try:
-                    repo.sync_update_status(session, booking_uuid, BookingStatus.FAILED)
+                    repo.sync_update_status(session, booking_uuid, new_status)
                 except Exception:
                     pass
                 raise self.retry(exc=exc)

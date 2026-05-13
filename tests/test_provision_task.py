@@ -114,3 +114,28 @@ def test_semaphore_released_on_failure():
 
     # lock must be released even on failure
     mock_redis.delete.assert_called_with("vcd_token_lock:0")
+
+
+def test_provision_task_sets_retry_status_on_failure():
+    """Intermediate failures set RETRY, not FAILED, while retries remain."""
+    booking_id = str(uuid4())
+
+    mock_session = MagicMock()
+    mock_repo = MagicMock()
+
+    with (
+        patch("app.tasks.provision.SyncSessionLocal") as mock_session_factory,
+        patch("app.tasks.provision.repo", mock_repo),
+        patch("app.tasks.provision.asyncio.run", side_effect=RuntimeError("boom")),
+    ):
+        mock_session_factory.return_value.__enter__ = MagicMock(return_value=mock_session)
+        mock_session_factory.return_value.__exit__ = MagicMock(return_value=False)
+
+        from app.tasks.provision import provision_vm_task
+        provision_vm_task.apply(args=[booking_id])
+
+    statuses = [c.args[2] for c in mock_repo.sync_update_status.call_args_list]
+    # Last status must be FAILED (retries exhausted); all intermediate must be RETRY not FAILED
+    assert statuses[-1] == BookingStatus.FAILED
+    assert BookingStatus.RETRY in statuses
+    assert statuses.count(BookingStatus.FAILED) == 1  # only the very last attempt sets FAILED
