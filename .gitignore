@@ -10,5 +10,4 @@ dist/
 .mypy_cache/
 node_modules/
 package-lock.json
-app/static/css/*.css
-app/static/js/*.js
+app/static/
