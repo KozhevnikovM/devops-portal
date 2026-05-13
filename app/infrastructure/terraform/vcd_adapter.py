@@ -66,16 +66,21 @@ class TerraformVcdAdapter:
 
             {self._provider_block(api_token)}
 
+            resource "vcd_vapp" "this" {{
+              name = var.name
+            }}
+
             module "vm" {{
               source           = "{settings.TF_MODULE_SOURCE}"
               name             = var.name
-              vapp_name        = var.vapp_name
+              vapp_name        = vcd_vapp.this.name
               network_name     = var.network_name
               vapp_template_id = var.vapp_template_id
               cpus             = var.cpus
               memory           = var.memory
               resize_disk      = true
               disk_size        = var.disk_size
+              depends_on       = [vcd_vapp.this]
             }}
 
             output "primary_ip" {{
@@ -83,7 +88,6 @@ class TerraformVcdAdapter:
             }}
 
             variable "name"             {{ type = string }}
-            variable "vapp_name"        {{ type = string }}
             variable "network_name"     {{ type = string }}
             variable "vapp_template_id" {{ type = string }}
             variable "cpus"             {{ type = number }}
@@ -94,7 +98,6 @@ class TerraformVcdAdapter:
 
         tfvars_lines = [
             f'name             = "{config["name"]}"',
-            f'vapp_name        = "{settings.VCD_VAPP_NAME}"',
             f'network_name     = "{settings.VCD_NETWORK_NAME}"',
             f'vapp_template_id = "{settings.VCD_VAPP_TEMPLATE_ID}"',
             f'cpus             = {config["cpus"]}',
