@@ -63,11 +63,12 @@ On any machine with internet access and Terraform installed:
 ```bash
 # In the repo root
 mkdir -p terraform/providers-mirror
-terraform providers mirror ./terraform/providers-mirror
+terraform -chdir=terraform providers mirror ./providers-mirror
 ```
 
-This reads `terraform/modules/vapp_vm/main.tf` (which declares `vmware/vcd >= 3.10.0`),
-downloads the matching provider binary for `linux_amd64`, and saves it under
+`terraform/mirror.tf` declares `vmware/vcd >= 3.10.0` — `providers mirror` reads
+provider requirements from `.tf` files in its working directory. The command
+downloads the matching binary for `linux_amd64` and saves it under
 `terraform/providers-mirror/` in the correct filesystem mirror layout.
 
 > **Tip:** Run this once per provider version upgrade. The `providers-mirror/`
