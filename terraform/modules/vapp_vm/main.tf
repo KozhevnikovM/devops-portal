@@ -19,6 +19,7 @@ resource "vcd_vapp_vm" "vm" {
   org              = var.org
   vdc              = var.vdc
   computer_name    = var.name
+  storage_profile  = var.disk_storage_policy
 
   network {
     adapter_type       = var.network_adapter_type
