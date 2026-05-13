@@ -1,13 +1,11 @@
-import asyncio
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Form, Request
-from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.use_cases.create_booking import CreateBookingUseCase
-from app.domain.enums import BookingStatus
 from app.infrastructure.database.session import get_async_session
 from app.infrastructure.repositories.booking_repo import BookingRepository
 
@@ -16,8 +14,6 @@ templates = Jinja2Templates(directory="app/presentation/templates")
 
 _repo = BookingRepository()
 _use_case = CreateBookingUseCase(_repo)
-
-TERMINAL_STATUSES = {BookingStatus.READY, BookingStatus.FAILED}
 
 
 @router.get("/", response_class=HTMLResponse)
@@ -51,30 +47,13 @@ async def create_booking(
     )
 
 
-@router.get("/bookings/{booking_id}/status-stream")
-async def booking_status_stream(
+@router.get("/bookings/{booking_id}/row", response_class=HTMLResponse)
+async def booking_row(
     booking_id: UUID,
     request: Request,
     session: AsyncSession = Depends(get_async_session),
 ):
-    async def event_generator():
-        while True:
-            if await request.is_disconnected():
-                break
-
-            try:
-                booking = await _repo.get(session, booking_id)
-            except Exception:
-                break
-
-            html = templates.get_template("partials/booking_row.html").render(
-                {"booking": booking}
-            )
-            yield f"data: {html}\n\n"
-
-            if booking.status in TERMINAL_STATUSES:
-                break
-
-            await asyncio.sleep(2)
-
-    return StreamingResponse(event_generator(), media_type="text/event-stream")
+    booking = await _repo.get(session, booking_id)
+    return templates.TemplateResponse(
+        request, "partials/booking_row.html", {"booking": booking}
+    )
