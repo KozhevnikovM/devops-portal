@@ -36,6 +36,7 @@ services:
     env_file: .env
     volumes:
       - .:/app
+      - portal_static:/app/app/static
     depends_on:
       postgres:
         condition: service_healthy
@@ -53,8 +54,12 @@ services:
     env_file: .env
     volumes:
       - .:/app
+      - portal_static:/app/app/static
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
+
+volumes:
+  portal_static:
