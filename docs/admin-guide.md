@@ -36,6 +36,16 @@ The portal is now available at `http://<host>:8000`.
 | `REDIS_URL` | Yes | Redis DSN for Celery broker and result backend (e.g. `redis://redis:6379/0`) |
 | `USE_STUB_TERRAFORM` | No | `true` uses the stub adapter (default). Set `false` to use the real VMware adapter. |
 | `DEV_USER_ID` | No | Hardcoded user identity for the MVP (no auth yet). Default: `dev-user-00000000` |
+| `VCD_URL` | When real adapter | VCD API URL, e.g. `https://vcd.example.com/api` |
+| `VCD_ORG` | When real adapter | VCD organisation name |
+| `VCD_VDC` | When real adapter | VCD virtual datacenter name |
+| `VCD_VAPP_NAME` | When real adapter | Target vApp for provisioned VMs |
+| `VCD_NETWORK_NAME` | When real adapter | Network to attach the VM to |
+| `VCD_VAPP_TEMPLATE_ID` | When real adapter | VM template ID |
+| `VCD_ALLOW_UNVERIFIED_SSL` | No | `true` to skip TLS verification (self-signed certs). Default: `false` |
+| `VCD_API_TOKEN` | When real adapter | API refresh token — enables API token auth when set |
+| `VCD_USER` | When real adapter | Username — used when `VCD_API_TOKEN` is empty |
+| `VCD_PASSWORD` | When real adapter | Password — used when `VCD_API_TOKEN` is empty |
 
 ---
 
@@ -99,18 +109,26 @@ Add the following to `.env`:
 ```bash
 USE_STUB_TERRAFORM=false
 
-# VCD provider connection — read natively by the vmware/vcd terraform provider
+# VCD connection
 VCD_URL=https://vcd.example.com/api
-VCD_USER=administrator
-VCD_PASSWORD=secret
-
-# VCD topology
 VCD_ORG=my-org
 VCD_VDC=my-vdc
 VCD_VAPP_NAME=my-vapp
 VCD_NETWORK_NAME=my-network
 VCD_VAPP_TEMPLATE_ID=my-template-id-here
+VCD_ALLOW_UNVERIFIED_SSL=false
+
+# Auth — option A: API token (preferred)
+VCD_API_TOKEN=your-refresh-token-here
+
+# Auth — option B: username/password (used when VCD_API_TOKEN is empty)
+# VCD_USER=administrator
+# VCD_PASSWORD=secret
 ```
+
+The adapter selects auth mode automatically: if `VCD_API_TOKEN` is set it uses
+`auth_type = "api_token"`; otherwise it falls back to `auth_type = "integrated"`
+with `VCD_USER` / `VCD_PASSWORD`.
 
 #### Step 4 — Verify end-to-end
 

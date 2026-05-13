@@ -21,6 +21,34 @@ class TerraformVcdAdapter:
     def _workspace_dir(self, workspace_id: str) -> Path:
         return Path(settings.TF_WORKSPACES_DIR) / workspace_id
 
+    def _provider_block(self) -> str:
+        ssl = str(settings.VCD_ALLOW_UNVERIFIED_SSL).lower()
+        if settings.VCD_API_TOKEN:
+            return textwrap.dedent(f"""\
+                provider "vcd" {{
+                  url                  = "{settings.VCD_URL}"
+                  org                  = "{settings.VCD_ORG}"
+                  vdc                  = "{settings.VCD_VDC}"
+                  user                 = "none"
+                  password             = "none"
+                  auth_type            = "api_token"
+                  api_token            = "{settings.VCD_API_TOKEN}"
+                  allow_api_token_file = true
+                  max_retry_timeout    = 1800
+                  allow_unverified_ssl = {ssl}
+                }}""")
+        return textwrap.dedent(f"""\
+            provider "vcd" {{
+              url                  = "{settings.VCD_URL}"
+              org                  = "{settings.VCD_ORG}"
+              vdc                  = "{settings.VCD_VDC}"
+              user                 = "{settings.VCD_USER}"
+              password             = "{settings.VCD_PASSWORD}"
+              auth_type            = "integrated"
+              max_retry_timeout    = 1800
+              allow_unverified_ssl = {ssl}
+            }}""")
+
     def _write_workspace(self, workspace_dir: Path, config: dict) -> None:
         workspace_dir.mkdir(parents=True, exist_ok=True)
 
@@ -35,7 +63,7 @@ class TerraformVcdAdapter:
               required_version = ">= 1.5.5"
             }}
 
-            provider "vcd" {{}}
+            {self._provider_block()}
 
             module "vm" {{
               source           = "{settings.TF_MODULE_SOURCE}"
@@ -47,8 +75,6 @@ class TerraformVcdAdapter:
               memory           = var.memory
               resize_disk      = true
               disk_size        = var.disk_size
-              org              = var.org
-              vdc              = var.vdc
             }}
 
             output "primary_ip" {{
@@ -62,8 +88,6 @@ class TerraformVcdAdapter:
             variable "cpus"             {{ type = number }}
             variable "memory"           {{ type = number }}
             variable "disk_size"        {{ type = number }}
-            variable "org"              {{ type = string }}
-            variable "vdc"              {{ type = string }}
         """)
         (workspace_dir / "main.tf").write_text(main_tf)
 
@@ -75,8 +99,6 @@ class TerraformVcdAdapter:
             f'cpus             = {config["cpus"]}',
             f'memory           = {config["memory"]}',
             f'disk_size        = {config["disk_size"]}',
-            f'org              = "{settings.VCD_ORG}"',
-            f'vdc              = "{settings.VCD_VDC}"',
         ]
         (workspace_dir / "terraform.tfvars").write_text("\n".join(tfvars_lines) + "\n")
 
