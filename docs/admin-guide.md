@@ -62,6 +62,7 @@ On any machine with internet access and Terraform installed:
 
 ```bash
 # In the repo root
+mkdir -p terraform/providers-mirror
 terraform providers mirror ./terraform/providers-mirror
 ```
 
