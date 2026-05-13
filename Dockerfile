@@ -36,3 +36,6 @@ COPY --from=frontend /build/dist/js/htmx.min.js  app/static/js/htmx.min.js
 COPY --from=frontend /build/dist/js/htmx-sse.js  app/static/js/htmx-sse.js
 
 COPY . .
+
+RUN useradd -m portal
+USER portal
