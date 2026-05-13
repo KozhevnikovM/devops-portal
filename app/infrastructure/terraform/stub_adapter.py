@@ -5,7 +5,7 @@ import random
 class StubTerraformAdapter:
     """Simulates Terraform provisioning without touching real infrastructure."""
 
-    async def apply(self, workspace_id: str, config: dict) -> dict:
+    async def apply(self, workspace_id: str, config: dict, api_token: str | None = None) -> dict:
         await asyncio.sleep(5)
         ip = f"192.168.100.{random.randint(10, 254)}"
         return {"ip": ip}

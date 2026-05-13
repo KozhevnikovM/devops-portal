@@ -43,9 +43,11 @@ The portal is now available at `http://<host>:8000`.
 | `VCD_NETWORK_NAME` | When real adapter | Network to attach the VM to |
 | `VCD_VAPP_TEMPLATE_ID` | When real adapter | VM template ID |
 | `VCD_ALLOW_UNVERIFIED_SSL` | No | `true` to skip TLS verification (self-signed certs). Default: `false` |
-| `VCD_API_TOKEN` | When real adapter | API refresh token — enables API token auth when set |
-| `VCD_USER` | When real adapter | Username — used when `VCD_API_TOKEN` is empty |
-| `VCD_PASSWORD` | When real adapter | Password — used when `VCD_API_TOKEN` is empty |
+| `VCD_API_TOKEN` | When real adapter | Single API refresh token — used when `VCD_API_TOKENS` is empty |
+| `VCD_API_TOKENS` | No | Comma-separated list of API tokens for parallel provisioning (token pool) |
+| `VCD_TOKEN_LOCK_TTL` | No | Redis lock TTL in seconds. Auto-releases if worker crashes. Default: `900` |
+| `VCD_USER` | When real adapter | Username — used when both token settings are empty |
+| `VCD_PASSWORD` | When real adapter | Password — used when both token settings are empty |
 | `PROVISION_MAX_RETRIES` | No | How many times to retry a failed provisioning task. Default: `3` |
 | `PROVISION_RETRY_DELAY` | No | Seconds between retries. Should match VCD token cooldown. Default: `120` |
 | `PROVISION_RATE_LIMIT` | No | Max provision tasks per worker per time window (`0.5/m` = 1 per 2 min). Default: `0.5/m` |
@@ -181,16 +183,38 @@ Always commit the generated migration file alongside the model change.
 
 ## Scaling Workers
 
-Worker concurrency is set to `-c 1` in `docker-compose.yml`. This is intentional:
-the VCD API token allows only one authentication per ~2 minutes, so a single slot
-ensures tasks are serialised and the rate limit is never hit. `PROVISION_RATE_LIMIT`
-(default `0.5/m`) provides an additional Celery-level guard.
+### Single token (default)
 
-To increase throughput, run additional worker containers — one per VCD API token:
+Worker concurrency is set to `-c 1`. With one VCD token only one VM can be provisioned
+at a time; `PROVISION_RATE_LIMIT` (default `0.5/m`) provides an additional Celery-level guard.
+
+### Parallel provisioning with a token pool
+
+If you have multiple VCD API tokens you can provision N VMs concurrently.
+The portal uses a Redis semaphore to ensure each token is held by at most one
+provisioning task at any time — no token conflicts even under load.
+
+**Step 1 — obtain N VCD API tokens** from your VCD administrator (one per concurrent VM slot).
+
+**Step 2 — configure the token pool** in `.env`:
 
 ```bash
-# Each worker container must have its own VCD_API_TOKEN in its env file
-docker compose up -d --scale worker=2
+VCD_API_TOKENS=token-a,token-b,token-c   # one entry per token
+VCD_TOKEN_LOCK_TTL=900                   # optional; 15 min default is fine
 ```
 
-Do **not** increase `-c` above 1 per worker container while sharing a single token.
+`VCD_API_TOKENS` takes precedence over `VCD_API_TOKEN`. Both can coexist in `.env`
+for a smooth migration (set `VCD_API_TOKENS` when you have multiple tokens; leave
+`VCD_API_TOKEN` as fallback for single-token setups).
+
+**Step 3 — scale workers** to match the token count:
+
+```bash
+docker compose up -d --scale worker=3   # 3 tokens → 3 parallel workers
+```
+
+**Recommended:** number of workers ≤ number of tokens. Extra workers will compete for
+locks but only N tasks will run in parallel — the rest wait up to 60 s before requeueing.
+
+**Crash recovery:** if a worker dies mid-apply the Redis lock expires after
+`VCD_TOKEN_LOCK_TTL` seconds and the next waiting task picks it up automatically.
