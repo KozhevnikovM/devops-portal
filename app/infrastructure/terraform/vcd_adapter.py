@@ -70,6 +70,11 @@ class TerraformVcdAdapter:
               name = var.name
             }}
 
+            resource "vcd_vapp_org_network" "this" {{
+              vapp_name        = vcd_vapp.this.name
+              org_network_name = var.network_name
+            }}
+
             module "vm" {{
               source           = "{settings.TF_MODULE_SOURCE}"
               name             = var.name
@@ -80,7 +85,7 @@ class TerraformVcdAdapter:
               memory           = var.memory
               resize_disk      = true
               disk_size        = var.disk_size
-              depends_on       = [vcd_vapp.this]
+              depends_on       = [vcd_vapp_org_network.this]
             }}
 
             output "primary_ip" {{
