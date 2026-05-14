@@ -6,7 +6,7 @@ celery_app = Celery(
     "devops_portal",
     broker=settings.REDIS_URL,
     backend=settings.REDIS_URL,
-    include=["app.tasks.provision"],
+    include=["app.tasks.provision", "app.tasks.teardown"],
 )
 
 celery_app.conf.update(
