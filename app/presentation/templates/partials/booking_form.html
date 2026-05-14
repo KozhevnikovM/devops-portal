@@ -6,6 +6,18 @@
     class="flex items-end gap-4"
 >
     <div class="flex flex-col gap-1">
+        <label for="template_id" class="text-xs text-gray-500">Image</label>
+        <select
+            id="template_id"
+            name="template_id"
+            class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-gray-100 focus:outline-none focus:border-green-500 text-sm"
+        >
+            {% for t in vm_templates %}
+            <option value="{{ t.id }}">{{ t.name }}</option>
+            {% endfor %}
+        </select>
+    </div>
+    <div class="flex flex-col gap-1">
         <label for="ttl_hours" class="text-xs text-gray-500">Duration</label>
         <select
             id="ttl_hours"

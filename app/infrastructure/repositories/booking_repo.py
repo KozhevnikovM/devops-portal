@@ -18,6 +18,8 @@ def _to_entity(m: BookingModel) -> Booking:
         ttl_hours=m.ttl_hours,
         expires_at=m.expires_at,
         created_at=m.created_at,
+        template_id=m.template_id,
+        template_name=m.template_name,
         vm_ip=m.vm_ip,
     )
 
@@ -31,6 +33,8 @@ class BookingRepository:
             ttl_hours=booking.ttl_hours,
             expires_at=booking.expires_at,
             created_at=booking.created_at,
+            template_id=booking.template_id,
+            template_name=booking.template_name,
         )
         session.add(model)
         await session.commit()
