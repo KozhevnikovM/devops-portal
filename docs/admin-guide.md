@@ -107,47 +107,9 @@ docker compose run --rm app ls /app/terraform/providers-mirror/registry.terrafor
 
 #### Step 3 — Configure VM images and hardware profiles
 
-VM images and hardware configurations are managed via the API — no SQL required.
-
-After running migrations, the database contains three placeholder VM images
-(`Ubuntu 22.04`, `Ubuntu 20.04`, `Windows 2022`) and three ready-to-use hardware
-profiles (`small`, `medium`, `large`).
-
-**Set real VCD template IDs on the seed images:**
-
-```bash
-# List images to get their IDs
-curl -s http://localhost:8000/api/images | python3 -m json.tool
-
-# Update each image with its real VCD vApp template ID
-curl -s -X PATCH http://localhost:8000/api/images/<image-id> \
-     -H "Content-Type: application/json" \
-     -d '{"vapp_template_id": "urn:vcloud:vapptemplate:real-id-here"}'
-```
-
-**Add a new image:**
-
-```bash
-curl -s -X POST http://localhost:8000/api/images \
-     -H "Content-Type: application/json" \
-     -d '{"name": "Debian 12", "vapp_template_id": "urn:vcloud:vapptemplate:..."}'
-```
-
-**Deactivate an image** (hides it from the booking form):
-
-```bash
-curl -s -X DELETE http://localhost:8000/api/images/<image-id>
-```
-
-**Add a custom hardware profile:**
-
-```bash
-curl -s -X POST http://localhost:8000/api/hardware \
-     -H "Content-Type: application/json" \
-     -d '{"name": "xlarge", "cpus": 8, "memory_mb": 16384, "disk_mb": 102400}'
-```
-
-See [docs/api-reference.md](api-reference.md) for the full API reference.
+Update the seeded VM images with real VCD vApp template IDs — see
+**[Managing the VM Catalog](#managing-the-vm-catalog)** below for the full workflow.
+Hardware profiles (`small`, `medium`, `large`) are ready to use without changes.
 
 #### Step 4 — Set VCD credentials and configuration
 
@@ -179,11 +141,23 @@ with `VCD_USER` / `VCD_PASSWORD`.
 
 ```bash
 docker compose up -d
-# Open http://localhost:8000, book a VM, watch status reach READY with a real IP.
-# Or use the API:
+# Open http://localhost:8000 and book a VM via the form.
+# Watch the row status progress: PENDING → PROVISIONING → READY with a real IP.
+```
+
+To book via the API, first fetch an image ID and a hardware config ID:
+
+```bash
+IMAGE_ID=$(curl -s http://localhost:8000/api/images \
+  | python3 -c "import sys,json; print(next(i['id'] for i in json.load(sys.stdin) if i['is_active']))")
+
+HW_ID=$(curl -s http://localhost:8000/api/hardware \
+  | python3 -c "import sys,json; print(next(h['id'] for h in json.load(sys.stdin) if h['name']=='medium'))")
+
 curl -s -X POST http://localhost:8000/bookings \
      -H "Accept: application/json" \
-     -d "ttl_hours=1" | python3 -m json.tool
+     -d "image_id=${IMAGE_ID}&hw_config_id=${HW_ID}&ttl_hours=1" \
+     | python3 -m json.tool
 ```
 
 Check worker logs to follow terraform output:
@@ -201,6 +175,150 @@ docker compose up -d app worker
 ```
 
 No rebuild needed — the flag is read at worker startup.
+
+---
+
+## Managing the VM Catalog
+
+The portal exposes a JSON API for managing VM images and hardware profiles.
+No database access or restarts are needed — changes take effect immediately.
+
+An interactive API browser (Swagger UI) is available at `http://<host>:8000/docs`.
+
+---
+
+### VM Images
+
+A VM image maps a display name (shown in the booking form) to a VCD vApp template ID.
+The migration seeds three placeholder images. Their `vapp_template_id` values must be
+updated before switching `USE_STUB_TERRAFORM=false`.
+
+#### List all images
+
+```bash
+curl -s http://localhost:8000/api/images | python3 -m json.tool
+```
+
+Example response:
+
+```json
+[
+  {
+    "id": "a1000000-0000-0000-0000-000000000001",
+    "name": "Ubuntu 22.04",
+    "vapp_template_id": "changeme-ubuntu-2204",
+    "is_active": true,
+    "created_at": "2026-05-14T00:00:00+00:00"
+  }
+]
+```
+
+#### Update a seed image with the real VCD template ID
+
+```bash
+curl -s -X PATCH http://localhost:8000/api/images/a1000000-0000-0000-0000-000000000001 \
+     -H "Content-Type: application/json" \
+     -d '{"vapp_template_id": "urn:vcloud:vapptemplate:xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"}'
+```
+
+#### Add a new image
+
+```bash
+curl -s -X POST http://localhost:8000/api/images \
+     -H "Content-Type: application/json" \
+     -d '{"name": "Debian 12", "vapp_template_id": "urn:vcloud:vapptemplate:..."}' \
+     | python3 -m json.tool
+```
+
+#### Rename an image
+
+```bash
+curl -s -X PATCH http://localhost:8000/api/images/<image-id> \
+     -H "Content-Type: application/json" \
+     -d '{"name": "Ubuntu 22.04 LTS"}'
+```
+
+#### Deactivate an image
+
+Deactivated images are hidden from the booking form. Existing bookings are unaffected.
+
+```bash
+curl -s -X DELETE http://localhost:8000/api/images/<image-id>
+```
+
+---
+
+### Hardware Profiles
+
+Hardware profiles define CPU, memory, and disk for a VM. Three profiles are seeded
+(`small`, `medium`, `large`) and are ready to use without any changes.
+
+#### List all hardware profiles
+
+```bash
+curl -s http://localhost:8000/api/hardware | python3 -m json.tool
+```
+
+Example response:
+
+```json
+[
+  {"id": "b2000000-0000-0000-0000-000000000001", "name": "small",  "cpus": 1, "memory_mb": 2048,  "disk_mb": 13312, "is_active": true, "created_at": "..."},
+  {"id": "b2000000-0000-0000-0000-000000000002", "name": "medium", "cpus": 2, "memory_mb": 4096,  "disk_mb": 26624, "is_active": true, "created_at": "..."},
+  {"id": "b2000000-0000-0000-0000-000000000003", "name": "large",  "cpus": 4, "memory_mb": 8192,  "disk_mb": 51200, "is_active": true, "created_at": "..."}
+]
+```
+
+#### Add a custom profile
+
+```bash
+curl -s -X POST http://localhost:8000/api/hardware \
+     -H "Content-Type: application/json" \
+     -d '{"name": "xlarge", "cpus": 8, "memory_mb": 16384, "disk_mb": 102400}' \
+     | python3 -m json.tool
+```
+
+#### Update a profile
+
+```bash
+curl -s -X PATCH http://localhost:8000/api/hardware/<hw-id> \
+     -H "Content-Type: application/json" \
+     -d '{"memory_mb": 6144}'
+```
+
+#### Deactivate a profile
+
+```bash
+curl -s -X DELETE http://localhost:8000/api/hardware/<hw-id>
+```
+
+---
+
+### Typical first-run workflow (real VCD adapter)
+
+```bash
+# 1. List seed images
+curl -s http://localhost:8000/api/images | python3 -m json.tool
+
+# 2. Patch each seed image with the real VCD vApp template ID
+curl -s -X PATCH http://localhost:8000/api/images/<ubuntu-2204-id> \
+     -H "Content-Type: application/json" \
+     -d '{"vapp_template_id": "urn:vcloud:vapptemplate:<real-id>"}'
+
+curl -s -X PATCH http://localhost:8000/api/images/<ubuntu-2004-id> \
+     -H "Content-Type: application/json" \
+     -d '{"vapp_template_id": "urn:vcloud:vapptemplate:<real-id>"}'
+
+# 3. Optionally deactivate images you don't want to offer
+curl -s -X DELETE http://localhost:8000/api/images/<windows-2022-id>
+
+# 4. Optionally add site-specific hardware profiles
+curl -s -X POST http://localhost:8000/api/hardware \
+     -H "Content-Type: application/json" \
+     -d '{"name": "gpu", "cpus": 8, "memory_mb": 32768, "disk_mb": 102400}'
+
+# 5. Verify — open http://<host>:8000 and check the booking form dropdowns
+```
 
 ---
 
