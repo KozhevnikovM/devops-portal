@@ -119,7 +119,7 @@ def test_teardown_task_calls_destroy_with_workspace_id_and_config():
         "memory":           8192,
         "disk_size":        51200,
     }
-    mock_terraform.destroy.assert_called_once_with(f"booking-{booking_id}", expected_config)
+    mock_terraform.destroy.assert_called_once_with(f"booking-{booking_id}", expected_config, None)
 
 
 @pytest.mark.asyncio

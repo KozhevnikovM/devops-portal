@@ -20,10 +20,20 @@ hw_config_repo = HWConfigRepository()
 terraform = StubTerraformAdapter() if settings.USE_STUB_TERRAFORM else TerraformVcdAdapter()
 
 
+def _any_api_token() -> str | None:
+    """Return any available VCD API token for destroy (no locking needed)."""
+    if settings.VCD_API_TOKENS:
+        tokens = [t.strip() for t in settings.VCD_API_TOKENS.split(",") if t.strip()]
+        if tokens:
+            return tokens[0]
+    return settings.VCD_API_TOKEN or None
+
+
 @celery_app.task(bind=True, max_retries=2, default_retry_delay=30)
 def teardown_vm_task(self, booking_id: str) -> None:
     booking_uuid = UUID(booking_id)
     workspace_id = f"booking-{booking_id}"
+    api_token = None if settings.USE_STUB_TERRAFORM else _any_api_token()
 
     with SyncSessionLocal() as session:
         try:
@@ -41,7 +51,7 @@ def teardown_vm_task(self, booking_id: str) -> None:
             repo.sync_update_status(session, booking_uuid, BookingStatus.RELEASING)
             logger.info("Teardown started for booking %s", booking_id)
 
-            asyncio.run(terraform.destroy(workspace_id, config))
+            asyncio.run(terraform.destroy(workspace_id, config, api_token))
 
             repo.sync_update_status(session, booking_uuid, BookingStatus.RELEASED)
             logger.info("Teardown complete for booking %s", booking_id)
