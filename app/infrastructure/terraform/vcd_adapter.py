@@ -71,8 +71,9 @@ class TerraformVcdAdapter:
             }}
 
             resource "vcd_vapp_org_network" "this" {{
-              vapp_name        = vcd_vapp.this.name
-              org_network_name = var.network_name
+              vapp_name              = vcd_vapp.this.name
+              org_network_name       = var.network_name
+              reboot_vapp_on_removal = true
             }}
 
             module "vm" {{
