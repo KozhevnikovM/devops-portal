@@ -44,6 +44,41 @@ Create a new VM booking.
 
 ---
 
+### `DELETE /bookings/{booking_id}`
+
+Release a VM booking. Transitions the booking to `RELEASING` and queues a teardown task
+that runs `terraform destroy`. The booking reaches `RELEASED` once teardown completes.
+
+**Path parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `booking_id` | UUID | ID of the booking to release |
+
+**Responses:**
+
+- `202 Accepted` — teardown queued; booking status is now `RELEASING`. Returns HTML row fragment (default) or JSON (with `Accept: application/json`).
+- `404 Not Found` — booking does not exist.
+- `409 Conflict` — booking is in-flight (`PENDING`, `PROVISIONING`, `RETRY`, or already `RELEASING`) or already `RELEASED`.
+
+**Releasable statuses:** `READY`, `FAILED`
+
+**JSON response body (202):**
+```json
+{
+  "id": "uuid",
+  "status": "RELEASING"
+}
+```
+
+**Example:**
+```bash
+curl -s -X DELETE http://localhost:8000/bookings/<booking-id> \
+     -H "Accept: application/json" | python3 -m json.tool
+```
+
+---
+
 ### `GET /bookings/{booking_id}/row`
 
 Returns an HTML fragment for a single booking row. Used by HTMX polling.

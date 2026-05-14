@@ -7,3 +7,5 @@ class BookingStatus(str, Enum):
     RETRY        = "RETRY"
     READY        = "READY"
     FAILED       = "FAILED"
+    RELEASING    = "RELEASING"
+    RELEASED     = "RELEASED"

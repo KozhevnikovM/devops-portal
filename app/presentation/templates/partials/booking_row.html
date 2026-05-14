@@ -1,4 +1,4 @@
-{% set is_terminal = booking.status.value in ('READY', 'FAILED') %}
+{% set is_terminal = booking.status.value in ('READY', 'FAILED', 'RELEASED') %}
 <tr
     id="booking-{{ booking.id }}"
     class="border-b border-gray-800 last:border-0 hover:bg-gray-800/40 transition-colors"
@@ -16,7 +16,7 @@
     </td>
     <td class="px-4 py-3">
         <span class="text-xs px-2 py-1 rounded font-semibold status-{{ booking.status.value }}">
-            {% if booking.status.value in ('PENDING', 'PROVISIONING', 'RETRY') %}
+            {% if booking.status.value in ('PENDING', 'PROVISIONING', 'RETRY', 'RELEASING') %}
                 <span class="animate-pulse">⬤</span>
             {% endif %}
             {{ booking.status.value }}
@@ -27,6 +27,21 @@
     <td class="px-4 py-3 text-gray-300">
         {% if booking.vm_ip %}
             <span class="text-green-400">{{ booking.vm_ip }}</span>
+        {% else %}
+            <span class="text-gray-600">—</span>
+        {% endif %}
+    </td>
+    <td class="px-4 py-3">
+        {% if booking.status.value == 'READY' %}
+            <button
+                class="text-xs px-2 py-1 rounded bg-red-900 text-red-300 border border-red-700 hover:bg-red-800 transition-colors"
+                hx-delete="/bookings/{{ booking.id }}"
+                hx-target="#booking-{{ booking.id }}"
+                hx-swap="outerHTML"
+                hx-confirm="Release this VM? The machine will be destroyed."
+            >
+                Release
+            </button>
         {% else %}
             <span class="text-gray-600">—</span>
         {% endif %}
