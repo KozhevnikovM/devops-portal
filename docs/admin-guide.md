@@ -40,7 +40,6 @@ The portal is now available at `http://<host>:8000`.
 | `VCD_ORG` | When real adapter | VCD organisation name |
 | `VCD_VDC` | When real adapter | VCD virtual datacenter name |
 | `VCD_NETWORK_NAME` | When real adapter | Network to attach the VM to |
-| `VCD_VAPP_TEMPLATE_ID` | When real adapter | VM template ID |
 | `VCD_ALLOW_UNVERIFIED_SSL` | No | `true` to skip TLS verification (self-signed certs). Default: `false` |
 | `VCD_API_TOKEN` | When real adapter | Single API refresh token — used when `VCD_API_TOKENS` is empty |
 | `VCD_API_TOKENS` | No | Comma-separated list of API tokens for parallel provisioning (token pool) |
@@ -106,7 +105,51 @@ docker compose run --rm app terraform version
 docker compose run --rm app ls /app/terraform/providers-mirror/registry.terraform.io/vmware/vcd/
 ```
 
-#### Step 3 — Set VCD credentials and configuration
+#### Step 3 — Configure VM images and hardware profiles
+
+VM images and hardware configurations are managed via the API — no SQL required.
+
+After running migrations, the database contains three placeholder VM images
+(`Ubuntu 22.04`, `Ubuntu 20.04`, `Windows 2022`) and three ready-to-use hardware
+profiles (`small`, `medium`, `large`).
+
+**Set real VCD template IDs on the seed images:**
+
+```bash
+# List images to get their IDs
+curl -s http://localhost:8000/api/images | python3 -m json.tool
+
+# Update each image with its real VCD vApp template ID
+curl -s -X PATCH http://localhost:8000/api/images/<image-id> \
+     -H "Content-Type: application/json" \
+     -d '{"vapp_template_id": "urn:vcloud:vapptemplate:real-id-here"}'
+```
+
+**Add a new image:**
+
+```bash
+curl -s -X POST http://localhost:8000/api/images \
+     -H "Content-Type: application/json" \
+     -d '{"name": "Debian 12", "vapp_template_id": "urn:vcloud:vapptemplate:..."}'
+```
+
+**Deactivate an image** (hides it from the booking form):
+
+```bash
+curl -s -X DELETE http://localhost:8000/api/images/<image-id>
+```
+
+**Add a custom hardware profile:**
+
+```bash
+curl -s -X POST http://localhost:8000/api/hardware \
+     -H "Content-Type: application/json" \
+     -d '{"name": "xlarge", "cpus": 8, "memory_mb": 16384, "disk_mb": 102400}'
+```
+
+See [docs/api-reference.md](api-reference.md) for the full API reference.
+
+#### Step 4 — Set VCD credentials and configuration
 
 Add the following to `.env`:
 
@@ -118,7 +161,6 @@ VCD_URL=https://vcd.example.com/api
 VCD_ORG=my-org
 VCD_VDC=my-vdc
 VCD_NETWORK_NAME=my-network
-VCD_VAPP_TEMPLATE_ID=my-template-id-here
 VCD_ALLOW_UNVERIFIED_SSL=false
 
 # Auth — option A: API token (preferred)
@@ -133,7 +175,7 @@ The adapter selects auth mode automatically: if `VCD_API_TOKEN` is set it uses
 `auth_type = "api_token"`; otherwise it falls back to `auth_type = "integrated"`
 with `VCD_USER` / `VCD_PASSWORD`.
 
-#### Step 4 — Verify end-to-end
+#### Step 5 — Verify end-to-end
 
 ```bash
 docker compose up -d
@@ -150,7 +192,7 @@ Check worker logs to follow terraform output:
 docker compose logs -f worker
 ```
 
-#### Step 5 — Roll back to stub
+#### Step 6 — Roll back to stub
 
 Set `USE_STUB_TERRAFORM=true` in `.env` and restart:
 

@@ -10,18 +10,16 @@ from app.domain.enums import BookingStatus
 from app.infrastructure.celery_app import celery_app
 from app.infrastructure.database.session import SyncSessionLocal
 from app.infrastructure.repositories.booking_repo import BookingRepository
+from app.infrastructure.repositories.image_repo import ImageRepository
+from app.infrastructure.repositories.hw_config_repo import HWConfigRepository
 from app.infrastructure.terraform.stub_adapter import StubTerraformAdapter
 from app.infrastructure.terraform.vcd_adapter import TerraformVcdAdapter
 
 logger = logging.getLogger(__name__)
 
-VM_TEMPLATE_CONFIG = {
-    "cpus":      1,
-    "memory":    2048,   # MB
-    "disk_size": 13312,  # MB (13 × 1024)
-}
-
 repo = BookingRepository()
+image_repo = ImageRepository()
+hw_config_repo = HWConfigRepository()
 terraform = StubTerraformAdapter() if settings.USE_STUB_TERRAFORM else TerraformVcdAdapter()
 
 
@@ -53,10 +51,9 @@ def _acquire_token(tokens: list[str], redis_client, timeout: int = 60) -> tuple[
     default_retry_delay=settings.PROVISION_RETRY_DELAY,
     rate_limit=settings.PROVISION_RATE_LIMIT,
 )
-def provision_vm_task(self, booking_id: str) -> None:
+def provision_vm_task(self, booking_id: str, image_id: str, hw_config_id: str) -> None:
     booking_uuid = UUID(booking_id)
     workspace_id = f"booking-{booking_id}"
-    config = {**VM_TEMPLATE_CONFIG, "name": f"portal-{booking_id[:8]}"}
 
     tokens = _token_pool()
     use_semaphore = not settings.USE_STUB_TERRAFORM and bool(tokens)
@@ -78,6 +75,16 @@ def provision_vm_task(self, booking_id: str) -> None:
     try:
         with SyncSessionLocal() as session:
             try:
+                image = image_repo.sync_get(session, UUID(image_id))
+                hw = hw_config_repo.sync_get(session, UUID(hw_config_id))
+                config = {
+                    "name":             f"portal-{booking_id[:8]}",
+                    "vapp_template_id": image.vapp_template_id,
+                    "cpus":             hw.cpus,
+                    "memory":           hw.memory_mb,
+                    "disk_size":        hw.disk_mb,
+                }
+
                 repo.sync_update_status(session, booking_uuid, BookingStatus.PROVISIONING)
                 logger.info("Provisioning started for booking %s", booking_id)
 

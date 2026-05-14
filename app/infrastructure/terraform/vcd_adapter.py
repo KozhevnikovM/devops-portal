@@ -104,7 +104,7 @@ class TerraformVcdAdapter:
         tfvars_lines = [
             f'name             = "{config["name"]}"',
             f'network_name     = "{settings.VCD_NETWORK_NAME}"',
-            f'vapp_template_id = "{settings.VCD_VAPP_TEMPLATE_ID}"',
+            f'vapp_template_id = "{config["vapp_template_id"]}"',
             f'cpus             = {config["cpus"]}',
             f'memory           = {config["memory"]}',
             f'disk_size        = {config["disk_size"]}',

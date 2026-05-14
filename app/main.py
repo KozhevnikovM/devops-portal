@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
 from app.presentation.routes.bookings import router
+from app.presentation.routes.api import router as api_router
 
 
 class _SuppressRowPolling(logging.Filter):
@@ -18,3 +19,4 @@ logging.getLogger("uvicorn.access").addFilter(_SuppressRowPolling())
 app = FastAPI(title="DevOps Portal")
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
 app.include_router(router)
+app.include_router(api_router)

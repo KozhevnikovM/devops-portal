@@ -6,6 +6,26 @@ from app.domain.enums import BookingStatus
 
 
 @dataclass
+class VMImage:
+    id: UUID
+    name: str
+    vapp_template_id: str
+    is_active: bool
+    created_at: datetime
+
+
+@dataclass
+class HWConfig:
+    id: UUID
+    name: str
+    cpus: int
+    memory_mb: int
+    disk_mb: int
+    is_active: bool
+    created_at: datetime
+
+
+@dataclass
 class Booking:
     id: UUID
     user_id: str
@@ -13,6 +33,10 @@ class Booking:
     ttl_hours: int
     expires_at: datetime
     created_at: datetime
+    image_id: UUID
+    image_name: str
+    hw_config_id: UUID
+    hw_config_name: str
     vm_ip: str | None = None
 
 
