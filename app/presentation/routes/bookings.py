@@ -8,22 +8,26 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.application.use_cases.create_booking import CreateBookingUseCase
 from app.infrastructure.database.session import get_async_session
 from app.infrastructure.repositories.booking_repo import BookingRepository
-from app.infrastructure.repositories.template_repo import TemplateRepository
+from app.infrastructure.repositories.image_repo import ImageRepository
+from app.infrastructure.repositories.hw_config_repo import HWConfigRepository
 
 router = APIRouter()
 templates = Jinja2Templates(directory="app/presentation/templates")
 
 _repo = BookingRepository()
-_template_repo = TemplateRepository()
-_use_case = CreateBookingUseCase(_repo, _template_repo)
+_image_repo = ImageRepository()
+_hw_config_repo = HWConfigRepository()
+_use_case = CreateBookingUseCase(_repo, _image_repo, _hw_config_repo)
 
 
 @router.get("/", response_class=HTMLResponse)
 async def index(request: Request, session: AsyncSession = Depends(get_async_session)):
     bookings = await _repo.list_all(session)
-    vm_templates = await _template_repo.list_active(session)
+    vm_images = await _image_repo.list_active(session)
+    hw_configs = await _hw_config_repo.list_active(session)
     return templates.TemplateResponse(
-        request, "index.html", {"bookings": bookings, "vm_templates": vm_templates}
+        request, "index.html",
+        {"bookings": bookings, "vm_images": vm_images, "hw_configs": hw_configs},
     )
 
 
@@ -31,10 +35,11 @@ async def index(request: Request, session: AsyncSession = Depends(get_async_sess
 async def create_booking(
     request: Request,
     ttl_hours: int = Form(...),
-    template_id: UUID = Form(...),
+    image_id: UUID = Form(...),
+    hw_config_id: UUID = Form(...),
     session: AsyncSession = Depends(get_async_session),
 ):
-    booking = await _use_case.execute(session, ttl_hours, template_id)
+    booking = await _use_case.execute(session, ttl_hours, image_id, hw_config_id)
 
     if "application/json" in request.headers.get("accept", ""):
         return JSONResponse(
@@ -44,8 +49,10 @@ async def create_booking(
                 "ttl_hours": booking.ttl_hours,
                 "expires_at": booking.expires_at.isoformat(),
                 "created_at": booking.created_at.isoformat(),
-                "template_id": str(booking.template_id),
-                "template_name": booking.template_name,
+                "image_id": str(booking.image_id),
+                "image_name": booking.image_name,
+                "hw_config_id": str(booking.hw_config_id),
+                "hw_config_name": booking.hw_config_name,
             },
             status_code=201,
         )

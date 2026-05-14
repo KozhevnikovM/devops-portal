@@ -105,24 +105,49 @@ docker compose run --rm app terraform version
 docker compose run --rm app ls /app/terraform/providers-mirror/registry.terraform.io/vmware/vcd/
 ```
 
-#### Step 3 — Update VM template IDs in the database
+#### Step 3 — Configure VM images and hardware profiles
 
-VM images are stored in the `vm_templates` table. The migration seeds three rows
-(`Ubuntu 22.04`, `Ubuntu 20.04`, `Windows 2022`) with placeholder `vapp_template_id`
-values. Update them to match your actual VCD vApp template IDs before switching to the
-real adapter:
+VM images and hardware configurations are managed via the API — no SQL required.
 
-```sql
-UPDATE vm_templates SET vapp_template_id = '<real-id>' WHERE name = 'Ubuntu 22.04';
-UPDATE vm_templates SET vapp_template_id = '<real-id>' WHERE name = 'Ubuntu 20.04';
-UPDATE vm_templates SET vapp_template_id = '<real-id>' WHERE name = 'Windows 2022';
+After running migrations, the database contains three placeholder VM images
+(`Ubuntu 22.04`, `Ubuntu 20.04`, `Windows 2022`) and three ready-to-use hardware
+profiles (`small`, `medium`, `large`).
+
+**Set real VCD template IDs on the seed images:**
+
+```bash
+# List images to get their IDs
+curl -s http://localhost:8000/api/images | python3 -m json.tool
+
+# Update each image with its real VCD vApp template ID
+curl -s -X PATCH http://localhost:8000/api/images/<image-id> \
+     -H "Content-Type: application/json" \
+     -d '{"vapp_template_id": "urn:vcloud:vapptemplate:real-id-here"}'
 ```
 
-To deactivate a template so it no longer appears in the booking form:
+**Add a new image:**
 
-```sql
-UPDATE vm_templates SET is_active = false WHERE name = 'Windows 2022';
+```bash
+curl -s -X POST http://localhost:8000/api/images \
+     -H "Content-Type: application/json" \
+     -d '{"name": "Debian 12", "vapp_template_id": "urn:vcloud:vapptemplate:..."}'
 ```
+
+**Deactivate an image** (hides it from the booking form):
+
+```bash
+curl -s -X DELETE http://localhost:8000/api/images/<image-id>
+```
+
+**Add a custom hardware profile:**
+
+```bash
+curl -s -X POST http://localhost:8000/api/hardware \
+     -H "Content-Type: application/json" \
+     -d '{"name": "xlarge", "cpus": 8, "memory_mb": 16384, "disk_mb": 102400}'
+```
+
+See [docs/api-reference.md](api-reference.md) for the full API reference.
 
 #### Step 4 — Set VCD credentials and configuration
 

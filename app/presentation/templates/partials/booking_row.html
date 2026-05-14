@@ -9,7 +9,11 @@
     {% endif %}
 >
     <td class="px-4 py-3 text-gray-400 text-xs">{{ booking.id | string | truncate(8, True, '') }}…</td>
-    <td class="px-4 py-3 text-gray-300 text-sm">{{ booking.template_name }}</td>
+    <td class="px-4 py-3 text-gray-300 text-sm">
+        {{ booking.image_name }}
+        <span class="text-gray-500">/</span>
+        {{ booking.hw_config_name }}
+    </td>
     <td class="px-4 py-3">
         <span class="text-xs px-2 py-1 rounded font-semibold status-{{ booking.status.value }}">
             {% if booking.status.value in ('PENDING', 'PROVISIONING', 'RETRY') %}
