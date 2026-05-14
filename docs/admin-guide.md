@@ -49,7 +49,7 @@ The portal is now available at `http://<host>:8000`.
 | `PROVISION_MAX_RETRIES` | No | How many times to retry a failed provisioning task. Default: `3` |
 | `PROVISION_RETRY_DELAY` | No | Seconds between retries. Should match VCD token cooldown. Default: `120` |
 | `PROVISION_RATE_LIMIT` | No | Max provision tasks per worker per time window (`0.5/m` = 1 per 2 min). Default: `0.5/m` |
-| `TF_PG_CONN_STR` | No | PostgreSQL connection string for Terraform state backend. Must use the standard `postgresql://` driver (not `+asyncpg` / `+psycopg2`). Default matches the bundled Postgres service. |
+| `TF_PG_CONN_STR` | No | PostgreSQL connection string for Terraform state backend. Must use the standard `postgresql://` driver (not `+asyncpg` / `+psycopg2`). Append `?sslmode=disable` for servers without SSL. Default matches the bundled Postgres service. |
 
 ---
 
@@ -76,8 +76,9 @@ is isolated per VM and a destroy operation for one booking cannot affect another
 
 The workspace configuration files (`.tf`, `.tfvars`) are ephemeral and written to
 `TF_WORKSPACES_DIR` before each operation, so they do not need to survive
-container restarts. Override `TF_PG_CONN_STR` if your PostgreSQL is not the
-bundled compose service.
+container restarts. Override `TF_PG_CONN_STR` if your PostgreSQL is not the bundled compose service.
+The default includes `?sslmode=disable` because the bundled Postgres does not
+have SSL enabled; remove or change this parameter for SSL-enabled servers.
 
 ---
 
