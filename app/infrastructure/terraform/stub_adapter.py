@@ -10,5 +10,5 @@ class StubTerraformAdapter:
         ip = f"192.168.100.{random.randint(10, 254)}"
         return {"ip": ip}
 
-    async def destroy(self, workspace_id: str) -> None:
+    async def destroy(self, workspace_id: str, config: dict, api_token: str | None = None) -> None:
         await asyncio.sleep(2)

@@ -57,7 +57,6 @@ services:
     volumes:
       - .:/app
       - portal_static:/app/app/static
-      - tf_workspaces:/app/tf-workspaces
     depends_on:
       postgres:
         condition: service_healthy
@@ -67,4 +66,3 @@ services:
 volumes:
   postgres_data:
   portal_static:
-  tf_workspaces:
