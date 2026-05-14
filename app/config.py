@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     PROVISION_RATE_LIMIT: str = "0.5/m"
 
     # Terraform / VCD — only required when USE_STUB_TERRAFORM=False
-    TF_WORKSPACES_DIR: str = "/tmp/tf-workspaces"
+    TF_WORKSPACES_DIR: str = "/app/tf-workspaces"
     TF_MODULE_SOURCE: str = "/app/terraform/modules/vapp_vm"
     TF_APPLY_REFRESH: bool = False
     TF_APPLY_PARALLELISM: int = 1
