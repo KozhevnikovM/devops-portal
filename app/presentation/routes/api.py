@@ -26,6 +26,7 @@ class VMImageCreate(BaseModel):
 class VMImageUpdate(BaseModel):
     name: Optional[str] = None
     vapp_template_id: Optional[str] = None
+    is_active: Optional[bool] = None
 
 
 class VMImageResponse(BaseModel):
@@ -50,6 +51,7 @@ class HWConfigUpdate(BaseModel):
     cpus: Optional[int] = None
     memory_mb: Optional[int] = None
     disk_mb: Optional[int] = None
+    is_active: Optional[bool] = None
 
 
 class HWConfigResponse(BaseModel):
