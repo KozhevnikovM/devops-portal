@@ -169,3 +169,15 @@ class BookingRepository:
             )
         )
         return [_to_entity(m) for m in result.scalars().all()]
+
+    def sync_list_in_progress(self, session: Session) -> list[Booking]:
+        """Return all PENDING/PROVISIONING/RETRY bookings regardless of age."""
+        statuses = [
+            BookingStatus.PENDING.value,
+            BookingStatus.PROVISIONING.value,
+            BookingStatus.RETRY.value,
+        ]
+        result = session.execute(
+            select(BookingModel).where(BookingModel.status.in_(statuses))
+        )
+        return [_to_entity(m) for m in result.scalars().all()]
