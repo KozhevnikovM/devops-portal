@@ -44,6 +44,8 @@ The portal is now available at `http://<host>:8000`.
 | `VCD_API_TOKEN` | When real adapter | Single API refresh token — used when `VCD_API_TOKENS` is empty |
 | `VCD_API_TOKENS` | No | Comma-separated list of API tokens for parallel provisioning (token pool) |
 | `VCD_TOKEN_LOCK_TTL` | No | Redis lock TTL in seconds. Auto-releases if worker crashes. Default: `900` |
+| `VCD_TOKEN_SEMAPHORE` | No | Set `false` to disable Redis locking even when `VCD_API_TOKENS` is configured. Default: `true` |
+| `VCD_TOKEN_MAX_PARALLEL` | No | Max concurrent provisioning jobs per token. Default: `1` |
 | `VCD_USER` | When real adapter | Username — used when both token settings are empty |
 | `VCD_PASSWORD` | When real adapter | Password — used when both token settings are empty |
 | `PROVISION_MAX_RETRIES` | No | How many times to retry a failed provisioning task. Default: `3` |
@@ -347,3 +349,31 @@ locks but only N tasks will run in parallel — the rest wait up to 60 s before 
 
 **Crash recovery:** if a worker dies mid-apply the Redis lock expires after
 `VCD_TOKEN_LOCK_TTL` seconds and the next waiting task picks it up automatically.
+
+### Multiple parallel jobs per token
+
+If your VCD environment can handle concurrent API calls on the same token, set
+`VCD_TOKEN_MAX_PARALLEL` to allow N jobs per token slot:
+
+```bash
+VCD_API_TOKENS=token-a,token-b   # 2 tokens
+VCD_TOKEN_MAX_PARALLEL=2         # 2 jobs per token → 4 concurrent VMs total
+```
+
+Scale workers to match the total slot count (`tokens × max_parallel`):
+
+```bash
+docker compose up -d --scale worker=4
+```
+
+### Disabling the semaphore
+
+If Redis locking is undesirable (e.g. single-worker setups, Redis unavailable, or
+username/password auth where no token coordination is needed), set:
+
+```bash
+VCD_TOKEN_SEMAPHORE=false
+```
+
+Tokens are still passed to Terraform; they are simply not locked in Redis. Use only
+when you are certain concurrent token reuse is safe for your VCD environment.
