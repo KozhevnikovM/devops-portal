@@ -47,3 +47,15 @@ class VM:
     workspace_id: str
     ip_address: str | None
     created_at: datetime
+
+
+@dataclass
+class BookingAuditEntry:
+    id: UUID
+    booking_id: UUID
+    actor_id: str
+    action: str
+    old_status: str | None
+    new_status: str | None
+    metadata: dict | None
+    created_at: datetime

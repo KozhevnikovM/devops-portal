@@ -79,6 +79,54 @@ curl -s -X DELETE http://localhost:8000/bookings/<booking-id> \
 
 ---
 
+### `GET /bookings/{booking_id}/audit`
+
+Returns the full audit trail for a booking — every CREATED and STATUS_CHANGED event, in chronological order.
+
+**Path parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `booking_id` | UUID | ID of the booking |
+
+**Responses:**
+
+- `200 OK` — JSON array of audit entries (may be empty if no events recorded yet).
+- `404 Not Found` — booking does not exist.
+
+**Response body:**
+```json
+[
+  {
+    "id": "uuid",
+    "booking_id": "uuid",
+    "action": "CREATED",
+    "old_status": null,
+    "new_status": null,
+    "actor_id": "dev-user",
+    "metadata": null,
+    "created_at": "2026-05-15T10:00:00+00:00"
+  },
+  {
+    "id": "uuid",
+    "booking_id": "uuid",
+    "action": "STATUS_CHANGED",
+    "old_status": "PROVISIONING",
+    "new_status": "READY",
+    "actor_id": "system",
+    "metadata": {"vm_ip": "10.0.0.1"},
+    "created_at": "2026-05-15T10:01:30+00:00"
+  }
+]
+```
+
+**Example:**
+```bash
+curl -s http://localhost:8000/bookings/<booking-id>/audit | python3 -m json.tool
+```
+
+---
+
 ### `GET /bookings/{booking_id}/row`
 
 Returns an HTML fragment for a single booking row. Used by HTMX polling.
