@@ -31,6 +31,7 @@ class Settings(BaseSettings):
     VCD_API_TOKEN: str = ""
     VCD_API_TOKENS: str = ""   # comma-separated; overrides VCD_API_TOKEN when set
     VCD_TOKEN_LOCK_TTL: int = 900   # Redis lock TTL in seconds
+    VCD_TOKEN_MAX_PARALLEL: int = 4   # max concurrent provisioning jobs per token
     VCD_USER: str = ""
     VCD_PASSWORD: str = ""
     VCD_ALLOW_UNVERIFIED_SSL: bool = False

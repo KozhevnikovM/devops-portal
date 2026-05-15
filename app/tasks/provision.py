@@ -31,16 +31,16 @@ def _token_pool() -> list[str]:
     return []
 
 
-def _acquire_token(tokens: list[str], redis_client, timeout: int = 60) -> tuple[int, str]:
-    """Poll until one token lock is acquired; return (index, token)."""
+def _acquire_token(tokens: list[str], redis_client, timeout: int = 60) -> tuple[str, str]:
+    """Poll until a slot is free; return (lock_key, token)."""
+    max_parallel = settings.VCD_TOKEN_MAX_PARALLEL
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         for i, token in enumerate(tokens):
-            if redis_client.set(
-                f"vcd_token_lock:{i}", "1",
-                nx=True, ex=settings.VCD_TOKEN_LOCK_TTL,
-            ):
-                return i, token
+            for slot in range(max_parallel):
+                lock_key = f"vcd_token_lock:{i}:{slot}"
+                if redis_client.set(lock_key, "1", nx=True, ex=settings.VCD_TOKEN_LOCK_TTL):
+                    return lock_key, token
         time.sleep(5)
     raise RuntimeError(f"no VCD token available after {timeout}s")
 
@@ -65,8 +65,7 @@ def provision_vm_task(self, booking_id: str, image_id: str, hw_config_id: str) -
     if use_semaphore:
         redis_client = redis_lib.Redis.from_url(settings.REDIS_URL)
         try:
-            token_index, api_token = _acquire_token(tokens, redis_client)
-            lock_key = f"vcd_token_lock:{token_index}"
+            lock_key, api_token = _acquire_token(tokens, redis_client)
             logger.info("Acquired token lock %s for booking %s", lock_key, booking_id)
         except RuntimeError as exc:
             logger.warning("Token acquire timed out for booking %s, retrying", booking_id)
