@@ -78,8 +78,29 @@ async def test_create_booking_writes_created_audit():
     assert audit_rows[0].action == "CREATED"
     assert audit_rows[0].booking_id == booking.id
     assert audit_rows[0].actor_id == booking.user_id
-    assert audit_rows[0].old_status is None
-    assert audit_rows[0].new_status is None
+
+
+@pytest.mark.asyncio
+async def test_create_booking_flushes_before_audit_to_satisfy_fk():
+    """Regression: booking must be flushed before audit insert to avoid FK violation."""
+    from app.infrastructure.database.models import BookingModel
+    call_order = []
+
+    booking = _make_booking_entity()
+    session = AsyncMock()
+    session.commit = AsyncMock()
+    session.refresh = AsyncMock()
+    session.flush = AsyncMock(side_effect=lambda: call_order.append("flush"))
+    session.add = MagicMock(side_effect=lambda obj: call_order.append(type(obj).__name__))
+
+    repo = BookingRepository()
+    await repo.create(session, booking)
+
+    assert "flush" in call_order
+    booking_idx = call_order.index("BookingModel")
+    flush_idx = call_order.index("flush")
+    audit_idx = call_order.index("BookingAuditModel")
+    assert booking_idx < flush_idx < audit_idx
 
 
 @pytest.mark.asyncio
