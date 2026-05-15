@@ -50,6 +50,7 @@ The portal is now available at `http://<host>:8000`.
 | `PROVISION_RETRY_DELAY` | No | Seconds between retries. Should match VCD token cooldown. Default: `120` |
 | `PROVISION_RATE_LIMIT` | No | Max provision tasks per worker per time window (`0.5/m` = 1 per 2 min). Default: `0.5/m` |
 | `TF_PG_CONN_STR` | No | PostgreSQL connection string for Terraform state backend. Must use the standard `postgresql://` driver (not `+asyncpg` / `+psycopg2`). Append `?sslmode=disable` for servers without SSL. Default matches the bundled Postgres service. |
+| `STALE_PROVISIONING_THRESHOLD_MINUTES` | No | Minutes after which a booking stuck in PENDING/PROVISIONING/RETRY is marked FAILED by the beat task. Default: `60` |
 
 ---
 
@@ -249,6 +250,45 @@ Check worker logs to follow teardown output:
 
 ```bash
 docker compose logs -f worker
+```
+
+---
+
+## TTL & Auto-Release
+
+Two Celery Beat tasks run on a schedule to enforce booking lifecycle rules
+automatically. They require the `beat` service to be running (included in
+`docker-compose.yml`).
+
+### `enforce_ttl` — every 5 minutes
+
+Finds all `READY` bookings whose `expires_at` is in the past, transitions each
+to `RELEASING`, and queues `teardown_vm_task`. The booking will reach `RELEASED`
+once the worker finishes `terraform destroy`.
+
+Bookings already in `RELEASING`, `RELEASED`, or `FAILED` are ignored.
+
+### `reap_stale_provisioning` — every 15 minutes
+
+Finds `PENDING`, `PROVISIONING`, or `RETRY` bookings whose `created_at` is older
+than `STALE_PROVISIONING_THRESHOLD_MINUTES` (default: 60 minutes) and marks each
+one `FAILED` directly. No Terraform action is taken because provisioning never
+completed, so there is no workspace to destroy.
+
+### Starting the beat service
+
+The beat service is included in `docker-compose.yml` and starts automatically
+with `docker compose up`. Only one beat instance should run at a time.
+
+```bash
+# Start beat alongside all other services
+docker compose up -d
+
+# Or start beat alone
+docker compose up -d beat
+
+# Follow beat logs
+docker compose logs -f beat
 ```
 
 ---

@@ -15,6 +15,9 @@ class Settings(BaseSettings):
     PROVISION_RETRY_DELAY: int = 120   # seconds
     PROVISION_RATE_LIMIT: str = "0.5/m"
 
+    # Celery beat tasks
+    STALE_PROVISIONING_THRESHOLD_MINUTES: int = 60
+
     # Terraform / VCD — only required when USE_STUB_TERRAFORM=False
     TF_WORKSPACES_DIR: str = "/tmp/tf-workspaces"
     TF_PG_CONN_STR: str = "postgresql://portal:portal@postgres:5432/portal?sslmode=disable"

@@ -1,3 +1,4 @@
+from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 from sqlalchemy import select
@@ -93,3 +94,31 @@ class BookingRepository:
         if vm_ip is not None:
             model.vm_ip = vm_ip
         session.commit()
+
+    def sync_list_expired(self, session: Session) -> list[Booking]:
+        """Return READY bookings whose expires_at is in the past."""
+        result = session.execute(
+            select(BookingModel).where(
+                BookingModel.status == BookingStatus.READY.value,
+                BookingModel.expires_at < datetime.now(timezone.utc),
+            )
+        )
+        return [_to_entity(m) for m in result.scalars().all()]
+
+    def sync_list_stale_provisioning(
+        self, session: Session, threshold_minutes: int = 60
+    ) -> list[Booking]:
+        """Return PENDING/PROVISIONING/RETRY bookings created more than threshold_minutes ago."""
+        stale_statuses = [
+            BookingStatus.PENDING.value,
+            BookingStatus.PROVISIONING.value,
+            BookingStatus.RETRY.value,
+        ]
+        cutoff = datetime.now(timezone.utc) - timedelta(minutes=threshold_minutes)
+        result = session.execute(
+            select(BookingModel).where(
+                BookingModel.status.in_(stale_statuses),
+                BookingModel.created_at < cutoff,
+            )
+        )
+        return [_to_entity(m) for m in result.scalars().all()]
