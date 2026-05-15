@@ -8,4 +8,6 @@
   .status-RETRY        { @apply bg-amber-900 text-amber-300 border border-amber-700; }
   .status-READY        { @apply bg-green-900 text-green-300 border border-green-700; }
   .status-FAILED       { @apply bg-red-900 text-red-300 border border-red-700; }
+  .status-RELEASING    { @apply bg-orange-900 text-orange-300 border border-orange-700; }
+  .status-RELEASED     { @apply bg-gray-800 text-gray-400 border border-gray-600; }
 }

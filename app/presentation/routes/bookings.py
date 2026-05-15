@@ -1,11 +1,13 @@
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Form, Request
+from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.use_cases.create_booking import CreateBookingUseCase
+from app.domain.enums import BookingStatus
+from app.domain.exceptions import BookingNotFoundError
 from app.infrastructure.database.session import get_async_session
 from app.infrastructure.repositories.booking_repo import BookingRepository
 from app.infrastructure.repositories.image_repo import ImageRepository
@@ -71,4 +73,40 @@ async def booking_row(
     booking = await _repo.get(session, booking_id)
     return templates.TemplateResponse(
         request, "partials/booking_row.html", {"booking": booking}
+    )
+
+
+_RELEASABLE_STATUSES = {BookingStatus.READY, BookingStatus.FAILED}
+_IN_FLIGHT_STATUSES  = {BookingStatus.PENDING, BookingStatus.PROVISIONING, BookingStatus.RETRY, BookingStatus.RELEASING}
+
+
+@router.delete("/bookings/{booking_id}", status_code=202)
+async def release_booking(
+    booking_id: UUID,
+    request: Request,
+    session: AsyncSession = Depends(get_async_session),
+):
+    from app.tasks.teardown import teardown_vm_task  # avoid circular import at module load
+
+    try:
+        booking = await _repo.get(session, booking_id)
+    except BookingNotFoundError:
+        raise HTTPException(status_code=404, detail="Booking not found")
+
+    if booking.status in _IN_FLIGHT_STATUSES:
+        raise HTTPException(status_code=409, detail="Cannot release an in-flight booking")
+
+    if booking.status not in _RELEASABLE_STATUSES:
+        raise HTTPException(status_code=409, detail=f"Cannot release booking with status {booking.status.value}")
+
+    await _repo.update_status(session, booking_id, BookingStatus.RELEASING)
+    teardown_vm_task.delay(str(booking_id))
+
+    booking = await _repo.get(session, booking_id)
+
+    if "application/json" in request.headers.get("accept", ""):
+        return JSONResponse({"id": str(booking.id), "status": booking.status.value}, status_code=202)
+
+    return templates.TemplateResponse(
+        request, "partials/booking_row.html", {"booking": booking}, status_code=202
     )

@@ -62,6 +62,10 @@ class TerraformVcdAdapter:
                 }}
               }}
               required_version = ">= 1.5.5"
+              backend "pg" {{
+                conn_str    = "{settings.TF_PG_CONN_STR}"
+                schema_name = "tfstate"
+              }}
             }}
 
             {self._provider_block(api_token)}
@@ -71,8 +75,9 @@ class TerraformVcdAdapter:
             }}
 
             resource "vcd_vapp_org_network" "this" {{
-              vapp_name        = vcd_vapp.this.name
-              org_network_name = var.network_name
+              vapp_name              = vcd_vapp.this.name
+              org_network_name       = var.network_name
+              reboot_vapp_on_removal = true
             }}
 
             module "vm" {{
@@ -131,6 +136,7 @@ class TerraformVcdAdapter:
         self._write_workspace(workspace_dir, config, api_token)
 
         await self._run("init", "-no-color", cwd=workspace_dir)
+        await self._run("workspace", "select", "-or-create", workspace_id, cwd=workspace_dir)
         await self._run(
             "apply", "-auto-approve", "-no-color",
             f"-refresh={str(settings.TF_APPLY_REFRESH).lower()}",
@@ -143,9 +149,20 @@ class TerraformVcdAdapter:
         ip = outputs["primary_ip"]["value"]
         return {"ip": ip}
 
-    async def destroy(self, workspace_id: str) -> None:
+    async def destroy(self, workspace_id: str, config: dict, api_token: str | None = None) -> None:
         workspace_dir = self._workspace_dir(workspace_id)
-        if not workspace_dir.exists():
+        self._write_workspace(workspace_dir, config, api_token)
+
+        await self._run("init", "-no-color", cwd=workspace_dir)
+        try:
+            await self._run("workspace", "select", workspace_id, cwd=workspace_dir)
+        except TerraformError:
+            # Workspace never existed in PG — nothing was provisioned, nothing to destroy.
+            logger.info("No PG state found for workspace %s, skipping destroy", workspace_id)
+            shutil.rmtree(workspace_dir, ignore_errors=True)
             return
+
         await self._run("destroy", "-auto-approve", "-no-color", cwd=workspace_dir)
+        await self._run("workspace", "select", "default", cwd=workspace_dir)
+        await self._run("workspace", "delete", workspace_id, cwd=workspace_dir)
         shutil.rmtree(workspace_dir, ignore_errors=True)

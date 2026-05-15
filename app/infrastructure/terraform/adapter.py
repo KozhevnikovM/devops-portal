@@ -7,6 +7,6 @@ class TerraformAdapter(Protocol):
         """Provision resources. Returns dict with at least {"ip": str}."""
         ...
 
-    async def destroy(self, workspace_id: str) -> None:
+    async def destroy(self, workspace_id: str, config: dict, api_token: str | None = None) -> None:
         """Tear down resources for the given workspace."""
         ...

@@ -43,7 +43,7 @@ async def test_stub_adapter_returns_ip():
 async def test_stub_adapter_destroy_completes():
     adapter = StubTerraformAdapter()
     with patch("asyncio.sleep", return_value=None):
-        await adapter.destroy("workspace-test")
+        await adapter.destroy("workspace-test", config={})
 
 
 def test_provision_task_sets_ready_status():

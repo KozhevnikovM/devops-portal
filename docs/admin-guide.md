@@ -49,6 +49,7 @@ The portal is now available at `http://<host>:8000`.
 | `PROVISION_MAX_RETRIES` | No | How many times to retry a failed provisioning task. Default: `3` |
 | `PROVISION_RETRY_DELAY` | No | Seconds between retries. Should match VCD token cooldown. Default: `120` |
 | `PROVISION_RATE_LIMIT` | No | Max provision tasks per worker per time window (`0.5/m` = 1 per 2 min). Default: `0.5/m` |
+| `TF_PG_CONN_STR` | No | PostgreSQL connection string for Terraform state backend. Must use the standard `postgresql://` driver (not `+asyncpg` / `+psycopg2`). Append `?sslmode=disable` for servers without SSL. Default matches the bundled Postgres service. |
 
 ---
 
@@ -62,6 +63,22 @@ The application communicates with Terraform through a `TerraformAdapter` Protoco
 - `TerraformVcdAdapter` — runs the `terraform` CLI against VMware Cloud Director.
 
 The active adapter is selected in [app/tasks/provision.py](../app/tasks/provision.py) based on `USE_STUB_TERRAFORM`.
+
+### Terraform state storage
+
+`TerraformVcdAdapter` uses the Terraform `pg` backend to store state in the
+existing PostgreSQL database. Terraform creates the `tfstate` schema and state
+table automatically on the first `terraform init` — no manual migration is
+needed.
+
+Each booking gets its own named Terraform workspace (`booking-<uuid>`), so state
+is isolated per VM and a destroy operation for one booking cannot affect another.
+
+The workspace configuration files (`.tf`, `.tfvars`) are ephemeral and written to
+`TF_WORKSPACES_DIR` before each operation, so they do not need to survive
+container restarts. Override `TF_PG_CONN_STR` if your PostgreSQL is not the bundled compose service.
+The default includes `?sslmode=disable` because the bundled Postgres does not
+have SSL enabled; remove or change this parameter for SSL-enabled servers.
 
 ---
 
@@ -180,10 +197,10 @@ with `VCD_USER` / `VCD_PASSWORD`.
 ```bash
 docker compose up -d
 # Open http://localhost:8000, book a VM, watch status reach READY with a real IP.
-# Or use the API:
+# Or use the API (replace UUIDs with real IDs from GET /api/images and /api/hardware):
 curl -s -X POST http://localhost:8000/bookings \
      -H "Accept: application/json" \
-     -d "ttl_hours=1" | python3 -m json.tool
+     -d "ttl_hours=1&image_id=<image-uuid>&hw_config_id=<hw-config-uuid>" | python3 -m json.tool
 ```
 
 Check worker logs to follow terraform output:
@@ -201,6 +218,38 @@ docker compose up -d app worker
 ```
 
 No rebuild needed — the flag is read at worker startup.
+
+---
+
+## Releasing Bookings
+
+A `READY` (or `FAILED`) booking can be released manually via the UI or the API.
+Releasing queues a `teardown_vm_task` Celery task that runs `terraform destroy`
+for the booking's workspace and transitions the status from `RELEASING` to
+`RELEASED` once complete.
+
+**Via the UI:** click the **Release** button in the booking row. A confirmation
+dialog appears before teardown is queued.
+
+**Via the API:**
+
+```bash
+curl -s -X DELETE http://localhost:8000/bookings/<booking-id> \
+     -H "Accept: application/json" | python3 -m json.tool
+```
+
+The response is `202 Accepted` with `"status": "RELEASING"`. The row updates to
+`RELEASED` once the worker finishes (typically a few seconds with the stub; longer
+with a real VCD apply).
+
+Bookings in `PENDING`, `PROVISIONING`, `RETRY`, or already `RELEASING` return
+`409 Conflict` — wait for the in-flight operation to finish first.
+
+Check worker logs to follow teardown output:
+
+```bash
+docker compose logs -f worker
+```
 
 ---
 
