@@ -6,22 +6,22 @@
     <title>Login — DevOps Portal</title>
     <link rel="stylesheet" href="/static/css/tailwind.css">
 </head>
-<body class="h-full text-gray-100 font-mono flex items-center justify-center">
-    <div class="w-full max-w-sm">
-        <div class="mb-8 text-center">
-            <span class="text-green-400 text-xl font-bold">▶ DevOps Portal</span>
+<body class="min-h-screen text-gray-100 font-mono flex items-center justify-center">
+    <div class="w-full max-w-xs">
+        <div class="mb-5 text-center">
+            <span class="text-green-400 text-base font-bold">▶ DevOps Portal</span>
         </div>
 
-        <div class="bg-gray-900 border border-gray-800 rounded-lg p-8">
-            <h1 class="text-sm text-gray-400 uppercase tracking-widest mb-6">Sign In</h1>
+        <div class="bg-gray-900 border border-gray-800 rounded-lg p-6">
+            <h1 class="text-xs text-gray-400 uppercase tracking-widest mb-4">Sign In</h1>
 
             {% if error %}
-            <div class="mb-4 px-3 py-2 rounded bg-red-900/50 border border-red-700 text-red-300 text-sm">
+            <div class="mb-3 px-3 py-2 rounded bg-red-900/50 border border-red-700 text-red-300 text-xs">
                 {{ error }}
             </div>
             {% endif %}
 
-            <form method="post" action="/auth/login" class="space-y-4">
+            <form method="post" action="/auth/login" class="space-y-3">
                 <div>
                     <label class="block text-xs text-gray-500 mb-1 uppercase tracking-wider" for="username">
                         Username
@@ -52,7 +52,7 @@
 
                 <button
                     type="submit"
-                    class="w-full mt-2 px-4 py-2 bg-green-700 hover:bg-green-600 text-green-100 text-sm rounded transition-colors"
+                    class="w-full mt-1 px-4 py-2 bg-green-700 hover:bg-green-600 text-green-100 text-xs rounded transition-colors"
                 >
                     Sign In
                 </button>
