@@ -6,9 +6,10 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.use_cases.create_booking import CreateBookingUseCase
-from app.config import settings
+from app.domain.entities import User
 from app.domain.enums import BookingStatus
 from app.domain.exceptions import BookingNotFoundError
+from app.infrastructure.auth import require_user
 from app.infrastructure.database.session import get_async_session
 from app.infrastructure.repositories.booking_repo import BookingRepository
 from app.infrastructure.repositories.image_repo import ImageRepository
@@ -24,18 +25,25 @@ _use_case = CreateBookingUseCase(_repo, _image_repo, _hw_config_repo)
 
 
 @router.get("/", response_class=HTMLResponse)
-async def index(request: Request, session: AsyncSession = Depends(get_async_session)):
+async def index(
+    request: Request,
+    session: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(require_user),
+):
     bookings = await _repo.list_all(session)
     vm_images = await _image_repo.list_active(session)
     hw_configs = await _hw_config_repo.list_active(session)
     return templates.TemplateResponse(
         request, "index.html",
-        {"bookings": bookings, "vm_images": vm_images, "hw_configs": hw_configs},
+        {"bookings": bookings, "vm_images": vm_images, "hw_configs": hw_configs, "current_user": current_user},
     )
 
 
 @router.get("/bookings")
-async def list_bookings(session: AsyncSession = Depends(get_async_session)):
+async def list_bookings(
+    session: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(require_user),
+):
     bookings = await _repo.list_all(session)
     return JSONResponse([
         {
@@ -62,8 +70,9 @@ async def create_booking(
     image_id: UUID = Form(...),
     hw_config_id: UUID = Form(...),
     session: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(require_user),
 ):
-    booking = await _use_case.execute(session, ttl_minutes, image_id, hw_config_id)
+    booking = await _use_case.execute(session, ttl_minutes, image_id, hw_config_id, user_id=str(current_user.id))
 
     if "application/json" in request.headers.get("accept", ""):
         return JSONResponse(
@@ -91,6 +100,7 @@ async def booking_row(
     booking_id: UUID,
     request: Request,
     session: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(require_user),
 ):
     booking = await _repo.get(session, booking_id)
     return templates.TemplateResponse(
@@ -107,6 +117,7 @@ async def release_booking(
     booking_id: UUID,
     request: Request,
     session: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(require_user),
 ):
     from app.tasks.teardown import teardown_vm_task  # avoid circular import at module load
 
@@ -115,13 +126,16 @@ async def release_booking(
     except BookingNotFoundError:
         raise HTTPException(status_code=404, detail="Booking not found")
 
+    if booking.user_id != str(current_user.id) and current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Not the booking owner")
+
     if booking.status in _IN_FLIGHT_STATUSES:
         raise HTTPException(status_code=409, detail="Cannot release an in-flight booking")
 
     if booking.status not in _RELEASABLE_STATUSES:
         raise HTTPException(status_code=409, detail=f"Cannot release booking with status {booking.status.value}")
 
-    await _repo.update_status(session, booking_id, BookingStatus.RELEASING, actor_id=settings.DEV_USER_ID)
+    await _repo.update_status(session, booking_id, BookingStatus.RELEASING, actor_id=str(current_user.id))
     teardown_vm_task.delay(str(booking_id))
 
     booking = await _repo.get(session, booking_id)
@@ -138,11 +152,15 @@ async def release_booking(
 async def get_booking_audit(
     booking_id: UUID,
     session: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(require_user),
 ):
     try:
-        await _repo.get(session, booking_id)
+        booking = await _repo.get(session, booking_id)
     except BookingNotFoundError:
         raise HTTPException(status_code=404, detail="Booking not found")
+
+    if booking.user_id != str(current_user.id) and current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Not the booking owner")
 
     entries = await _repo.list_audit(session, booking_id)
     return JSONResponse([

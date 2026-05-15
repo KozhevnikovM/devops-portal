@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full bg-gray-950">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login — DevOps Portal</title>
+    <link rel="stylesheet" href="/static/css/tailwind.css">
+</head>
+<body class="h-full text-gray-100 font-mono flex items-center justify-center">
+    <div class="w-full max-w-sm">
+        <div class="mb-8 text-center">
+            <span class="text-green-400 text-xl font-bold">▶ DevOps Portal</span>
+        </div>
+
+        <div class="bg-gray-900 border border-gray-800 rounded-lg p-8">
+            <h1 class="text-sm text-gray-400 uppercase tracking-widest mb-6">Sign In</h1>
+
+            {% if error %}
+            <div class="mb-4 px-3 py-2 rounded bg-red-900/50 border border-red-700 text-red-300 text-sm">
+                {{ error }}
+            </div>
+            {% endif %}
+
+            <form method="post" action="/auth/login" class="space-y-4">
+                <div>
+                    <label class="block text-xs text-gray-500 mb-1 uppercase tracking-wider" for="username">
+                        Username
+                    </label>
+                    <input
+                        id="username"
+                        name="username"
+                        type="text"
+                        autocomplete="username"
+                        required
+                        class="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-green-600 focus:ring-1 focus:ring-green-600"
+                    >
+                </div>
+
+                <div>
+                    <label class="block text-xs text-gray-500 mb-1 uppercase tracking-wider" for="password">
+                        Password
+                    </label>
+                    <input
+                        id="password"
+                        name="password"
+                        type="password"
+                        autocomplete="current-password"
+                        required
+                        class="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-green-600 focus:ring-1 focus:ring-green-600"
+                    >
+                </div>
+
+                <button
+                    type="submit"
+                    class="w-full mt-2 px-4 py-2 bg-green-700 hover:bg-green-600 text-green-100 text-sm rounded transition-colors"
+                >
+                    Sign In
+                </button>
+            </form>
+        </div>
+    </div>
+</body>
+</html>

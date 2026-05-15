@@ -285,9 +285,9 @@ No changes to existing tables.
 
 ## Delivery Order (one branch per feature)
 
-1. `feature/54/user-auth` — DB tables, login/logout, session + API key middleware, admin seed
-2. `feature/55/booking-extension` — ExtendBookingUseCase, PUT /extend, Extend button (depends on #54 for owner check)
-3. `feature/56/vm-quota` — quotas table, SELECT FOR UPDATE check, admin endpoint (depends on #54 for user_id)
+1. `feature/55/user-auth` — DB tables, login/logout, session + API key middleware, admin seed
+2. `feature/56/booking-extension` — ExtendBookingUseCase, PUT /extend, Extend button (depends on #55 for owner check)
+3. `feature/57/vm-quota` — quotas table, SELECT FOR UPDATE check, admin endpoint (depends on #55 for user_id)
 
 Each branch starts from a fresh `main` after the previous PR merges.
 

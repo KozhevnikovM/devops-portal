@@ -207,9 +207,13 @@ def test_sync_update_status_writes_audit():
 @pytest.fixture
 def client():
     from app.main import app
+    from app.infrastructure.auth import require_user
     from app.infrastructure.database.session import get_async_session
+    from tests.conftest import make_fake_admin
     session_mock = AsyncMock()
+    fake_user = make_fake_admin()
     app.dependency_overrides[get_async_session] = lambda: session_mock
+    app.dependency_overrides[require_user] = lambda: fake_user
     yield TestClient(app)
     app.dependency_overrides.clear()
 
@@ -220,9 +224,13 @@ from fastapi.testclient import TestClient
 @pytest.fixture
 def api_client():
     from app.main import app
+    from app.infrastructure.auth import require_user
     from app.infrastructure.database.session import get_async_session
+    from tests.conftest import make_fake_admin
     session_mock = AsyncMock()
+    fake_user = make_fake_admin()
     app.dependency_overrides[get_async_session] = lambda: session_mock
+    app.dependency_overrides[require_user] = lambda: fake_user
     client = TestClient(app)
     yield client
     app.dependency_overrides.clear()

@@ -10,6 +10,11 @@ class Settings(BaseSettings):
     USE_STUB_TERRAFORM: bool = True
     DEV_USER_ID: str = "dev-user-00000000"
 
+    # Auth
+    ADMIN_USERNAME: str = "admin"
+    ADMIN_PASSWORD: str = "changeme"
+    SESSION_TTL: int = 86400
+
     # Celery provision task
     PROVISION_MAX_RETRIES: int = 3
     PROVISION_RETRY_DELAY: int = 120   # seconds

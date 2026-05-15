@@ -1,5 +1,120 @@
 # API Reference
 
+All endpoints require authentication. Browser users are redirected to `/auth/login`
+when unauthenticated. API clients must pass `Authorization: Bearer <api_key>` on every request.
+
+---
+
+## Authentication
+
+### `GET /auth/login`
+
+Renders the HTML login form.
+
+---
+
+### `POST /auth/login`
+
+Authenticate with username and password. Sets a `session_id` cookie on success.
+
+**Content-Type:** `application/x-www-form-urlencoded`
+
+**Form fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `username` | string | Username |
+| `password` | string | Password |
+
+**Responses:**
+
+- `302` redirect to `/` on success (cookie set)
+- `401` rendered login form with error message on failure
+
+---
+
+### `POST /auth/logout`
+
+Invalidates the current session and clears the `session_id` cookie. Redirects to `/auth/login`.
+
+---
+
+## User Management (admin only)
+
+### `GET /api/users`
+
+List all users. Password hashes are never returned.
+
+**Response:** `200` JSON array:
+
+```json
+[
+  { "id": "uuid", "username": "admin", "role": "admin", "is_active": true },
+  { "id": "uuid", "username": "jenkins", "role": "user", "is_active": true }
+]
+```
+
+**Example:**
+```bash
+curl -s http://localhost:8000/api/users \
+     -H "Authorization: Bearer dp_<api_key>" | python3 -m json.tool
+```
+
+---
+
+### `POST /api/users`
+
+Create a new user.
+
+**Request body:**
+```json
+{ "username": "jenkins", "password": "s3cret", "role": "user" }
+```
+
+Valid `role` values: `"admin"`, `"user"`.
+
+**Response:** `201` — created user object (no password hash).
+
+---
+
+### `POST /api/users/{user_id}/api-keys`
+
+Create an API key for a user. The raw key is returned **once** — it cannot be retrieved again.
+
+**Auth:** admin, or the owner of the target user account.
+
+**Request body** (optional):
+```json
+{ "description": "Jenkins CI" }
+```
+
+**Response:** `201`:
+```json
+{
+  "id": "uuid",
+  "key": "dp_a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4",
+  "description": "Jenkins CI"
+}
+```
+
+Store the returned `key` securely — it is the only time it will be shown.
+
+---
+
+### `DELETE /api/users/{user_id}/api-keys/{key_id}`
+
+Revoke an API key. The key is deactivated immediately.
+
+**Auth:** admin, or the owner of the target user account.
+
+**Responses:**
+
+- `204 No Content` — key revoked
+- `403 Forbidden` — caller is not the owner or admin
+- `404 Not Found` — key does not exist
+
+---
+
 ## Bookings
 
 ### `GET /`
@@ -10,7 +125,9 @@ Returns the main HTML page with the booking form and active bookings table.
 
 ### `GET /bookings`
 
-List all bookings in reverse chronological order.
+List all bookings.
+
+**Auth:** any authenticated user.
 
 **Response:** `200` JSON array:
 
@@ -18,7 +135,7 @@ List all bookings in reverse chronological order.
 [
   {
     "id": "uuid",
-    "user_id": "dev-user",
+    "user_id": "uuid",
     "status": "READY",
     "ttl_minutes": 240,
     "expires_at": "2026-05-15T14:00:00+00:00",
@@ -34,7 +151,8 @@ List all bookings in reverse chronological order.
 
 **Example:**
 ```bash
-curl -s http://localhost:8000/bookings | python3 -m json.tool
+curl -s http://localhost:8000/bookings \
+     -H "Authorization: Bearer dp_<api_key>" | python3 -m json.tool
 ```
 
 ---
@@ -42,6 +160,8 @@ curl -s http://localhost:8000/bookings | python3 -m json.tool
 ### `POST /bookings`
 
 Create a new VM booking.
+
+**Auth:** any authenticated user. The booking is created under the caller's identity.
 
 **Content-Type:** `application/x-www-form-urlencoded`
 
@@ -51,7 +171,7 @@ Create a new VM booking.
 |-------|------|----------|-------------|
 | `image_id` | UUID | Yes | VM image to deploy |
 | `hw_config_id` | UUID | Yes | Hardware configuration |
-| `ttl_hours` | integer | Yes | Booking duration (1, 4, 8, or 24) |
+| `ttl_minutes` | integer | Yes | Booking duration in minutes; `0` = no expiry |
 
 **Response:**
 
@@ -61,7 +181,7 @@ Create a new VM booking.
 {
   "id": "uuid",
   "status": "PENDING",
-  "ttl_hours": 4,
+  "ttl_minutes": 240,
   "expires_at": "2026-05-14T12:00:00+00:00",
   "created_at": "2026-05-14T08:00:00+00:00",
   "image_id": "uuid",
@@ -73,12 +193,24 @@ Create a new VM booking.
 
 - Without `Accept: application/json` → `201` HTMX HTML fragment (booking row)
 
+**Example (Jenkins/CI):**
+```bash
+curl -s -X POST http://localhost:8000/bookings \
+     -H "Accept: application/json" \
+     -H "Authorization: Bearer dp_<api_key>" \
+     -d "ttl_minutes=240&image_id=<image-uuid>&hw_config_id=<hw-config-uuid>" | python3 -m json.tool
+```
+
 ---
 
 ### `DELETE /bookings/{booking_id}`
 
-Release a VM booking. Transitions the booking to `RELEASING` and queues a teardown task
-that runs `terraform destroy`. The booking reaches `RELEASED` once teardown completes.
+Release a VM booking. Only the booking owner or an admin may release.
+
+Transitions the booking to `RELEASING` and queues `teardown_vm_task` which runs
+`terraform destroy`. The booking reaches `RELEASED` once teardown completes.
+
+**Auth:** booking owner or admin.
 
 **Path parameters:**
 
@@ -89,6 +221,7 @@ that runs `terraform destroy`. The booking reaches `RELEASED` once teardown comp
 **Responses:**
 
 - `202 Accepted` — teardown queued; booking status is now `RELEASING`. Returns HTML row fragment (default) or JSON (with `Accept: application/json`).
+- `403 Forbidden` — caller is not the booking owner or admin.
 - `404 Not Found` — booking does not exist.
 - `409 Conflict` — booking is in-flight (`PENDING`, `PROVISIONING`, `RETRY`, or already `RELEASING`) or already `RELEASED`.
 
@@ -96,23 +229,23 @@ that runs `terraform destroy`. The booking reaches `RELEASED` once teardown comp
 
 **JSON response body (202):**
 ```json
-{
-  "id": "uuid",
-  "status": "RELEASING"
-}
+{ "id": "uuid", "status": "RELEASING" }
 ```
 
 **Example:**
 ```bash
 curl -s -X DELETE http://localhost:8000/bookings/<booking-id> \
-     -H "Accept: application/json" | python3 -m json.tool
+     -H "Accept: application/json" \
+     -H "Authorization: Bearer dp_<api_key>" | python3 -m json.tool
 ```
 
 ---
 
 ### `GET /bookings/{booking_id}/audit`
 
-Returns the full audit trail for a booking — every CREATED and STATUS_CHANGED event, in chronological order.
+Returns the full audit trail for a booking in chronological order.
+
+**Auth:** booking owner or admin.
 
 **Path parameters:**
 
@@ -122,7 +255,8 @@ Returns the full audit trail for a booking — every CREATED and STATUS_CHANGED 
 
 **Responses:**
 
-- `200 OK` — JSON array of audit entries (may be empty if no events recorded yet).
+- `200 OK` — JSON array of audit entries.
+- `403 Forbidden` — caller is not the booking owner or admin.
 - `404 Not Found` — booking does not exist.
 
 **Response body:**
@@ -134,7 +268,7 @@ Returns the full audit trail for a booking — every CREATED and STATUS_CHANGED 
     "action": "CREATED",
     "old_status": null,
     "new_status": null,
-    "actor_id": "dev-user",
+    "actor_id": "uuid",
     "metadata": null,
     "created_at": "2026-05-15T10:00:00+00:00"
   },
@@ -153,7 +287,8 @@ Returns the full audit trail for a booking — every CREATED and STATUS_CHANGED 
 
 **Example:**
 ```bash
-curl -s http://localhost:8000/bookings/<booking-id>/audit | python3 -m json.tool
+curl -s http://localhost:8000/bookings/<booking-id>/audit \
+     -H "Authorization: Bearer dp_<api_key>" | python3 -m json.tool
 ```
 
 ---
@@ -162,9 +297,13 @@ curl -s http://localhost:8000/bookings/<booking-id>/audit | python3 -m json.tool
 
 Returns an HTML fragment for a single booking row. Used by HTMX polling.
 
+**Auth:** any authenticated user.
+
 ---
 
 ## Admin — VM Images
+
+All `/api/images` and `/api/hardware` endpoints require **admin** role.
 
 ### `GET /api/images`
 
@@ -191,7 +330,6 @@ List all VM images (active and inactive).
 Create a new VM image.
 
 **Request body:**
-
 ```json
 { "name": "Debian 12", "vapp_template_id": "urn:vcloud:vapptemplate:..." }
 ```
@@ -207,7 +345,6 @@ Create a new VM image.
 Update an existing VM image (e.g. to set the real `vapp_template_id` after migration).
 
 **Request body** (all fields optional):
-
 ```json
 { "vapp_template_id": "urn:vcloud:vapptemplate:real-id" }
 ```
@@ -258,7 +395,6 @@ List all hardware configurations (active and inactive).
 Create a new hardware configuration.
 
 **Request body:**
-
 ```json
 { "name": "xlarge", "cpus": 8, "memory_mb": 16384, "disk_mb": 102400 }
 ```
@@ -272,7 +408,6 @@ Create a new hardware configuration.
 Update an existing hardware configuration.
 
 **Request body** (all fields optional):
-
 ```json
 { "cpus": 4, "memory_mb": 8192 }
 ```

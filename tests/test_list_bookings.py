@@ -29,9 +29,13 @@ def _make_booking(status: BookingStatus = BookingStatus.READY) -> Booking:
 @pytest.fixture
 def client():
     from app.main import app
+    from app.infrastructure.auth import require_user
     from app.infrastructure.database.session import get_async_session
+    from tests.conftest import make_fake_admin
     session_mock = AsyncMock()
+    fake_user = make_fake_admin()
     app.dependency_overrides[get_async_session] = lambda: session_mock
+    app.dependency_overrides[require_user] = lambda: fake_user
     yield TestClient(app)
     app.dependency_overrides.clear()
 

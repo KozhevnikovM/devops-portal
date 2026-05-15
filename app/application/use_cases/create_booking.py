@@ -29,6 +29,7 @@ class CreateBookingUseCase:
         ttl_minutes: int,
         image_id: UUID,
         hw_config_id: UUID,
+        user_id: str | None = None,
     ) -> Booking:
         image = await self._image_repo.get(session, image_id)
         hw = await self._hw_config_repo.get(session, hw_config_id)
@@ -40,7 +41,7 @@ class CreateBookingUseCase:
             expires_at = now + timedelta(minutes=ttl_minutes)
         booking = Booking(
             id=uuid4(),
-            user_id=settings.DEV_USER_ID,
+            user_id=user_id or settings.DEV_USER_ID,
             status=BookingStatus.PENDING,
             ttl_minutes=ttl_minutes,
             expires_at=expires_at,
