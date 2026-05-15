@@ -8,6 +8,37 @@ Returns the main HTML page with the booking form and active bookings table.
 
 ---
 
+### `GET /bookings`
+
+List all bookings in reverse chronological order.
+
+**Response:** `200` JSON array:
+
+```json
+[
+  {
+    "id": "uuid",
+    "user_id": "dev-user",
+    "status": "READY",
+    "ttl_minutes": 240,
+    "expires_at": "2026-05-15T14:00:00+00:00",
+    "created_at": "2026-05-15T10:00:00+00:00",
+    "image_id": "uuid",
+    "image_name": "Ubuntu 22.04",
+    "hw_config_id": "uuid",
+    "hw_config_name": "medium",
+    "vm_ip": "10.0.0.1"
+  }
+]
+```
+
+**Example:**
+```bash
+curl -s http://localhost:8000/bookings | python3 -m json.tool
+```
+
+---
+
 ### `POST /bookings`
 
 Create a new VM booking.

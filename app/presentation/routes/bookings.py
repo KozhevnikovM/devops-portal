@@ -34,6 +34,27 @@ async def index(request: Request, session: AsyncSession = Depends(get_async_sess
     )
 
 
+@router.get("/bookings")
+async def list_bookings(session: AsyncSession = Depends(get_async_session)):
+    bookings = await _repo.list_all(session)
+    return JSONResponse([
+        {
+            "id": str(b.id),
+            "user_id": b.user_id,
+            "status": b.status.value,
+            "ttl_minutes": b.ttl_minutes,
+            "expires_at": b.expires_at.isoformat(),
+            "created_at": b.created_at.isoformat(),
+            "image_id": str(b.image_id),
+            "image_name": b.image_name,
+            "hw_config_id": str(b.hw_config_id),
+            "hw_config_name": b.hw_config_name,
+            "vm_ip": b.vm_ip,
+        }
+        for b in bookings
+    ])
+
+
 @router.post("/bookings")
 async def create_booking(
     request: Request,
