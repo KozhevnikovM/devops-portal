@@ -116,9 +116,9 @@ def test_semaphore_acquired_and_released_on_success():
         provision_vm_task.apply(args=[booking_id, image_id, hw_config_id])
 
     mock_redis.set.assert_called_once_with(
-        "vcd_token_lock:0", "1", nx=True, ex=mock_redis.set.call_args.kwargs["ex"]
+        "vcd_token_lock:0:0", "1", nx=True, ex=mock_redis.set.call_args.kwargs["ex"]
     )
-    mock_redis.delete.assert_called_once_with("vcd_token_lock:0")
+    mock_redis.delete.assert_called_once_with("vcd_token_lock:0:0")
 
     statuses = [c.args[2] for c in mock_repo.sync_update_status.call_args_list]
     assert BookingStatus.READY in statuses
@@ -156,7 +156,7 @@ def test_semaphore_released_on_failure():
         from app.tasks.provision import provision_vm_task
         provision_vm_task.apply(args=[booking_id, image_id, hw_config_id])
 
-    mock_redis.delete.assert_called_with("vcd_token_lock:0")
+    mock_redis.delete.assert_called_with("vcd_token_lock:0:0")
 
 
 def test_provision_task_sets_retry_status_on_failure():
