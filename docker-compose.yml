@@ -52,7 +52,7 @@ services:
         PIP_INDEX_URL: ${PIP_INDEX_URL:-}
         PIP_TRUSTED_HOST: ${PIP_TRUSTED_HOST:-}
         NPM_CONFIG_REGISTRY: ${NPM_CONFIG_REGISTRY:-}
-    command: celery -A app.infrastructure.celery_app worker -l info -c 1
+    command: celery -A app.infrastructure.celery_app worker -l info -c 4
     env_file: .env
     volumes:
       - .:/app

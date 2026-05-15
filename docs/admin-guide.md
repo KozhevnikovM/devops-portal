@@ -44,7 +44,7 @@ The portal is now available at `http://<host>:8000`.
 | `VCD_API_TOKEN` | When real adapter | Single API refresh token — used when `VCD_API_TOKENS` is empty |
 | `VCD_API_TOKENS` | No | Comma-separated list of API tokens for parallel provisioning (token pool) |
 | `VCD_TOKEN_LOCK_TTL` | No | Redis lock TTL in seconds. Auto-releases if worker crashes. Default: `900` |
-| `VCD_TOKEN_MAX_PARALLEL` | No | Max concurrent provisioning jobs per token. Default: `1` |
+| `VCD_TOKEN_MAX_PARALLEL` | No | Max concurrent provisioning jobs per token. Default: `4` |
 | `VCD_USER` | When real adapter | Username — used when both token settings are empty |
 | `VCD_PASSWORD` | When real adapter | Password — used when both token settings are empty |
 | `PROVISION_MAX_RETRIES` | No | How many times to retry a failed provisioning task. Default: `3` |

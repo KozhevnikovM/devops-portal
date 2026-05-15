@@ -27,9 +27,7 @@ mutex had no way to express that.
 
 | Setting | Type | Default | Description |
 |---|---|---|---|
-| `VCD_TOKEN_MAX_PARALLEL` | int | `1` | Max concurrent provisioning jobs per token |
-
-Default of `1` preserves the existing one-job-per-token behaviour.
+| `VCD_TOKEN_MAX_PARALLEL` | int | `4` | Max concurrent provisioning jobs per token |
 
 ### Lock key format (`app/tasks/provision.py`)
 
