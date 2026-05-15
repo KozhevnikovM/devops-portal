@@ -55,6 +55,7 @@ class BookingRepository:
             hw_config_name=booking.hw_config_name,
         )
         session.add(model)
+        await session.flush()  # INSERT booking before audit to satisfy FK constraint
         session.add(BookingAuditModel(
             booking_id=booking.id,
             actor_id=booking.user_id,
