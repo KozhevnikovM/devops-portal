@@ -56,7 +56,7 @@ def provision_vm_task(self, booking_id: str, image_id: str, hw_config_id: str) -
     workspace_id = f"booking-{booking_id}"
 
     tokens = _token_pool()
-    use_semaphore = not settings.USE_STUB_TERRAFORM and bool(tokens) and settings.VCD_TOKEN_SEMAPHORE
+    use_semaphore = not settings.USE_STUB_TERRAFORM and bool(tokens)
 
     lock_key = None
     redis_client = None
