@@ -36,19 +36,19 @@ async def index(request: Request, session: AsyncSession = Depends(get_async_sess
 @router.post("/bookings")
 async def create_booking(
     request: Request,
-    ttl_hours: int = Form(...),
+    ttl_minutes: int = Form(...),
     image_id: UUID = Form(...),
     hw_config_id: UUID = Form(...),
     session: AsyncSession = Depends(get_async_session),
 ):
-    booking = await _use_case.execute(session, ttl_hours, image_id, hw_config_id)
+    booking = await _use_case.execute(session, ttl_minutes, image_id, hw_config_id)
 
     if "application/json" in request.headers.get("accept", ""):
         return JSONResponse(
             {
                 "id": str(booking.id),
                 "status": booking.status.value,
-                "ttl_hours": booking.ttl_hours,
+                "ttl_minutes": booking.ttl_minutes,
                 "expires_at": booking.expires_at.isoformat(),
                 "created_at": booking.created_at.isoformat(),
                 "image_id": str(booking.image_id),

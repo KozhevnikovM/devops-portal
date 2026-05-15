@@ -38,7 +38,7 @@ class BookingModel(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id: Mapped[str] = mapped_column(String(64), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False)
-    ttl_hours: Mapped[int] = mapped_column(Integer, nullable=False)
+    ttl_minutes: Mapped[int] = mapped_column(Integer, nullable=False)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     image_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("vm_images.id"), nullable=False)
     image_name: Mapped[str] = mapped_column(String(64), nullable=False)
