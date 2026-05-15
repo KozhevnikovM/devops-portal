@@ -26,7 +26,7 @@ class CreateBookingUseCase:
     async def execute(
         self,
         session: AsyncSession,
-        ttl_hours: int,
+        ttl_minutes: int,
         image_id: UUID,
         hw_config_id: UUID,
     ) -> Booking:
@@ -34,12 +34,16 @@ class CreateBookingUseCase:
         hw = await self._hw_config_repo.get(session, hw_config_id)
 
         now = datetime.now(timezone.utc)
+        if ttl_minutes == 0:
+            expires_at = datetime(9999, 12, 31, 23, 59, 59, tzinfo=timezone.utc)
+        else:
+            expires_at = now + timedelta(minutes=ttl_minutes)
         booking = Booking(
             id=uuid4(),
             user_id=settings.DEV_USER_ID,
             status=BookingStatus.PENDING,
-            ttl_hours=ttl_hours,
-            expires_at=now + timedelta(hours=ttl_hours),
+            ttl_minutes=ttl_minutes,
+            expires_at=expires_at,
             created_at=now,
             image_id=image.id,
             image_name=image.name,

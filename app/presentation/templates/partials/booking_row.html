@@ -22,8 +22,16 @@
             {{ booking.status.value }}
         </span>
     </td>
-    <td class="px-4 py-3 text-gray-400">{{ booking.ttl_hours }}h</td>
-    <td class="px-4 py-3 text-gray-400 text-xs">{{ booking.expires_at.strftime('%Y-%m-%d %H:%M') }} UTC</td>
+    <td class="px-4 py-3 text-gray-400">
+        {% if booking.ttl_minutes == 0 %}Forever
+        {% elif booking.ttl_minutes < 60 %}{{ booking.ttl_minutes }} min
+        {% elif booking.ttl_minutes < 1440 %}{{ booking.ttl_minutes // 60 }} h
+        {% else %}{{ booking.ttl_minutes // 1440 }} d{% endif %}
+    </td>
+    <td class="px-4 py-3 text-gray-400 text-xs">
+        {% if booking.ttl_minutes == 0 %}Never
+        {% else %}{{ booking.expires_at.strftime('%Y-%m-%d %H:%M') }} UTC{% endif %}
+    </td>
     <td class="px-4 py-3 text-gray-300">
         {% if booking.vm_ip %}
             <span class="text-green-400">{{ booking.vm_ip }}</span>

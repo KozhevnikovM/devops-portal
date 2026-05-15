@@ -30,7 +30,7 @@ class Booking:
     id: UUID
     user_id: str
     status: BookingStatus
-    ttl_hours: int
+    ttl_minutes: int
     expires_at: datetime
     created_at: datetime
     image_id: UUID
