@@ -44,7 +44,6 @@ The portal is now available at `http://<host>:8000`.
 | `VCD_API_TOKEN` | When real adapter | Single API refresh token — used when `VCD_API_TOKENS` is empty |
 | `VCD_API_TOKENS` | No | Comma-separated list of API tokens for parallel provisioning (token pool) |
 | `VCD_TOKEN_LOCK_TTL` | No | Redis lock TTL in seconds. Auto-releases if worker crashes. Default: `900` |
-| `VCD_TOKEN_SEMAPHORE` | No | Set `false` to disable Redis locking even when `VCD_API_TOKENS` is configured. Default: `true` |
 | `VCD_TOKEN_MAX_PARALLEL` | No | Max concurrent provisioning jobs per token. Default: `1` |
 | `VCD_USER` | When real adapter | Username — used when both token settings are empty |
 | `VCD_PASSWORD` | When real adapter | Password — used when both token settings are empty |
@@ -366,14 +365,3 @@ Scale workers to match the total slot count (`tokens × max_parallel`):
 docker compose up -d --scale worker=4
 ```
 
-### Disabling the semaphore
-
-If Redis locking is undesirable (e.g. single-worker setups, Redis unavailable, or
-username/password auth where no token coordination is needed), set:
-
-```bash
-VCD_TOKEN_SEMAPHORE=false
-```
-
-Tokens are still passed to Terraform; they are simply not locked in Redis. Use only
-when you are certain concurrent token reuse is safe for your VCD environment.
