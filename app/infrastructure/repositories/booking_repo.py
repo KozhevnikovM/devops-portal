@@ -5,10 +5,23 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
-from app.domain.entities import Booking
+from app.domain.entities import Booking, BookingAuditEntry
 from app.domain.enums import BookingStatus
 from app.domain.exceptions import BookingNotFoundError
-from app.infrastructure.database.models import BookingModel
+from app.infrastructure.database.models import BookingAuditModel, BookingModel
+
+
+def _to_audit_entity(m: BookingAuditModel) -> BookingAuditEntry:
+    return BookingAuditEntry(
+        id=m.id,
+        booking_id=m.booking_id,
+        actor_id=m.actor_id,
+        action=m.action,
+        old_status=m.old_status,
+        new_status=m.new_status,
+        metadata=m.extra,
+        created_at=m.created_at,
+    )
 
 
 def _to_entity(m: BookingModel) -> Booking:
@@ -42,6 +55,11 @@ class BookingRepository:
             hw_config_name=booking.hw_config_name,
         )
         session.add(model)
+        session.add(BookingAuditModel(
+            booking_id=booking.id,
+            actor_id=booking.user_id,
+            action="CREATED",
+        ))
         await session.commit()
         await session.refresh(model)
         return _to_entity(model)
@@ -59,19 +77,37 @@ class BookingRepository:
         booking_id: UUID,
         status: BookingStatus,
         vm_ip: str | None = None,
+        actor_id: str = "system",
     ) -> None:
         result = await session.execute(select(BookingModel).where(BookingModel.id == booking_id))
         model = result.scalar_one_or_none()
         if model is None:
             raise BookingNotFoundError(booking_id)
+        old_status = model.status
         model.status = status.value
         if vm_ip is not None:
             model.vm_ip = vm_ip
+        session.add(BookingAuditModel(
+            booking_id=booking_id,
+            actor_id=actor_id,
+            action="STATUS_CHANGED",
+            old_status=old_status,
+            new_status=status.value,
+            extra={"vm_ip": vm_ip} if vm_ip is not None else None,
+        ))
         await session.commit()
 
     async def list_all(self, session: AsyncSession) -> list[Booking]:
         result = await session.execute(select(BookingModel).order_by(BookingModel.created_at.desc()))
         return [_to_entity(m) for m in result.scalars().all()]
+
+    async def list_audit(self, session: AsyncSession, booking_id: UUID) -> list[BookingAuditEntry]:
+        result = await session.execute(
+            select(BookingAuditModel)
+            .where(BookingAuditModel.booking_id == booking_id)
+            .order_by(BookingAuditModel.created_at)
+        )
+        return [_to_audit_entity(m) for m in result.scalars().all()]
 
     # Sync variants used by Celery workers
     def sync_get(self, session: Session, booking_id: UUID) -> Booking:
@@ -86,13 +122,23 @@ class BookingRepository:
         booking_id: UUID,
         status: BookingStatus,
         vm_ip: str | None = None,
+        actor_id: str = "system",
     ) -> None:
         model = session.get(BookingModel, booking_id)
         if model is None:
             raise BookingNotFoundError(booking_id)
+        old_status = model.status
         model.status = status.value
         if vm_ip is not None:
             model.vm_ip = vm_ip
+        session.add(BookingAuditModel(
+            booking_id=booking_id,
+            actor_id=actor_id,
+            action="STATUS_CHANGED",
+            old_status=old_status,
+            new_status=status.value,
+            extra={"vm_ip": vm_ip} if vm_ip is not None else None,
+        ))
         session.commit()
 
     def sync_list_expired(self, session: Session) -> list[Booking]:

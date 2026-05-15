@@ -6,6 +6,7 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.use_cases.create_booking import CreateBookingUseCase
+from app.config import settings
 from app.domain.enums import BookingStatus
 from app.domain.exceptions import BookingNotFoundError
 from app.infrastructure.database.session import get_async_session
@@ -99,7 +100,7 @@ async def release_booking(
     if booking.status not in _RELEASABLE_STATUSES:
         raise HTTPException(status_code=409, detail=f"Cannot release booking with status {booking.status.value}")
 
-    await _repo.update_status(session, booking_id, BookingStatus.RELEASING)
+    await _repo.update_status(session, booking_id, BookingStatus.RELEASING, actor_id=settings.DEV_USER_ID)
     teardown_vm_task.delay(str(booking_id))
 
     booking = await _repo.get(session, booking_id)
@@ -110,3 +111,29 @@ async def release_booking(
     return templates.TemplateResponse(
         request, "partials/booking_row.html", {"booking": booking}, status_code=202
     )
+
+
+@router.get("/bookings/{booking_id}/audit")
+async def get_booking_audit(
+    booking_id: UUID,
+    session: AsyncSession = Depends(get_async_session),
+):
+    try:
+        await _repo.get(session, booking_id)
+    except BookingNotFoundError:
+        raise HTTPException(status_code=404, detail="Booking not found")
+
+    entries = await _repo.list_audit(session, booking_id)
+    return JSONResponse([
+        {
+            "id": str(e.id),
+            "booking_id": str(e.booking_id),
+            "action": e.action,
+            "old_status": e.old_status,
+            "new_status": e.new_status,
+            "actor_id": e.actor_id,
+            "metadata": e.metadata,
+            "created_at": e.created_at.isoformat(),
+        }
+        for e in entries
+    ])
