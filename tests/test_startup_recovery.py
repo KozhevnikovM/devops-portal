@@ -81,9 +81,9 @@ def test_recovery_requeues_task_for_each_in_progress_booking():
         _recover_in_progress_bookings()
 
     assert mock_task.delay.call_count == 3
-    mock_task.delay.assert_any_call(str(bookings[0].id))
-    mock_task.delay.assert_any_call(str(bookings[1].id))
-    mock_task.delay.assert_any_call(str(bookings[2].id))
+    mock_task.delay.assert_any_call(str(bookings[0].id), str(bookings[0].image_id), str(bookings[0].hw_config_id))
+    mock_task.delay.assert_any_call(str(bookings[1].id), str(bookings[1].image_id), str(bookings[1].hw_config_id))
+    mock_task.delay.assert_any_call(str(bookings[2].id), str(bookings[2].image_id), str(bookings[2].hw_config_id))
 
 
 # ---------------------------------------------------------------------------
@@ -111,3 +111,4 @@ def test_recovery_uses_list_in_progress_not_stale():
 
     mock_repo.sync_list_in_progress.assert_called_once()
     mock_repo.sync_list_stale_provisioning.assert_not_called()
+    mock_task.delay.assert_called_once_with(str(booking.id), str(booking.image_id), str(booking.hw_config_id))

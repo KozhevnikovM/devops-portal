@@ -44,7 +44,7 @@ def _recover_in_progress_bookings() -> None:
         return
 
     for booking in bookings:
-        provision_vm_task.delay(str(booking.id))
+        provision_vm_task.delay(str(booking.id), str(booking.image_id), str(booking.hw_config_id))
         logger.info(
             "startup recovery: re-queued provision task for booking %s (status=%s)",
             booking.id,
