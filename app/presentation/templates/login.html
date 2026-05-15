@@ -6,53 +6,43 @@
     <title>Login — DevOps Portal</title>
     <link rel="stylesheet" href="/static/css/tailwind.css">
 </head>
-<body class="min-h-screen text-gray-100 font-mono flex items-center justify-center">
-    <div class="w-full max-w-xs">
-        <div class="mb-5 text-center">
-            <span class="text-green-400 text-base font-bold">▶ DevOps Portal</span>
-        </div>
+<body class="min-h-screen text-gray-100 font-mono flex items-center justify-center bg-gray-950">
+    <div class="w-64">
+        <p class="text-green-400 text-xs font-bold text-center mb-4">▶ DevOps Portal</p>
 
-        <div class="bg-gray-900 border border-gray-800 rounded-lg p-6">
-            <h1 class="text-xs text-gray-400 uppercase tracking-widest mb-4">Sign In</h1>
-
+        <div class="bg-gray-900 border border-gray-800 rounded p-5">
             {% if error %}
-            <div class="mb-3 px-3 py-2 rounded bg-red-900/50 border border-red-700 text-red-300 text-xs">
+            <div class="mb-3 px-2 py-1 rounded bg-red-900/50 border border-red-700 text-red-300 text-xs">
                 {{ error }}
             </div>
             {% endif %}
 
             <form method="post" action="/auth/login" class="space-y-3">
                 <div>
-                    <label class="block text-xs text-gray-500 mb-1 uppercase tracking-wider" for="username">
-                        Username
-                    </label>
+                    <label class="block text-xs text-gray-500 mb-1" for="username">Username</label>
                     <input
                         id="username"
                         name="username"
                         type="text"
                         autocomplete="username"
                         required
-                        class="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-green-600 focus:ring-1 focus:ring-green-600"
+                        class="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-100 focus:outline-none focus:border-green-600"
                     >
                 </div>
-
                 <div>
-                    <label class="block text-xs text-gray-500 mb-1 uppercase tracking-wider" for="password">
-                        Password
-                    </label>
+                    <label class="block text-xs text-gray-500 mb-1" for="password">Password</label>
                     <input
                         id="password"
                         name="password"
                         type="password"
                         autocomplete="current-password"
                         required
-                        class="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-green-600 focus:ring-1 focus:ring-green-600"
+                        class="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-100 focus:outline-none focus:border-green-600"
                     >
                 </div>
-
                 <button
                     type="submit"
-                    class="w-full mt-1 px-4 py-2 bg-green-700 hover:bg-green-600 text-green-100 text-xs rounded transition-colors"
+                    class="w-full py-1.5 bg-green-700 hover:bg-green-600 text-green-100 text-xs rounded transition-colors"
                 >
                     Sign In
                 </button>
