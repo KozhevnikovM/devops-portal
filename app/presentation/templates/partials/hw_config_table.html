@@ -1,0 +1,122 @@
+<div id="hw-table">
+    <div id="hw-create-error" hx-swap-oob="innerHTML"></div>
+    {% if hw_configs %}
+    <table class="w-full text-sm">
+        <thead>
+            <tr class="border-b border-gray-700 text-left">
+                <th class="px-4 py-2 text-xs text-gray-500 font-normal uppercase tracking-widest">Name</th>
+                <th class="px-4 py-2 text-xs text-gray-500 font-normal uppercase tracking-widest">CPUs</th>
+                <th class="px-4 py-2 text-xs text-gray-500 font-normal uppercase tracking-widest">RAM (GB)</th>
+                <th class="px-4 py-2 text-xs text-gray-500 font-normal uppercase tracking-widest">HDD (GB)</th>
+                <th class="px-4 py-2 text-xs text-gray-500 font-normal uppercase tracking-widest">Status</th>
+                <th class="px-4 py-2 text-xs text-gray-500 font-normal uppercase tracking-widest"></th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for hw in hw_configs %}
+            {% if editing_hw and hw.id == editing_hw.id %}
+            <tr class="border-b border-gray-800 last:border-0 bg-gray-800/60">
+                <td colspan="6" class="px-4 py-3">
+                    <form
+                        hx-patch="/admin/catalog/hardware/{{ hw.id }}"
+                        hx-target="#hw-table"
+                        hx-swap="outerHTML"
+                        class="flex items-center gap-3 flex-wrap"
+                    >
+                        <div class="flex flex-col gap-1">
+                            <label class="text-xs text-gray-500">Name</label>
+                            <input
+                                name="name"
+                                value="{{ hw.name }}"
+                                required
+                                class="bg-gray-900 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-28"
+                            >
+                        </div>
+                        <div class="flex flex-col gap-1">
+                            <label class="text-xs text-gray-500">CPUs</label>
+                            <input
+                                name="cpus"
+                                type="number"
+                                min="1"
+                                value="{{ hw.cpus }}"
+                                required
+                                class="bg-gray-900 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-20"
+                            >
+                        </div>
+                        <div class="flex flex-col gap-1">
+                            <label class="text-xs text-gray-500">RAM (MB)</label>
+                            <input
+                                name="memory_mb"
+                                type="number"
+                                min="1"
+                                value="{{ hw.memory_mb }}"
+                                required
+                                class="bg-gray-900 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-24"
+                            >
+                        </div>
+                        <div class="flex flex-col gap-1">
+                            <label class="text-xs text-gray-500">HDD (MB)</label>
+                            <input
+                                name="hdd_mb"
+                                type="number"
+                                min="0"
+                                value="{{ hw.hdd_mb }}"
+                                required
+                                class="bg-gray-900 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-24"
+                            >
+                        </div>
+                        <div class="flex items-end gap-2 pb-0.5">
+                            <button type="submit" class="text-xs px-3 py-1.5 rounded bg-green-700 text-green-100 hover:bg-green-600 transition-colors">Save</button>
+                            <button type="button"
+                                hx-get="/admin/catalog/hardware/table"
+                                hx-target="#hw-table"
+                                hx-swap="outerHTML"
+                                class="text-xs px-3 py-1.5 rounded bg-gray-700 text-gray-300 border border-gray-600 hover:bg-gray-600 transition-colors"
+                            >Cancel</button>
+                        </div>
+                    </form>
+                </td>
+            </tr>
+            {% else %}
+            <tr class="border-b border-gray-800 last:border-0 hover:bg-gray-800/40 transition-colors">
+                <td class="px-4 py-3 text-gray-200">{{ hw.name }}</td>
+                <td class="px-4 py-3 text-gray-300">{{ hw.cpus }}</td>
+                <td class="px-4 py-3 text-gray-300">{{ (hw.memory_mb / 1024) | round(1) }}</td>
+                <td class="px-4 py-3 text-gray-300">{{ (hw.hdd_mb / 1024) | round(1) }}</td>
+                <td class="px-4 py-3">
+                    {% if hw.is_active %}
+                    <span class="text-xs text-green-400">active</span>
+                    {% else %}
+                    <span class="text-xs text-gray-500">inactive</span>
+                    {% endif %}
+                </td>
+                <td class="px-4 py-3">
+                    {% if hw.is_active %}
+                    <div class="flex items-center gap-2">
+                        <button
+                            hx-get="/admin/catalog/hardware/{{ hw.id }}/edit"
+                            hx-target="#hw-table"
+                            hx-swap="outerHTML"
+                            class="text-xs px-2 py-1 rounded bg-gray-700 text-gray-300 border border-gray-600 hover:bg-gray-600 transition-colors"
+                        >Edit</button>
+                        <button
+                            hx-delete="/admin/catalog/hardware/{{ hw.id }}"
+                            hx-target="#hw-table"
+                            hx-swap="outerHTML"
+                            hx-confirm="Deactivate config '{{ hw.name }}'?"
+                            class="text-xs px-2 py-1 rounded bg-red-900 text-red-300 border border-red-700 hover:bg-red-800 transition-colors"
+                        >Deactivate</button>
+                    </div>
+                    {% else %}
+                    <span class="text-gray-700">—</span>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endif %}
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p class="text-gray-600 text-sm px-4 py-6">No hardware configs yet.</p>
+    {% endif %}
+</div>

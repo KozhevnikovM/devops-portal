@@ -284,54 +284,27 @@ docker compose run --rm app ls /app/terraform/providers-mirror/registry.terrafor
 
 #### Step 3 — Configure VM images and hardware profiles
 
-VM images and hardware configurations are managed via the API — no SQL required.
-All `/api/*` endpoints require admin credentials.
+VM images and hardware configurations are managed via the **Admin Catalog UI** at
+`/admin/catalog`. Log in as admin and click **Catalog** in the navigation bar.
 
 After running migrations, the database contains three placeholder VM images
 (`Ubuntu 22.04`, `Ubuntu 20.04`, `Windows 2022`) and three ready-to-use hardware
 profiles (`small`, `medium`, `large`).
 
-**Set real VCD template IDs on the seed images:**
+**VM Images panel:**
 
-```bash
-# List images to get their IDs
-curl -s http://localhost:8000/api/images \
-     -H "Authorization: Bearer dp_<api_key>" | python3 -m json.tool
+- Click **Edit** on a row to update the name or vApp Template ID inline.
+- Click **Add** to create a new image.
+- Click **Deactivate** to hide an image from the booking form. Existing bookings
+  referencing the image are unaffected.
 
-# Update each image with its real VCD vApp template ID
-curl -s -X PATCH http://localhost:8000/api/images/<image-id> \
-     -H "Content-Type: application/json" \
-     -H "Authorization: Bearer dp_<api_key>" \
-     -d '{"vapp_template_id": "urn:vcloud:vapptemplate:real-id-here"}'
-```
+**Hardware Configs panel:**
 
-**Add a new image:**
+- Click **Edit** on a row to update name, CPUs, RAM (MB), or HDD (MB) inline.
+- Click **Add** to create a new hardware config.
+- Click **Deactivate** to hide a config from the booking form.
 
-```bash
-curl -s -X POST http://localhost:8000/api/images \
-     -H "Content-Type: application/json" \
-     -H "Authorization: Bearer dp_<api_key>" \
-     -d '{"name": "Debian 12", "vapp_template_id": "urn:vcloud:vapptemplate:..."}'
-```
-
-**Deactivate an image** (hides it from the booking form):
-
-```bash
-curl -s -X DELETE http://localhost:8000/api/images/<image-id> \
-     -H "Authorization: Bearer dp_<api_key>"
-```
-
-**Add a custom hardware profile:**
-
-Hardware profiles specify CPU cores, memory, and HDD storage in MB.
-
-```bash
-curl -s -X POST http://localhost:8000/api/hardware \
-     -H "Content-Type: application/json" \
-     -H "Authorization: Bearer dp_<api_key>" \
-     -d '{"name": "xlarge", "cpus": 8, "memory_mb": 16384, "hdd_mb": 102400}'
-```
-
+The JSON API (`/api/images`, `/api/hardware`) remains available for scripted workflows.
 See [docs/api-reference.md](api-reference.md) for the full API reference.
 
 #### Step 4 — Set VCD credentials and configuration

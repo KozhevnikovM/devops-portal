@@ -1,0 +1,141 @@
+{% extends "base.html" %}
+
+{% block title %}Catalog — DevOps Portal{% endblock %}
+
+{% block content %}
+<div class="max-w-5xl">
+    <h2 class="text-sm text-gray-400 uppercase tracking-widest mb-6">VM Catalog</h2>
+
+    {# ── VM Images ────────────────────────────────────────────────────────── #}
+    <div class="mb-8">
+        <h3 class="text-xs text-gray-500 uppercase tracking-widest mb-4">VM Images</h3>
+
+        <div class="bg-gray-900 border border-gray-800 rounded-lg p-6 mb-4">
+            <p class="text-xs text-gray-500 uppercase tracking-widest mb-4">Add Image</p>
+            <form
+                hx-post="/admin/catalog/images"
+                hx-target="#image-table"
+                hx-swap="outerHTML"
+                hx-on::after-request="if(event.detail.successful) this.reset()"
+                class="flex items-end gap-3 flex-wrap"
+            >
+                <div class="flex flex-col gap-1.5">
+                    <label class="text-xs text-gray-500" for="new-image-name">Name</label>
+                    <input
+                        id="new-image-name"
+                        name="name"
+                        type="text"
+                        required
+                        autocomplete="off"
+                        class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-44"
+                        placeholder="Ubuntu 22.04"
+                    >
+                </div>
+                <div class="flex flex-col gap-1.5">
+                    <label class="text-xs text-gray-500" for="new-image-tpl">vApp Template ID</label>
+                    <input
+                        id="new-image-tpl"
+                        name="vapp_template_id"
+                        type="text"
+                        required
+                        autocomplete="off"
+                        class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-80 font-mono"
+                        placeholder="urn:vcloud:vapptemplate:..."
+                    >
+                </div>
+                <div class="flex flex-col gap-1.5">
+                    <div id="image-create-error" class="text-xs h-4"></div>
+                    <button
+                        type="submit"
+                        class="px-4 py-2 bg-green-700 hover:bg-green-600 text-green-100 text-sm rounded transition-colors"
+                    >
+                        Add
+                    </button>
+                </div>
+            </form>
+        </div>
+
+        <div class="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden">
+            {% include "partials/image_table.html" %}
+        </div>
+    </div>
+
+    {# ── Hardware Configs ─────────────────────────────────────────────────── #}
+    <div>
+        <h3 class="text-xs text-gray-500 uppercase tracking-widest mb-4">Hardware Configs</h3>
+
+        <div class="bg-gray-900 border border-gray-800 rounded-lg p-6 mb-4">
+            <p class="text-xs text-gray-500 uppercase tracking-widest mb-4">Add Config</p>
+            <form
+                hx-post="/admin/catalog/hardware"
+                hx-target="#hw-table"
+                hx-swap="outerHTML"
+                hx-on::after-request="if(event.detail.successful) this.reset()"
+                class="flex items-end gap-3 flex-wrap"
+            >
+                <div class="flex flex-col gap-1.5">
+                    <label class="text-xs text-gray-500" for="new-hw-name">Name</label>
+                    <input
+                        id="new-hw-name"
+                        name="name"
+                        type="text"
+                        required
+                        autocomplete="off"
+                        class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-28"
+                        placeholder="medium"
+                    >
+                </div>
+                <div class="flex flex-col gap-1.5">
+                    <label class="text-xs text-gray-500" for="new-hw-cpus">CPUs</label>
+                    <input
+                        id="new-hw-cpus"
+                        name="cpus"
+                        type="number"
+                        min="1"
+                        required
+                        class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-20"
+                        placeholder="2"
+                    >
+                </div>
+                <div class="flex flex-col gap-1.5">
+                    <label class="text-xs text-gray-500" for="new-hw-ram">RAM (MB)</label>
+                    <input
+                        id="new-hw-ram"
+                        name="memory_mb"
+                        type="number"
+                        min="1"
+                        required
+                        class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-24"
+                        placeholder="4096"
+                    >
+                </div>
+                <div class="flex flex-col gap-1.5">
+                    <label class="text-xs text-gray-500" for="new-hw-hdd">HDD (MB)</label>
+                    <input
+                        id="new-hw-hdd"
+                        name="hdd_mb"
+                        type="number"
+                        min="0"
+                        required
+                        class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-24"
+                        placeholder="26624"
+                    >
+                </div>
+                <div class="flex flex-col gap-1.5">
+                    <div id="hw-create-error" class="text-xs h-4"></div>
+                    <button
+                        type="submit"
+                        class="px-4 py-2 bg-green-700 hover:bg-green-600 text-green-100 text-sm rounded transition-colors"
+                    >
+                        Add
+                    </button>
+                </div>
+            </form>
+        </div>
+
+        <div class="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden">
+            {% include "partials/hw_config_table.html" %}
+        </div>
+    </div>
+</div>
+{% endblock %}

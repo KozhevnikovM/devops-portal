@@ -9,6 +9,7 @@ from app.config import settings
 from app.infrastructure.database.session import SyncSessionLocal
 from app.infrastructure.repositories.booking_repo import BookingRepository
 from app.infrastructure.repositories.user_repo import UserRepository
+from app.presentation.routes.admin import router as admin_router
 from app.presentation.routes.auth import router as auth_router
 from app.presentation.routes.bookings import router
 from app.presentation.routes.api import router as api_router
@@ -79,6 +80,7 @@ app = FastAPI(
     swagger_ui_parameters={"persistAuthorization": True},
 )
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
+app.include_router(admin_router)
 app.include_router(auth_router)
 app.include_router(router)
 app.include_router(api_router)
