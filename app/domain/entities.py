@@ -13,6 +13,7 @@ class User:
     role: str
     is_active: bool
     created_at: datetime
+    timezone: str = "UTC"
 
 
 @dataclass
