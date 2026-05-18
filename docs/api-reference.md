@@ -5,6 +5,56 @@ when unauthenticated. API clients must pass `Authorization: Bearer <api_key>` on
 
 ---
 
+## Obtaining an API Key
+
+API keys (`dp_...`) are the recommended way to authenticate scripts, CI pipelines, and tools
+like Swagger UI. There is no self-service key creation page yet — keys are provisioned in one
+of two ways:
+
+### Option A — Admin creates the key for you (recommended)
+
+Ask an admin to run:
+
+```bash
+# 1. Find your user ID
+curl -s http://localhost:8000/api/users \
+     -H "Authorization: Bearer dp_<admin_key>" | python3 -m json.tool
+
+# 2. Create a key for that user
+curl -s -X POST http://localhost:8000/api/users/<your-user-id>/api-keys \
+     -H "Content-Type: application/json" \
+     -H "Authorization: Bearer dp_<admin_key>" \
+     -d '{"description": "My laptop"}'
+```
+
+The response contains the raw key — share it securely with the user. It is shown **once**.
+
+### Option B — Create your own key via browser session
+
+If you have a username and password you can authenticate with a session cookie and create
+your own key. You will need your user UUID (ask an admin, or read it from `GET /api/users`
+if you have admin role).
+
+```bash
+# 1. Login — saves the session_id cookie to /tmp/cookies.txt
+curl -s -c /tmp/cookies.txt -b /tmp/cookies.txt \
+     -X POST http://localhost:8000/auth/login \
+     -d "username=<your-username>&password=<your-password>" -L -o /dev/null
+
+# 2. Create an API key using the session cookie
+curl -s -c /tmp/cookies.txt -b /tmp/cookies.txt \
+     -X POST http://localhost:8000/api/users/<your-user-id>/api-keys \
+     -H "Content-Type: application/json" \
+     -d '{"description": "My laptop"}'
+```
+
+### Using the key in Swagger UI
+
+Open `http://localhost:8000/docs`, click **Authorize**, and paste the `dp_...` value.
+All requests made from Swagger UI will include the `Authorization: Bearer` header automatically.
+
+---
+
 ## Authentication
 
 ### `GET /auth/login`
