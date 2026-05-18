@@ -41,6 +41,35 @@ Invalidates the current session and clears the `session_id` cookie. Redirects to
 
 ## User Management (admin only)
 
+### `GET /admin/users`
+
+Renders the admin user management page. Lists all users and provides a form to create new ones.
+
+**Auth:** admin only. Non-admin users receive `403 Forbidden`.
+
+---
+
+### `POST /admin/users`
+
+Create a new user from the HTML form. Used by the admin UI (HTMX).
+
+**Content-Type:** `application/x-www-form-urlencoded`
+
+**Form fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `username` | string | Must be unique |
+| `password` | string | Plain text — hashed server-side with bcrypt |
+| `role` | string | `"user"` or `"admin"` |
+
+**Responses:**
+
+- `200` — returns updated user table HTML fragment (HTMX swap)
+- `200` with `HX-Retarget: #user-create-error` — username already taken; error message injected into the form
+
+---
+
 ### `GET /api/users`
 
 List all users. Password hashes are never returned.
