@@ -1,14 +1,14 @@
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import cast, select, String
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
 from app.domain.entities import Booking, BookingAuditEntry
 from app.domain.enums import BookingStatus
 from app.domain.exceptions import BookingNotFoundError
-from app.infrastructure.database.models import BookingAuditModel, BookingModel
+from app.infrastructure.database.models import BookingAuditModel, BookingModel, UserModel
 
 
 def _to_audit_entity(m: BookingAuditModel) -> BookingAuditEntry:
@@ -24,7 +24,7 @@ def _to_audit_entity(m: BookingAuditModel) -> BookingAuditEntry:
     )
 
 
-def _to_entity(m: BookingModel) -> Booking:
+def _to_entity(m: BookingModel, owner_username: str | None = None) -> Booking:
     return Booking(
         id=m.id,
         user_id=m.user_id,
@@ -37,6 +37,7 @@ def _to_entity(m: BookingModel) -> Booking:
         hw_config_id=m.hw_config_id,
         hw_config_name=m.hw_config_name,
         vm_ip=m.vm_ip,
+        owner_username=owner_username,
     )
 
 
@@ -99,8 +100,12 @@ class BookingRepository:
         await session.commit()
 
     async def list_all(self, session: AsyncSession) -> list[Booking]:
-        result = await session.execute(select(BookingModel).order_by(BookingModel.created_at.desc()))
-        return [_to_entity(m) for m in result.scalars().all()]
+        result = await session.execute(
+            select(BookingModel, UserModel.username)
+            .join(UserModel, cast(UserModel.id, String) == BookingModel.user_id, isouter=True)
+            .order_by(BookingModel.created_at.desc())
+        )
+        return [_to_entity(m, username) for m, username in result.all()]
 
     async def list_audit(self, session: AsyncSession, booking_id: UUID) -> list[BookingAuditEntry]:
         result = await session.execute(
