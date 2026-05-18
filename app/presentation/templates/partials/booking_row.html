@@ -41,7 +41,7 @@
         {% endif %}
     </td>
     <td class="px-4 py-3">
-        {% if booking.status.value == 'READY' %}
+        {% if booking.status.value == 'READY' and (booking.owner_username == current_user.username or current_user.role == 'admin') %}
             <button
                 class="text-xs px-2 py-1 rounded bg-red-900 text-red-300 border border-red-700 hover:bg-red-800 transition-colors"
                 hx-delete="/bookings/{{ booking.id }}"
