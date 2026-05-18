@@ -94,6 +94,10 @@ manage VM images, hardware configs, or other users.
 Enter a username, password, and role, then click **Create**. The user list updates
 immediately without a page reload.
 
+To delete a user, click the **Delete** button in their row and confirm. The Delete button
+is hidden for your own account and for the last remaining admin. Existing bookings are
+retained; the owner column will show `—`.
+
 **Via the API:**
 
 ```bash

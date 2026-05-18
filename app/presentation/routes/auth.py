@@ -200,7 +200,35 @@ async def admin_create_user(
     users = await _user_repo.list_all(session)
     return templates.TemplateResponse(
         request, "partials/user_table.html",
-        {"users": users},
+        {"users": users, "current_user": current_user},
+    )
+
+
+@router.delete("/admin/users/{user_id}", response_class=HTMLResponse)
+async def admin_delete_user(
+    request: Request,
+    user_id: UUID,
+    session: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(require_admin),
+):
+    if str(current_user.id) == str(user_id):
+        raise HTTPException(status_code=409, detail="Cannot delete your own account")
+
+    all_users = await _user_repo.list_all(session)
+    target = next((u for u in all_users if str(u.id) == str(user_id)), None)
+    if target is None:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    admins = [u for u in all_users if u.role == "admin"]
+    if target.role == "admin" and len(admins) <= 1:
+        raise HTTPException(status_code=409, detail="Cannot delete the last admin account")
+
+    await _user_repo.delete(session, user_id)
+
+    users = await _user_repo.list_all(session)
+    return templates.TemplateResponse(
+        request, "partials/user_table.html",
+        {"users": users, "current_user": current_user},
     )
 
 

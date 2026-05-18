@@ -1,5 +1,6 @@
 <div id="user-table">
     <div id="user-create-error" hx-swap-oob="innerHTML"></div>
+    {% set admin_count = users | selectattr('role', 'equalto', 'admin') | list | length %}
     {% if users %}
     <table class="w-full text-sm">
         <thead>
@@ -8,10 +9,13 @@
                 <th class="px-4 py-2 text-xs text-gray-500 font-normal uppercase tracking-widest">Role</th>
                 <th class="px-4 py-2 text-xs text-gray-500 font-normal uppercase tracking-widest">Status</th>
                 <th class="px-4 py-2 text-xs text-gray-500 font-normal uppercase tracking-widest">Created</th>
+                <th class="px-4 py-2 text-xs text-gray-500 font-normal uppercase tracking-widest"></th>
             </tr>
         </thead>
         <tbody>
             {% for user in users %}
+            {% set is_self = current_user and user.id == current_user.id %}
+            {% set is_last_admin = user.role == 'admin' and admin_count <= 1 %}
             <tr class="border-b border-gray-800 last:border-0 hover:bg-gray-800/40 transition-colors">
                 <td class="px-4 py-3 text-gray-200">{{ user.username }}</td>
                 <td class="px-4 py-3">
@@ -29,6 +33,21 @@
                     {% endif %}
                 </td>
                 <td class="px-4 py-3 text-gray-500 text-xs">{{ user.created_at.strftime('%Y-%m-%d') }}</td>
+                <td class="px-4 py-3">
+                    {% if not is_self and not is_last_admin %}
+                    <button
+                        class="text-xs px-2 py-1 rounded bg-red-900 text-red-300 border border-red-700 hover:bg-red-800 transition-colors"
+                        hx-delete="/admin/users/{{ user.id }}"
+                        hx-target="#user-table"
+                        hx-swap="outerHTML"
+                        hx-confirm="Delete user '{{ user.username }}'? This cannot be undone."
+                    >
+                        Delete
+                    </button>
+                    {% else %}
+                    <span class="text-gray-700">—</span>
+                    {% endif %}
+                </td>
             </tr>
             {% endfor %}
         </tbody>

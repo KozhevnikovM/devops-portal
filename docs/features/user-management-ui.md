@@ -59,8 +59,34 @@ The `users` table already exists.
 - `app/presentation/routes/auth.py` — two new route handlers
 - `app/presentation/templates/base.html` — Admin nav link for admins
 
-## Out of scope (not in this issue)
+## User deletion
 
-- Deactivating / reactivating users (no API endpoint for it yet)
-- Editing username, password, or role of existing users
-- Deleting users
+### Delete button
+
+Each row in `partials/user_table.html` gets a **Delete** button:
+- `hx-delete="/admin/users/{user_id}"`, `hx-confirm="Delete user X? This cannot be undone."`
+- `hx-target="closest tr"`, `hx-swap="outerHTML"` → empty response removes the row
+
+### New route
+
+`DELETE /admin/users/{user_id}` — admin only.
+
+Guards (return 409):
+- Self-deletion: cannot delete your own account
+- Last admin: cannot delete the only remaining admin
+
+Active bookings are **not** a blocker — the user is deleted; their bookings remain
+in the DB with the user_id intact but `owner_username` will show `—`.
+
+Returns `200` empty body on success (HTMX swaps the row out).
+
+### New repository method
+
+`UserRepository.delete(session, user_id)`:
+1. Delete the user's quota row first (FK constraint, no cascade defined).
+2. Delete the user (API keys cascade-delete automatically via the existing ORM relationship).
+
+### Docs updates
+
+- `docs/api-reference.md` — add `DELETE /admin/users/{user_id}`
+- `docs/admin-guide.md` — mention deletion in the user management section

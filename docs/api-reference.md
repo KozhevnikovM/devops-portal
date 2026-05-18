@@ -70,6 +70,25 @@ Create a new user from the HTML form. Used by the admin UI (HTMX).
 
 ---
 
+### `DELETE /admin/users/{user_id}`
+
+Delete a user account. Admin only.
+
+**Guards (409 Conflict):**
+- Cannot delete your own account
+- Cannot delete the last remaining admin
+
+**Responses:**
+
+- `200` — returns updated user table HTML fragment (HTMX swap)
+- `404 Not Found` — user does not exist
+- `409 Conflict` — self-deletion or last admin
+
+On success, the user's API keys and quota row are deleted. Existing bookings are
+retained with the original `user_id` intact; the owner column will display `—`.
+
+---
+
 ### `GET /api/users`
 
 List all users. Password hashes are never returned.
