@@ -6,6 +6,27 @@ from app.domain.enums import BookingStatus
 
 
 @dataclass
+class User:
+    id: UUID
+    username: str
+    password_hash: str
+    role: str
+    is_active: bool
+    created_at: datetime
+
+
+@dataclass
+class APIKey:
+    id: UUID
+    key_hash: str
+    user_id: UUID
+    description: str | None
+    is_active: bool
+    created_at: datetime
+    last_used_at: datetime | None
+
+
+@dataclass
 class VMImage:
     id: UUID
     name: str

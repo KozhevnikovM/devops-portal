@@ -1,12 +1,15 @@
 import logging
 from contextlib import asynccontextmanager
 
+import bcrypt
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
 from app.config import settings
 from app.infrastructure.database.session import SyncSessionLocal
 from app.infrastructure.repositories.booking_repo import BookingRepository
+from app.infrastructure.repositories.user_repo import UserRepository
+from app.presentation.routes.auth import router as auth_router
 from app.presentation.routes.bookings import router
 from app.presentation.routes.api import router as api_router
 from app.tasks.provision import provision_vm_task
@@ -26,8 +29,24 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    _seed_admin_user()
     _recover_in_progress_bookings()
     yield
+
+
+def _seed_admin_user() -> None:
+    """Create the initial admin user if no users exist."""
+    repo = UserRepository()
+    with SyncSessionLocal() as session:
+        if repo.sync_list_all(session):
+            return
+
+        pw_hash = bcrypt.hashpw(settings.ADMIN_PASSWORD.encode(), bcrypt.gensalt()).decode()
+        repo.sync_create(session, settings.ADMIN_USERNAME, pw_hash, "admin")
+        logger.info("seeded admin user '%s'", settings.ADMIN_USERNAME)
+
+    if settings.ADMIN_PASSWORD == "changeme":
+        logger.warning("SECURITY: default admin password is still 'changeme' — change it")
 
 
 def _recover_in_progress_bookings() -> None:
@@ -56,5 +75,6 @@ def _recover_in_progress_bookings() -> None:
 
 app = FastAPI(title="DevOps Portal", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
+app.include_router(auth_router)
 app.include_router(router)
 app.include_router(api_router)

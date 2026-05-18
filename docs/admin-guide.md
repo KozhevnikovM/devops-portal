@@ -18,14 +18,17 @@ git clone <repo-url> devops-portal && cd devops-portal
 cp .env.example .env
 # Edit .env — see Environment Variables below
 
-# 3. Start all services
+# 3. Start all services (init container runs migrations automatically)
 docker compose up -d
-
-# 4. Run database migrations
-docker compose exec app alembic upgrade head
 ```
 
-The portal is now available at `http://<host>:8000`.
+On startup the portal seeds an initial admin user from `ADMIN_USERNAME` / `ADMIN_PASSWORD`
+(defaults: `admin` / `changeme`). Navigate to `http://<host>:8000` — you will be redirected
+to the login page.
+
+**Change the default password immediately** — see [Auth Setup](#auth-setup) below.
+
+---
 
 ### Environment Variables
 
@@ -33,9 +36,11 @@ The portal is now available at `http://<host>:8000`.
 | :--- | :--- | :--- |
 | `DATABASE_URL` | Yes | Async PostgreSQL DSN for FastAPI — must use `postgresql+asyncpg://` driver |
 | `DATABASE_URL_SYNC` | Yes | Sync PostgreSQL DSN for Celery workers and Alembic — must use `postgresql+psycopg2://` driver |
-| `REDIS_URL` | Yes | Redis DSN for Celery broker and result backend (e.g. `redis://redis:6379/0`) |
+| `REDIS_URL` | Yes | Redis DSN for Celery broker, result backend, and session storage (e.g. `redis://redis:6379/0`) |
 | `USE_STUB_TERRAFORM` | No | `true` uses the stub adapter (default). Set `false` to use the real VMware adapter. |
-| `DEV_USER_ID` | No | Hardcoded user identity for the MVP (no auth yet). Default: `dev-user-00000000` |
+| `ADMIN_USERNAME` | No | Username for the seeded admin account. Default: `admin` |
+| `ADMIN_PASSWORD` | No | Password for the seeded admin account. Default: `changeme` — **always override in production** |
+| `SESSION_TTL` | No | Browser session lifetime in seconds. Default: `86400` (24 h) |
 | `VCD_URL` | When real adapter | VCD API URL, e.g. `https://vcd.example.com/api` |
 | `VCD_ORG` | When real adapter | VCD organisation name |
 | `VCD_VDC` | When real adapter | VCD virtual datacenter name |
@@ -52,6 +57,86 @@ The portal is now available at `http://<host>:8000`.
 | `PROVISION_RATE_LIMIT` | No | Max provision tasks per worker per time window (`0.5/m` = 1 per 2 min). Default: `0.5/m` |
 | `TF_PG_CONN_STR` | No | PostgreSQL connection string for Terraform state backend. Must use the standard `postgresql://` driver (not `+asyncpg` / `+psycopg2`). Append `?sslmode=disable` for servers without SSL. Default matches the bundled Postgres service. |
 | `STALE_PROVISIONING_THRESHOLD_MINUTES` | No | Minutes after which a booking stuck in PENDING/PROVISIONING/RETRY is marked FAILED by the beat task. Default: `60` |
+
+---
+
+## Auth Setup
+
+### First login
+
+Navigate to `http://<host>:8000`. You are redirected to the login page.
+
+Sign in with the seeded admin credentials (`admin` / `changeme` by default), then
+immediately create a new password:
+
+```bash
+# Option A — set a strong password before first deploy via .env
+ADMIN_PASSWORD=a-long-random-string-here
+
+# Option B — create a new admin account and deactivate the default one (via API)
+curl -s -X POST http://localhost:8000/api/users \
+     -H "Content-Type: application/json" \
+     -H "Authorization: Bearer dp_<api_key>" \
+     -d '{"username": "alice", "password": "hunter2", "role": "admin"}'
+```
+
+The startup log prints a `WARNING` if `ADMIN_PASSWORD` is still `changeme`.
+
+### Creating users
+
+Regular users (role `"user"`) can create and release their own bookings but cannot
+manage VM images, hardware configs, or other users.
+
+```bash
+# Create a user account for a team member
+curl -s -X POST http://localhost:8000/api/users \
+     -H "Content-Type: application/json" \
+     -H "Authorization: Bearer dp_<api_key>" \
+     -d '{"username": "bob", "password": "s3cret", "role": "user"}'
+```
+
+### API keys (for Jenkins / CI)
+
+API keys allow non-browser clients to authenticate without a session cookie.
+A key is a `dp_` prefixed 35-character token. The raw key is shown **once** at creation.
+
+**Create an API key:**
+
+```bash
+# Create a key for a specific user account
+curl -s -X POST http://localhost:8000/api/users/<user-id>/api-keys \
+     -H "Content-Type: application/json" \
+     -H "Authorization: Bearer dp_<admin_api_key>" \
+     -d '{"description": "Jenkins CI"}'
+```
+
+Response:
+```json
+{ "id": "uuid", "key": "dp_a1b2c3d4...", "description": "Jenkins CI" }
+```
+
+Store the `key` value in Jenkins credentials. Use it in all API requests:
+
+```bash
+curl -s -X POST http://localhost:8000/bookings \
+     -H "Accept: application/json" \
+     -H "Authorization: Bearer dp_a1b2c3d4..." \
+     -d "ttl_minutes=240&image_id=<uuid>&hw_config_id=<uuid>"
+```
+
+**Revoke an API key:**
+
+```bash
+curl -s -X DELETE http://localhost:8000/api/users/<user-id>/api-keys/<key-id> \
+     -H "Authorization: Bearer dp_<admin_api_key>"
+```
+
+**List users** to find IDs:
+
+```bash
+curl -s http://localhost:8000/api/users \
+     -H "Authorization: Bearer dp_<api_key>" | python3 -m json.tool
+```
 
 ---
 
@@ -127,6 +212,7 @@ docker compose run --rm app ls /app/terraform/providers-mirror/registry.terrafor
 #### Step 3 — Configure VM images and hardware profiles
 
 VM images and hardware configurations are managed via the API — no SQL required.
+All `/api/*` endpoints require admin credentials.
 
 After running migrations, the database contains three placeholder VM images
 (`Ubuntu 22.04`, `Ubuntu 20.04`, `Windows 2022`) and three ready-to-use hardware
@@ -136,11 +222,13 @@ profiles (`small`, `medium`, `large`).
 
 ```bash
 # List images to get their IDs
-curl -s http://localhost:8000/api/images | python3 -m json.tool
+curl -s http://localhost:8000/api/images \
+     -H "Authorization: Bearer dp_<api_key>" | python3 -m json.tool
 
 # Update each image with its real VCD vApp template ID
 curl -s -X PATCH http://localhost:8000/api/images/<image-id> \
      -H "Content-Type: application/json" \
+     -H "Authorization: Bearer dp_<api_key>" \
      -d '{"vapp_template_id": "urn:vcloud:vapptemplate:real-id-here"}'
 ```
 
@@ -149,13 +237,15 @@ curl -s -X PATCH http://localhost:8000/api/images/<image-id> \
 ```bash
 curl -s -X POST http://localhost:8000/api/images \
      -H "Content-Type: application/json" \
+     -H "Authorization: Bearer dp_<api_key>" \
      -d '{"name": "Debian 12", "vapp_template_id": "urn:vcloud:vapptemplate:..."}'
 ```
 
 **Deactivate an image** (hides it from the booking form):
 
 ```bash
-curl -s -X DELETE http://localhost:8000/api/images/<image-id>
+curl -s -X DELETE http://localhost:8000/api/images/<image-id> \
+     -H "Authorization: Bearer dp_<api_key>"
 ```
 
 **Add a custom hardware profile:**
@@ -163,6 +253,7 @@ curl -s -X DELETE http://localhost:8000/api/images/<image-id>
 ```bash
 curl -s -X POST http://localhost:8000/api/hardware \
      -H "Content-Type: application/json" \
+     -H "Authorization: Bearer dp_<api_key>" \
      -d '{"name": "xlarge", "cpus": 8, "memory_mb": 16384, "disk_mb": 102400}'
 ```
 
@@ -202,7 +293,8 @@ docker compose up -d
 # Or use the API (replace UUIDs with real IDs from GET /api/images and /api/hardware):
 curl -s -X POST http://localhost:8000/bookings \
      -H "Accept: application/json" \
-     -d "ttl_hours=1&image_id=<image-uuid>&hw_config_id=<hw-config-uuid>" | python3 -m json.tool
+     -H "Authorization: Bearer dp_<api_key>" \
+     -d "ttl_minutes=240&image_id=<image-uuid>&hw_config_id=<hw-config-uuid>" | python3 -m json.tool
 ```
 
 Check worker logs to follow terraform output:
@@ -226,6 +318,7 @@ No rebuild needed — the flag is read at worker startup.
 ## Releasing Bookings
 
 A `READY` (or `FAILED`) booking can be released manually via the UI or the API.
+Only the booking owner or an admin may release a booking.
 Releasing queues a `teardown_vm_task` Celery task that runs `terraform destroy`
 for the booking's workspace and transitions the status from `RELEASING` to
 `RELEASED` once complete.
@@ -237,7 +330,8 @@ dialog appears before teardown is queued.
 
 ```bash
 curl -s -X DELETE http://localhost:8000/bookings/<booking-id> \
-     -H "Accept: application/json" | python3 -m json.tool
+     -H "Accept: application/json" \
+     -H "Authorization: Bearer dp_<api_key>" | python3 -m json.tool
 ```
 
 The response is `202 Accepted` with `"status": "RELEASING"`. The row updates to
@@ -296,15 +390,17 @@ docker compose logs -f beat
 
 ## Database Migrations
 
+Migrations run automatically when `docker compose up` starts the `init` container. For manual control:
+
 ```bash
-# Apply all pending migrations
-docker compose exec app alembic upgrade head
+# Apply all pending migrations manually (e.g. in CI or after a failed init)
+docker compose run --rm init alembic upgrade head
 
 # Rollback one migration
-docker compose exec app alembic downgrade -1
+docker compose run --rm init alembic downgrade -1
 
 # Create a new migration after changing models.py
-docker compose exec app alembic revision --autogenerate -m "describe_change"
+docker compose run --rm init alembic revision --autogenerate -m "describe_change"
 ```
 
 Always commit the generated migration file alongside the model change.
@@ -364,4 +460,3 @@ Scale workers to match the total slot count (`tokens × max_parallel`):
 ```bash
 docker compose up -d --scale worker=4
 ```
-

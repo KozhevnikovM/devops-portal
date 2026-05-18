@@ -6,6 +6,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.entities import User
+from app.infrastructure.auth import require_admin
 from app.infrastructure.database.session import get_async_session
 from app.infrastructure.repositories.image_repo import ImageRepository
 from app.infrastructure.repositories.hw_config_repo import HWConfigRepository
@@ -69,7 +71,10 @@ class HWConfigResponse(BaseModel):
 # ── VM Images ─────────────────────────────────────────────────────────────────
 
 @router.get("/images", response_model=list[VMImageResponse])
-async def list_images(session: AsyncSession = Depends(get_async_session)):
+async def list_images(
+    session: AsyncSession = Depends(get_async_session),
+    _: User = Depends(require_admin),
+):
     return await _image_repo.list_all(session)
 
 
@@ -77,6 +82,7 @@ async def list_images(session: AsyncSession = Depends(get_async_session)):
 async def create_image(
     body: VMImageCreate,
     session: AsyncSession = Depends(get_async_session),
+    _: User = Depends(require_admin),
 ):
     return await _image_repo.create(session, body.name, body.vapp_template_id)
 
@@ -86,6 +92,7 @@ async def update_image(
     image_id: UUID,
     body: VMImageUpdate,
     session: AsyncSession = Depends(get_async_session),
+    _: User = Depends(require_admin),
 ):
     fields = body.model_dump(exclude_none=True)
     if not fields:
@@ -100,6 +107,7 @@ async def update_image(
 async def deactivate_image(
     image_id: UUID,
     session: AsyncSession = Depends(get_async_session),
+    _: User = Depends(require_admin),
 ):
     try:
         await _image_repo.deactivate(session, image_id)
@@ -110,7 +118,10 @@ async def deactivate_image(
 # ── Hardware Configs ──────────────────────────────────────────────────────────
 
 @router.get("/hardware", response_model=list[HWConfigResponse])
-async def list_hardware(session: AsyncSession = Depends(get_async_session)):
+async def list_hardware(
+    session: AsyncSession = Depends(get_async_session),
+    _: User = Depends(require_admin),
+):
     return await _hw_config_repo.list_all(session)
 
 
@@ -118,6 +129,7 @@ async def list_hardware(session: AsyncSession = Depends(get_async_session)):
 async def create_hardware(
     body: HWConfigCreate,
     session: AsyncSession = Depends(get_async_session),
+    _: User = Depends(require_admin),
 ):
     return await _hw_config_repo.create(
         session, body.name, body.cpus, body.memory_mb, body.disk_mb
@@ -129,6 +141,7 @@ async def update_hardware(
     hw_config_id: UUID,
     body: HWConfigUpdate,
     session: AsyncSession = Depends(get_async_session),
+    _: User = Depends(require_admin),
 ):
     fields = body.model_dump(exclude_none=True)
     if not fields:
@@ -143,6 +156,7 @@ async def update_hardware(
 async def deactivate_hardware(
     hw_config_id: UUID,
     session: AsyncSession = Depends(get_async_session),
+    _: User = Depends(require_admin),
 ):
     try:
         await _hw_config_repo.deactivate(session, hw_config_id)

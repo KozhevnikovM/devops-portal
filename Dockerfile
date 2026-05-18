@@ -36,11 +36,11 @@ RUN pip install --no-cache-dir \
 
 COPY --from=terraform-bin /bin/terraform /usr/local/bin/terraform
 
+COPY . .
+
 COPY --from=frontend /build/dist/css/tailwind.css app/static/css/tailwind.css
 COPY --from=frontend /build/dist/js/htmx.min.js  app/static/js/htmx.min.js
 COPY --from=frontend /build/dist/js/htmx-sse.js  app/static/js/htmx-sse.js
-
-COPY . .
 
 ENV TF_CLI_CONFIG_FILE=/app/terraform/terraformrc
 
