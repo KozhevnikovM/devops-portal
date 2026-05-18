@@ -50,19 +50,19 @@
         hx-post="/profile/api-keys"
         hx-target="#api-key-list"
         hx-swap="outerHTML"
-        class="flex items-center gap-2"
+        class="flex items-center gap-3 mt-4"
     >
         <input
             type="text"
             name="description"
             placeholder="Description (optional)"
             maxlength="128"
-            class="flex-1 bg-gray-800 border border-gray-700 rounded px-3 py-1.5 text-xs text-gray-100 placeholder-gray-600 focus:outline-none focus:border-green-600"
+            class="flex-1 bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 placeholder-gray-600 focus:outline-none focus:border-green-600"
         >
         <button
             type="submit"
-            class="shrink-0 px-3 py-1.5 bg-green-700 hover:bg-green-600 text-green-100 text-xs rounded transition-colors"
-        >+ Generate key</button>
+            class="shrink-0 px-4 py-2 bg-green-700 hover:bg-green-600 text-green-100 text-sm rounded transition-colors"
+        >Add Key</button>
     </form>
 
 </div>
