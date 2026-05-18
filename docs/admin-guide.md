@@ -18,11 +18,8 @@ git clone <repo-url> devops-portal && cd devops-portal
 cp .env.example .env
 # Edit .env — see Environment Variables below
 
-# 3. Start all services
+# 3. Start all services (init container runs migrations automatically)
 docker compose up -d
-
-# 4. Run database migrations
-docker compose exec app alembic upgrade head
 ```
 
 On startup the portal seeds an initial admin user from `ADMIN_USERNAME` / `ADMIN_PASSWORD`
@@ -393,15 +390,17 @@ docker compose logs -f beat
 
 ## Database Migrations
 
+Migrations run automatically when `docker compose up` starts the `init` container. For manual control:
+
 ```bash
-# Apply all pending migrations
-docker compose exec app alembic upgrade head
+# Apply all pending migrations manually (e.g. in CI or after a failed init)
+docker compose run --rm init alembic upgrade head
 
 # Rollback one migration
-docker compose exec app alembic downgrade -1
+docker compose run --rm init alembic downgrade -1
 
 # Create a new migration after changing models.py
-docker compose exec app alembic revision --autogenerate -m "describe_change"
+docker compose run --rm init alembic revision --autogenerate -m "describe_change"
 ```
 
 Always commit the generated migration file alongside the model change.
