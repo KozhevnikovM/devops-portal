@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+
+{% block title %}Users — DevOps Portal{% endblock %}
+
+{% block content %}
+<div class="max-w-3xl">
+    <h2 class="text-sm text-gray-400 uppercase tracking-widest mb-6">User Management</h2>
+
+    <div class="bg-gray-900 border border-gray-800 rounded-lg p-6 mb-6">
+        <p class="text-xs text-gray-500 uppercase tracking-widest mb-4">Add User</p>
+
+        <form
+            hx-post="/admin/users"
+            hx-target="#user-table"
+            hx-swap="outerHTML"
+            hx-on::after-request="if(event.detail.successful) this.reset()"
+            class="flex items-end gap-3 flex-wrap"
+        >
+            <div class="flex flex-col gap-1.5">
+                <label class="text-xs text-gray-500" for="new-username">Username</label>
+                <input
+                    id="new-username"
+                    name="username"
+                    type="text"
+                    required
+                    autocomplete="off"
+                    class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-44"
+                    placeholder="username"
+                >
+            </div>
+            <div class="flex flex-col gap-1.5">
+                <label class="text-xs text-gray-500" for="new-password">Password</label>
+                <input
+                    id="new-password"
+                    name="password"
+                    type="password"
+                    required
+                    autocomplete="new-password"
+                    class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-44"
+                    placeholder="password"
+                >
+            </div>
+            <div class="flex flex-col gap-1.5">
+                <label class="text-xs text-gray-500" for="new-role">Role</label>
+                <select
+                    id="new-role"
+                    name="role"
+                    class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-green-600"
+                >
+                    <option value="user">user</option>
+                    <option value="admin">admin</option>
+                </select>
+            </div>
+            <div class="flex flex-col gap-1.5">
+                <div id="user-create-error" class="text-xs h-4"></div>
+                <button
+                    type="submit"
+                    class="px-4 py-2 bg-green-700 hover:bg-green-600 text-green-100 text-sm rounded transition-colors"
+                >
+                    Create
+                </button>
+            </div>
+        </form>
+    </div>
+
+    <div class="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden">
+        {% include "partials/user_table.html" %}
+    </div>
+</div>
+{% endblock %}

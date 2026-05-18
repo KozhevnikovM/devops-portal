@@ -41,6 +41,54 @@ Invalidates the current session and clears the `session_id` cookie. Redirects to
 
 ## User Management (admin only)
 
+### `GET /admin/users`
+
+Renders the admin user management page. Lists all users and provides a form to create new ones.
+
+**Auth:** admin only. Non-admin users receive `403 Forbidden`.
+
+---
+
+### `POST /admin/users`
+
+Create a new user from the HTML form. Used by the admin UI (HTMX).
+
+**Content-Type:** `application/x-www-form-urlencoded`
+
+**Form fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `username` | string | Must be unique |
+| `password` | string | Plain text — hashed server-side with bcrypt |
+| `role` | string | `"user"` or `"admin"` |
+
+**Responses:**
+
+- `200` — returns updated user table HTML fragment (HTMX swap)
+- `200` with `HX-Retarget: #user-create-error` — username already taken; error message injected into the form
+
+---
+
+### `DELETE /admin/users/{user_id}`
+
+Delete a user account. Admin only.
+
+**Guards (409 Conflict):**
+- Cannot delete your own account
+- Cannot delete the last remaining admin
+
+**Responses:**
+
+- `200` — returns updated user table HTML fragment (HTMX swap)
+- `404 Not Found` — user does not exist
+- `409 Conflict` — self-deletion or last admin
+
+On success, the user's API keys and quota row are deleted. Existing bookings are
+retained with the original `user_id` intact; the owner column will display `—`.
+
+---
+
 ### `GET /api/users`
 
 List all users. Password hashes are never returned.

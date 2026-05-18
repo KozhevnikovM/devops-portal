@@ -90,6 +90,16 @@ The startup log prints a `WARNING` if `ADMIN_PASSWORD` is still `changeme`.
 Regular users (role `"user"`) can create and release their own bookings but cannot
 manage VM images, hardware configs, or other users.
 
+**Via the UI:** navigate to **Admin → Users** (link in the header, visible to admins only).
+Enter a username, password, and role, then click **Create**. The user list updates
+immediately without a page reload.
+
+To delete a user, click the **Delete** button in their row and confirm. The Delete button
+is hidden for your own account and for the last remaining admin. Existing bookings are
+retained; the owner column will show `—`.
+
+**Via the API:**
+
 ```bash
 # Create a user account for a team member
 curl -s -X POST http://localhost:8000/api/users \

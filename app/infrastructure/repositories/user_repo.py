@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
 from app.domain.entities import APIKey, User
-from app.infrastructure.database.models import APIKeyModel, UserModel
+from app.infrastructure.database.models import APIKeyModel, QuotaModel, UserModel
 
 
 def _to_user(m: UserModel) -> User:
@@ -145,6 +145,21 @@ class UserRepository:
         if not m:
             return False
         m.is_active = False
+        await session.commit()
+        return True
+
+    async def delete(self, session: AsyncSession, user_id: uuid.UUID) -> bool:
+        result = await session.execute(select(UserModel).where(UserModel.id == user_id))
+        m = result.scalar_one_or_none()
+        if not m:
+            return False
+        # Delete quota row first — no cascade defined on that FK
+        quota_result = await session.execute(select(QuotaModel).where(QuotaModel.user_id == user_id))
+        quota = quota_result.scalar_one_or_none()
+        if quota:
+            await session.delete(quota)
+        # API keys cascade-delete via the ORM relationship
+        await session.delete(m)
         await session.commit()
         return True
 
