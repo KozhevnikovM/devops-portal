@@ -43,7 +43,6 @@ to the login page.
 | `SESSION_TTL` | No | Browser session lifetime in seconds. Default: `86400` (24 h) |
 | `DEFAULT_QUOTA_CPUS` | No | Default CPU core quota per user. Default: `16` |
 | `DEFAULT_QUOTA_MEMORY_GB` | No | Default memory quota per user in GB. Default: `32` |
-| `DEFAULT_QUOTA_SSD_GB` | No | Default SSD storage quota per user in GB. Default: `200` |
 | `DEFAULT_QUOTA_HDD_GB` | No | Default HDD storage quota per user in GB. Default: `500` |
 | `VCD_URL` | When real adapter | VCD API URL, e.g. `https://vcd.example.com/api` |
 | `VCD_ORG` | When real adapter | VCD organisation name |
@@ -153,7 +152,6 @@ Each user is limited by four resource dimensions across all their concurrently a
 |-----------|---------|---------|
 | CPU cores | 16 | `DEFAULT_QUOTA_CPUS` |
 | Memory | 32 GB | `DEFAULT_QUOTA_MEMORY_GB` |
-| SSD storage | 200 GB | `DEFAULT_QUOTA_SSD_GB` |
 | HDD storage | 500 GB | `DEFAULT_QUOTA_HDD_GB` |
 
 Defaults apply when no per-user quota row exists. A booking is rejected if adding its
@@ -166,7 +164,7 @@ resources would exceed **any** single dimension.
 curl -s -X PATCH http://localhost:8000/api/users/<user-id>/quota \
      -H "Content-Type: application/json" \
      -H "Authorization: Bearer dp_<api_key>" \
-     -d '{"max_cpus": 32, "max_memory_gb": 64, "max_ssd_gb": 400, "max_hdd_gb": 1000}'
+     -d '{"max_cpus": 32, "max_memory_gb": 64, "max_hdd_gb": 1000}'
 ```
 
 All four fields are optional — omitted fields keep their current value (or the global default
@@ -186,7 +184,6 @@ Response:
   "user_id": "uuid",
   "max_cpus": 64,
   "max_memory_gb": 32,
-  "max_ssd_gb": 200,
   "max_hdd_gb": 500
 }
 ```

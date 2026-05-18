@@ -44,7 +44,6 @@ def upgrade() -> None:
         sa.Column("user_id",       UUID(as_uuid=True), sa.ForeignKey("users.id"), nullable=False, unique=True),
         sa.Column("max_cpus",      sa.Integer, nullable=False),
         sa.Column("max_memory_gb", sa.Integer, nullable=False),
-        sa.Column("max_ssd_gb",    sa.Integer, nullable=False),
         sa.Column("max_hdd_gb",    sa.Integer, nullable=False),
         sa.Column("created_at",    sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
     )

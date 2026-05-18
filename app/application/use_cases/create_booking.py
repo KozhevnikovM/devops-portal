@@ -46,7 +46,6 @@ class CreateBookingUseCase:
 
         new_cpus      = hw.cpus
         new_memory_gb = hw.memory_mb // 1024  # floor: matches ceiling on the used-side at the boundary
-        new_ssd_gb    = hw.ssd_mb    // 1024
         new_hdd_gb    = hw.hdd_mb    // 1024
 
         violations = []
@@ -54,8 +53,6 @@ class CreateBookingUseCase:
             violations.append(f"CPU ({used['cpus'] + new_cpus}/{limits['max_cpus']} cores)")
         if used["memory_gb"] + new_memory_gb > limits["max_memory_gb"]:
             violations.append(f"memory ({used['memory_gb'] + new_memory_gb}/{limits['max_memory_gb']} GB)")
-        if used["ssd_gb"]    + new_ssd_gb    > limits["max_ssd_gb"]:
-            violations.append(f"SSD ({used['ssd_gb'] + new_ssd_gb}/{limits['max_ssd_gb']} GB)")
         if used["hdd_gb"]    + new_hdd_gb    > limits["max_hdd_gb"]:
             violations.append(f"HDD ({used['hdd_gb'] + new_hdd_gb}/{limits['max_hdd_gb']} GB)")
 

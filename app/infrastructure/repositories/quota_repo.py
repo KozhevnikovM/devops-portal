@@ -25,7 +25,6 @@ def _to_entity(m: QuotaModel) -> Quota:
         user_id=m.user_id,
         max_cpus=m.max_cpus,
         max_memory_gb=m.max_memory_gb,
-        max_ssd_gb=m.max_ssd_gb,
         max_hdd_gb=m.max_hdd_gb,
         created_at=m.created_at,
     )
@@ -37,7 +36,6 @@ class QuotaRepository:
             select(
                 func.coalesce(func.sum(BookingModel.cpus),      0).label("cpus"),
                 func.coalesce(func.sum(BookingModel.memory_mb), 0).label("memory_mb"),
-                func.coalesce(func.sum(BookingModel.ssd_mb),    0).label("ssd_mb"),
                 func.coalesce(func.sum(BookingModel.hdd_mb),    0).label("hdd_mb"),
             ).where(
                 BookingModel.user_id == user_id,
@@ -48,7 +46,6 @@ class QuotaRepository:
         return {
             "cpus":      int(row.cpus),
             "memory_gb": math.ceil(int(row.memory_mb) / 1024),
-            "ssd_gb":    math.ceil(int(row.ssd_mb)    / 1024),
             "hdd_gb":    math.ceil(int(row.hdd_mb)    / 1024),
         }
 
@@ -63,13 +60,11 @@ class QuotaRepository:
             return {
                 "max_cpus":      settings.DEFAULT_QUOTA_CPUS,
                 "max_memory_gb": settings.DEFAULT_QUOTA_MEMORY_GB,
-                "max_ssd_gb":    settings.DEFAULT_QUOTA_SSD_GB,
                 "max_hdd_gb":    settings.DEFAULT_QUOTA_HDD_GB,
             }
         return {
             "max_cpus":      model.max_cpus,
             "max_memory_gb": model.max_memory_gb,
-            "max_ssd_gb":    model.max_ssd_gb,
             "max_hdd_gb":    model.max_hdd_gb,
         }
 
@@ -79,7 +74,6 @@ class QuotaRepository:
         user_id: UUID,
         max_cpus: int,
         max_memory_gb: int,
-        max_ssd_gb: int,
         max_hdd_gb: int,
     ) -> Quota:
         stmt = (
@@ -89,7 +83,6 @@ class QuotaRepository:
                 user_id=user_id,
                 max_cpus=max_cpus,
                 max_memory_gb=max_memory_gb,
-                max_ssd_gb=max_ssd_gb,
                 max_hdd_gb=max_hdd_gb,
             )
             .on_conflict_do_update(
@@ -97,7 +90,6 @@ class QuotaRepository:
                 set_={
                     "max_cpus":      max_cpus,
                     "max_memory_gb": max_memory_gb,
-                    "max_ssd_gb":    max_ssd_gb,
                     "max_hdd_gb":    max_hdd_gb,
                 },
             )
