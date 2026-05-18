@@ -89,8 +89,8 @@ class TerraformVcdAdapter:
               cpus             = var.cpus
               memory           = var.memory
               resize_disk      = true
-              ssd_size         = var.ssd_size
-              hdd_size         = var.hdd_size
+              disk_size        = var.disk_size
+              storage_profile  = var.storage_profile
               depends_on       = [vcd_vapp_org_network.this]
             }}
 
@@ -103,8 +103,8 @@ class TerraformVcdAdapter:
             variable "vapp_template_id" {{ type = string }}
             variable "cpus"             {{ type = number }}
             variable "memory"           {{ type = number }}
-            variable "ssd_size"          {{ type = number }}
-            variable "hdd_size"          {{ type = number }}
+            variable "disk_size"        {{ type = number }}
+            variable "storage_profile"  {{ type = string }}
         """)
         (workspace_dir / "main.tf").write_text(main_tf)
 
@@ -114,8 +114,8 @@ class TerraformVcdAdapter:
             f'vapp_template_id = "{config["vapp_template_id"]}"',
             f'cpus             = {config["cpus"]}',
             f'memory           = {config["memory"]}',
-            f'ssd_size         = {config["ssd_size"]}',
-            f'hdd_size         = {config["hdd_size"]}',
+            f'disk_size        = {config["disk_size"]}',
+            f'storage_profile  = "{config["storage_profile"]}"',
         ]
         (workspace_dir / "terraform.tfvars").write_text("\n".join(tfvars_lines) + "\n")
 
