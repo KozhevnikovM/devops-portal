@@ -59,6 +59,7 @@ class Booking:
     hw_config_id: UUID
     hw_config_name: str
     vm_ip: str | None = None
+    owner_username: str | None = None
 
 
 @dataclass
