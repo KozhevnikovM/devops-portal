@@ -45,7 +45,7 @@ class HWConfigCreate(BaseModel):
     name: str
     cpus: int
     memory_mb: int
-    disk_mb: int
+    hdd_mb: int
 
 
 class HWConfigUpdate(BaseModel):
@@ -63,7 +63,7 @@ class HWConfigResponse(BaseModel):
     name: str
     cpus: int
     memory_mb: int
-    disk_mb: int
+    hdd_mb: int
     is_active: bool
     created_at: datetime
 
@@ -132,7 +132,7 @@ async def create_hardware(
     _: User = Depends(require_admin),
 ):
     return await _hw_config_repo.create(
-        session, body.name, body.cpus, body.memory_mb, body.disk_mb
+        session, body.name, body.cpus, body.memory_mb, body.hdd_mb
     )
 
 

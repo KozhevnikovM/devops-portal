@@ -40,7 +40,6 @@ def _to_entity(m: BookingModel, owner_username: str | None = None) -> Booking:
         owner_username=owner_username,
         cpus=m.cpus,
         memory_mb=m.memory_mb,
-        ssd_mb=m.ssd_mb,
         hdd_mb=m.hdd_mb,
     )
 
@@ -60,7 +59,6 @@ class BookingRepository:
             hw_config_name=booking.hw_config_name,
             cpus=booking.cpus,
             memory_mb=booking.memory_mb,
-            ssd_mb=booking.ssd_mb,
             hdd_mb=booking.hdd_mb,
         )
         session.add(model)

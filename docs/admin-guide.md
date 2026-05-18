@@ -313,14 +313,13 @@ curl -s -X DELETE http://localhost:8000/api/images/<image-id> \
 
 **Add a custom hardware profile:**
 
-Hardware profiles specify CPU cores, memory, and separate SSD and HDD storage quotas.
-Either `ssd_mb` or `hdd_mb` (or both) may be zero.
+Hardware profiles specify CPU cores, memory, and HDD storage in MB.
 
 ```bash
 curl -s -X POST http://localhost:8000/api/hardware \
      -H "Content-Type: application/json" \
      -H "Authorization: Bearer dp_<api_key>" \
-     -d '{"name": "xlarge", "cpus": 8, "memory_mb": 16384, "ssd_mb": 51200, "hdd_mb": 102400}'
+     -d '{"name": "xlarge", "cpus": 8, "memory_mb": 16384, "hdd_mb": 102400}'
 ```
 
 See [docs/api-reference.md](api-reference.md) for the full API reference.

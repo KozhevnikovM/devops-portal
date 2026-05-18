@@ -42,7 +42,6 @@ class HWConfig:
     name: str
     cpus: int
     memory_mb: int
-    ssd_mb: int
     hdd_mb: int
     is_active: bool
     created_at: datetime
@@ -64,7 +63,6 @@ class Booking:
     owner_username: str | None = None
     cpus: int = 0
     memory_mb: int = 0
-    ssd_mb: int = 0
     hdd_mb: int = 0
 
 

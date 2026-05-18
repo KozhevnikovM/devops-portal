@@ -1,4 +1,4 @@
-"""vm quota: split hw_config disk, booking resource snapshot, quotas table
+"""vm quota: hw_config disk snapshot in bookings, quotas table
 
 Revision ID: 0007
 Revises: 0005
@@ -16,8 +16,7 @@ depends_on = None
 
 
 def upgrade() -> None:
-    # ── 1. hw_configs: add ssd_mb / hdd_mb, migrate disk_mb → hdd_mb, drop disk_mb ──
-    op.add_column("hw_configs", sa.Column("ssd_mb", sa.Integer, nullable=False, server_default="0"))
+    # ── 1. hw_configs: rename disk_mb → hdd_mb ──
     op.add_column("hw_configs", sa.Column("hdd_mb", sa.Integer, nullable=False, server_default="0"))
     op.execute("UPDATE hw_configs SET hdd_mb = disk_mb")
     op.drop_column("hw_configs", "disk_mb")
@@ -25,13 +24,11 @@ def upgrade() -> None:
     # ── 2. bookings: add resource snapshot columns (backfill from hw_configs) ──
     op.add_column("bookings", sa.Column("cpus",      sa.Integer, nullable=False, server_default="0"))
     op.add_column("bookings", sa.Column("memory_mb", sa.Integer, nullable=False, server_default="0"))
-    op.add_column("bookings", sa.Column("ssd_mb",    sa.Integer, nullable=False, server_default="0"))
     op.add_column("bookings", sa.Column("hdd_mb",    sa.Integer, nullable=False, server_default="0"))
     op.execute("""
         UPDATE bookings b
         SET cpus      = h.cpus,
             memory_mb = h.memory_mb,
-            ssd_mb    = 0,
             hdd_mb    = h.hdd_mb
         FROM hw_configs h
         WHERE b.hw_config_id = h.id
@@ -53,11 +50,9 @@ def downgrade() -> None:
     op.drop_table("quotas")
 
     op.drop_column("bookings", "hdd_mb")
-    op.drop_column("bookings", "ssd_mb")
     op.drop_column("bookings", "memory_mb")
     op.drop_column("bookings", "cpus")
 
     op.add_column("hw_configs", sa.Column("disk_mb", sa.Integer, nullable=False, server_default="0"))
     op.execute("UPDATE hw_configs SET disk_mb = hdd_mb")
     op.drop_column("hw_configs", "hdd_mb")
-    op.drop_column("hw_configs", "ssd_mb")

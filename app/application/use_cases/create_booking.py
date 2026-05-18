@@ -78,7 +78,6 @@ class CreateBookingUseCase:
             hw_config_name=hw.name,
             cpus=hw.cpus,
             memory_mb=hw.memory_mb,
-            ssd_mb=hw.ssd_mb,
             hdd_mb=hw.hdd_mb,
         )
         booking = await self._repo.create(session, booking)

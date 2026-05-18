@@ -461,7 +461,6 @@ List all hardware configurations (active and inactive).
     "name": "medium",
     "cpus": 2,
     "memory_mb": 4096,
-    "ssd_mb": 0,
     "hdd_mb": 26624,
     "is_active": true,
     "created_at": "2026-05-14T00:00:00+00:00"
@@ -473,12 +472,11 @@ List all hardware configurations (active and inactive).
 
 ### `POST /api/hardware`
 
-Create a new hardware configuration. Specify `ssd_mb`, `hdd_mb`, or both; unused storage
-type can be omitted or set to `0`.
+Create a new hardware configuration.
 
 **Request body:**
 ```json
-{ "name": "xlarge", "cpus": 8, "memory_mb": 16384, "ssd_mb": 51200, "hdd_mb": 102400 }
+{ "name": "xlarge", "cpus": 8, "memory_mb": 16384, "hdd_mb": 102400 }
 ```
 
 **Response:** `201` — created hardware config object.
@@ -491,7 +489,7 @@ Update an existing hardware configuration.
 
 **Request body** (all fields optional):
 ```json
-{ "cpus": 4, "memory_mb": 8192, "ssd_mb": 25600, "hdd_mb": 51200 }
+{ "cpus": 4, "memory_mb": 8192, "hdd_mb": 51200 }
 ```
 
 **Response:** `200` — updated hardware config object.

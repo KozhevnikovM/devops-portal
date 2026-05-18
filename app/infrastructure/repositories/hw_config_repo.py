@@ -14,7 +14,6 @@ def _to_entity(m: HWConfigModel) -> HWConfig:
         name=m.name,
         cpus=m.cpus,
         memory_mb=m.memory_mb,
-        ssd_mb=m.ssd_mb,
         hdd_mb=m.hdd_mb,
         is_active=m.is_active,
         created_at=m.created_at,
@@ -48,10 +47,9 @@ class HWConfigRepository:
         name: str,
         cpus: int,
         memory_mb: int,
-        ssd_mb: int = 0,
         hdd_mb: int = 0,
     ) -> HWConfig:
-        model = HWConfigModel(id=uuid4(), name=name, cpus=cpus, memory_mb=memory_mb, ssd_mb=ssd_mb, hdd_mb=hdd_mb)
+        model = HWConfigModel(id=uuid4(), name=name, cpus=cpus, memory_mb=memory_mb, hdd_mb=hdd_mb)
         session.add(model)
         await session.commit()
         await session.refresh(model)
