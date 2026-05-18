@@ -14,7 +14,7 @@ def _to_entity(m: HWConfigModel) -> HWConfig:
         name=m.name,
         cpus=m.cpus,
         memory_mb=m.memory_mb,
-        disk_mb=m.disk_mb,
+        hdd_mb=m.hdd_mb,
         is_active=m.is_active,
         created_at=m.created_at,
     )
@@ -41,8 +41,15 @@ class HWConfigRepository:
             raise ValueError(f"Hardware config {hw_config_id} not found or inactive")
         return _to_entity(model)
 
-    async def create(self, session: AsyncSession, name: str, cpus: int, memory_mb: int, disk_mb: int) -> HWConfig:
-        model = HWConfigModel(id=uuid4(), name=name, cpus=cpus, memory_mb=memory_mb, disk_mb=disk_mb)
+    async def create(
+        self,
+        session: AsyncSession,
+        name: str,
+        cpus: int,
+        memory_mb: int,
+        hdd_mb: int = 0,
+    ) -> HWConfig:
+        model = HWConfigModel(id=uuid4(), name=name, cpus=cpus, memory_mb=memory_mb, hdd_mb=hdd_mb)
         session.add(model)
         await session.commit()
         await session.refresh(model)

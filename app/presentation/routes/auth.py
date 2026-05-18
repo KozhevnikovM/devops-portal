@@ -14,10 +14,13 @@ from app.config import settings
 from app.infrastructure.auth import require_admin, require_user
 from app.infrastructure.database.session import get_async_session
 from app.infrastructure.repositories.user_repo import UserRepository
+from app.infrastructure.repositories.quota_repo import QuotaRepository
 from app.domain.entities import User
 from app.presentation.templating import templates
 
 router = APIRouter()
+
+_quota_repo = QuotaRepository()
 
 _user_repo = UserRepository()
 
@@ -167,12 +170,14 @@ _TIMEZONES = sorted(available_timezones())
 @router.get("/profile", response_class=HTMLResponse)
 async def profile_form(
     request: Request,
+    session: AsyncSession = Depends(get_async_session),
     current_user: User = Depends(require_user),
 ):
     saved = request.query_params.get("saved") == "1"
+    api_keys = await _user_repo.list_api_keys(session, current_user.id)
     return templates.TemplateResponse(
         request, "profile.html",
-        {"current_user": current_user, "timezones": _TIMEZONES, "saved": saved},
+        {"current_user": current_user, "timezones": _TIMEZONES, "saved": saved, "api_keys": api_keys},
     )
 
 
@@ -184,11 +189,77 @@ async def profile_save(
     current_user: User = Depends(require_user),
 ):
     if timezone not in available_timezones():
+        api_keys = await _user_repo.list_api_keys(session, current_user.id)
         return templates.TemplateResponse(
             request, "profile.html",
             {"current_user": current_user, "timezones": _TIMEZONES, "saved": False,
-             "error": "Invalid timezone"},
+             "error": "Invalid timezone", "api_keys": api_keys},
             status_code=400,
         )
     await _user_repo.update_timezone(session, current_user.id, timezone)
     return RedirectResponse(url="/profile?saved=1", status_code=302)
+
+
+# ── Quota management ──────────────────────────────────────────────────────────
+
+class QuotaUpdate(BaseModel):
+    max_cpus: int | None = None
+    max_memory_gb: int | None = None
+    max_hdd_gb: int | None = None
+
+
+@router.patch("/api/users/{user_id}/quota")
+async def set_user_quota(
+    user_id: UUID,
+    body: QuotaUpdate,
+    session: AsyncSession = Depends(get_async_session),
+    _: User = Depends(require_admin),
+):
+    current = await _quota_repo.get_limits_for_update(session, str(user_id))
+    quota = await _quota_repo.set(
+        session,
+        user_id=user_id,
+        max_cpus=      body.max_cpus      if body.max_cpus      is not None else current["max_cpus"],
+        max_memory_gb= body.max_memory_gb if body.max_memory_gb is not None else current["max_memory_gb"],
+        max_hdd_gb=    body.max_hdd_gb    if body.max_hdd_gb    is not None else current["max_hdd_gb"],
+    )
+    return JSONResponse({
+        "user_id":       str(user_id),
+        "max_cpus":      quota.max_cpus,
+        "max_memory_gb": quota.max_memory_gb,
+        "max_hdd_gb":    quota.max_hdd_gb,
+    })
+
+
+@router.post("/profile/api-keys", response_class=HTMLResponse)
+async def create_profile_api_key(
+    request: Request,
+    description: str = Form(""),
+    session: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(require_user),
+):
+    raw_key, api_key = await _user_repo.create_api_key(
+        session, current_user.id, description.strip() or None
+    )
+    api_keys = await _user_repo.list_api_keys(session, current_user.id)
+    return templates.TemplateResponse(
+        request, "partials/api_key_list.html",
+        {"api_keys": api_keys, "new_key": raw_key, "current_user": current_user},
+    )
+
+
+@router.delete("/profile/api-keys/{key_id}", response_class=HTMLResponse)
+async def revoke_profile_api_key(
+    request: Request,
+    key_id: UUID,
+    session: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(require_user),
+):
+    revoked = await _user_repo.revoke_api_key(session, current_user.id, key_id)
+    if not revoked:
+        raise HTTPException(status_code=404, detail="API key not found")
+    api_keys = await _user_repo.list_api_keys(session, current_user.id)
+    return templates.TemplateResponse(
+        request, "partials/api_key_list.html",
+        {"api_keys": api_keys, "current_user": current_user},
+    )

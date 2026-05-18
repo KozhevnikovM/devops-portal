@@ -6,7 +6,9 @@
       "Bash(git commit *)",
       "Bash(docker compose *)",
       "Bash(git checkout *)",
-      "Bash(git rm *)"
+      "Bash(git rm *)",
+      "mcp__playwright__browser_click",
+      "mcp__playwright__browser_snapshot"
     ]
   }
 }

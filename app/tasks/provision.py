@@ -81,7 +81,7 @@ def provision_vm_task(self, booking_id: str, image_id: str, hw_config_id: str) -
                     "vapp_template_id": image.vapp_template_id,
                     "cpus":             hw.cpus,
                     "memory":           hw.memory_mb,
-                    "disk_size":        hw.disk_mb,
+                    "disk_size":        hw.hdd_mb,
                 }
 
                 repo.sync_update_status(session, booking_uuid, BookingStatus.PROVISIONING)

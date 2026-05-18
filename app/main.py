@@ -73,8 +73,32 @@ def _recover_in_progress_bookings() -> None:
     logger.info("startup recovery: re-queued %d booking(s)", len(bookings))
 
 
-app = FastAPI(title="DevOps Portal", lifespan=lifespan)
+app = FastAPI(
+    title="DevOps Portal",
+    lifespan=lifespan,
+    swagger_ui_parameters={"persistAuthorization": True},
+)
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
 app.include_router(auth_router)
 app.include_router(router)
 app.include_router(api_router)
+
+
+def _custom_openapi():
+    if app.openapi_schema:
+        return app.openapi_schema
+    from fastapi.openapi.utils import get_openapi
+    schema = get_openapi(title=app.title, version=app.version, routes=app.routes)
+    schema.setdefault("components", {})["securitySchemes"] = {
+        "BearerAuth": {
+            "type": "http",
+            "scheme": "bearer",
+            "bearerFormat": "dp_<api_key>",
+        }
+    }
+    schema["security"] = [{"BearerAuth": []}]
+    app.openapi_schema = schema
+    return app.openapi_schema
+
+
+app.openapi = _custom_openapi

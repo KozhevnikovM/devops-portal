@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from uuid import UUID
 
@@ -42,7 +42,7 @@ class HWConfig:
     name: str
     cpus: int
     memory_mb: int
-    disk_mb: int
+    hdd_mb: int
     is_active: bool
     created_at: datetime
 
@@ -61,6 +61,9 @@ class Booking:
     hw_config_name: str
     vm_ip: str | None = None
     owner_username: str | None = None
+    cpus: int = 0
+    memory_mb: int = 0
+    hdd_mb: int = 0
 
 
 @dataclass
@@ -81,4 +84,14 @@ class BookingAuditEntry:
     old_status: str | None
     new_status: str | None
     metadata: dict | None
+    created_at: datetime
+
+
+@dataclass
+class Quota:
+    id: UUID
+    user_id: UUID
+    max_cpus: int
+    max_memory_gb: int
+    max_hdd_gb: int
     created_at: datetime

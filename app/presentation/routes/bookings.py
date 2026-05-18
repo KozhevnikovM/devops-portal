@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.application.use_cases.create_booking import CreateBookingUseCase
 from app.domain.entities import User
 from app.domain.enums import BookingStatus
-from app.domain.exceptions import BookingNotFoundError
+from app.domain.exceptions import BookingNotFoundError, QuotaExceededError
 from app.infrastructure.auth import require_user
 from app.infrastructure.database.session import get_async_session
 from app.infrastructure.repositories.booking_repo import BookingRepository
@@ -71,7 +71,22 @@ async def create_booking(
     session: AsyncSession = Depends(get_async_session),
     current_user: User = Depends(require_user),
 ):
-    booking = await _use_case.execute(session, ttl_minutes, image_id, hw_config_id, user_id=str(current_user.id))
+    try:
+        booking = await _use_case.execute(session, ttl_minutes, image_id, hw_config_id, user_id=str(current_user.id))
+    except QuotaExceededError as exc:
+        if "application/json" in request.headers.get("accept", ""):
+            raise HTTPException(status_code=409, detail=str(exc))
+        vm_images = await _image_repo.list_active(session)
+        hw_configs = await _hw_config_repo.list_active(session)
+        return templates.TemplateResponse(
+            request, "partials/booking_form.html",
+            {
+                "vm_images": vm_images,
+                "hw_configs": hw_configs,
+                "quota_error": str(exc),
+            },
+            headers={"HX-Retarget": "#booking-form-area", "HX-Reswap": "outerHTML"},
+        )
 
     if "application/json" in request.headers.get("accept", ""):
         return JSONResponse(

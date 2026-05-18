@@ -115,6 +115,78 @@ Revoke an API key. The key is deactivated immediately.
 
 ---
 
+### `PATCH /api/users/{user_id}/quota`
+
+Set resource quota limits for a user. All fields are optional; omitted fields keep their
+current value (falling back to the global default if no per-user row exists yet).
+
+**Auth:** admin only.
+
+**Request body** (all fields optional):
+```json
+{
+  "max_cpus": 32,
+  "max_memory_gb": 64,
+
+  "max_hdd_gb": 1000
+}
+```
+
+**Response:** `200`:
+```json
+{
+  "user_id": "uuid",
+  "max_cpus": 32,
+  "max_memory_gb": 64,
+
+  "max_hdd_gb": 1000
+}
+```
+
+**Example:**
+```bash
+curl -s -X PATCH http://localhost:8000/api/users/<user-id>/quota \
+     -H "Content-Type: application/json" \
+     -H "Authorization: Bearer dp_<api_key>" \
+     -d '{"max_cpus": 32}' | python3 -m json.tool
+```
+
+---
+
+## User Profile
+
+### `GET /profile`
+
+Renders the user profile page with a timezone selector.
+
+**Auth:** any authenticated user.
+
+---
+
+### `POST /profile`
+
+Save the user's preferred timezone. Redirects to `/profile?saved=1` on success.
+
+**Auth:** any authenticated user.
+
+**Content-Type:** `application/x-www-form-urlencoded`
+
+**Form fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `timezone` | string | IANA timezone name (e.g. `Europe/London`, `America/New_York`) |
+
+**Responses:**
+
+- `302` redirect to `/profile?saved=1` on success
+- `400` rendered profile form with error if the timezone value is not a valid IANA name
+
+All booking expiry timestamps in the UI are displayed in the user's chosen timezone.
+The stored value and all API responses remain UTC.
+
+---
+
 ## Bookings
 
 ### `GET /`
@@ -192,6 +264,14 @@ Create a new VM booking.
 ```
 
 - Without `Accept: application/json` → `201` HTMX HTML fragment (booking row)
+- `409 Conflict` — resource quota exceeded. JSON clients receive:
+
+```json
+{ "detail": "Quota exceeded: CPU (18/16 cores), memory (36/32 GB)" }
+```
+
+Browser users see an error banner above the booking form. The error lists each violated
+dimension with projected usage and the limit. Release an active VM to free resources.
 
 **Example (Jenkins/CI):**
 ```bash
@@ -381,7 +461,7 @@ List all hardware configurations (active and inactive).
     "name": "medium",
     "cpus": 2,
     "memory_mb": 4096,
-    "disk_mb": 26624,
+    "hdd_mb": 26624,
     "is_active": true,
     "created_at": "2026-05-14T00:00:00+00:00"
   }
@@ -396,7 +476,7 @@ Create a new hardware configuration.
 
 **Request body:**
 ```json
-{ "name": "xlarge", "cpus": 8, "memory_mb": 16384, "disk_mb": 102400 }
+{ "name": "xlarge", "cpus": 8, "memory_mb": 16384, "hdd_mb": 102400 }
 ```
 
 **Response:** `201` — created hardware config object.
@@ -409,7 +489,7 @@ Update an existing hardware configuration.
 
 **Request body** (all fields optional):
 ```json
-{ "cpus": 4, "memory_mb": 8192 }
+{ "cpus": 4, "memory_mb": 8192, "hdd_mb": 51200 }
 ```
 
 **Response:** `200` — updated hardware config object.
