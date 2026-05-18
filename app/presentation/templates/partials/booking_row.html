@@ -41,16 +41,43 @@
         {% endif %}
     </td>
     <td class="px-4 py-3">
-        {% if booking.status.value == 'READY' and (booking.owner_username == current_user.username or current_user.role == 'admin') %}
-            <button
-                class="text-xs px-2 py-1 rounded bg-red-900 text-red-300 border border-red-700 hover:bg-red-800 transition-colors"
-                hx-delete="/bookings/{{ booking.id }}"
-                hx-target="#booking-{{ booking.id }}"
-                hx-swap="outerHTML"
-                hx-confirm="Release this VM? The machine will be destroyed."
-            >
-                Release
-            </button>
+        {% if booking.status.value == 'READY' %}
+            {% set is_owner = booking.owner_username == current_user.username %}
+            {% if is_owner or current_user.role == 'admin' %}
+                <div class="flex items-center gap-2 flex-wrap">
+                    {% if is_owner and booking.ttl_minutes != 0 %}
+                        <form
+                            hx-put="/bookings/{{ booking.id }}/extend"
+                            hx-target="closest tr"
+                            hx-swap="outerHTML"
+                            class="flex items-center gap-1"
+                        >
+                            <select name="extend_minutes" class="text-xs px-1 py-1 rounded bg-gray-700 text-gray-300 border border-gray-600">
+                                <option value="30">+30 min</option>
+                                <option value="60">+1 h</option>
+                                <option value="120">+2 h</option>
+                                <option value="240">+4 h</option>
+                                <option value="480">+8 h</option>
+                                <option value="1440">+24 h</option>
+                            </select>
+                            <button type="submit" class="text-xs px-2 py-1 rounded bg-blue-900 text-blue-300 border border-blue-700 hover:bg-blue-800 transition-colors">
+                                Extend
+                            </button>
+                        </form>
+                    {% endif %}
+                    <button
+                        class="text-xs px-2 py-1 rounded bg-red-900 text-red-300 border border-red-700 hover:bg-red-800 transition-colors"
+                        hx-delete="/bookings/{{ booking.id }}"
+                        hx-target="#booking-{{ booking.id }}"
+                        hx-swap="outerHTML"
+                        hx-confirm="Release this VM? The machine will be destroyed."
+                    >
+                        Release
+                    </button>
+                </div>
+            {% else %}
+                <span class="text-gray-600">—</span>
+            {% endif %}
         {% else %}
             <span class="text-gray-600">—</span>
         {% endif %}

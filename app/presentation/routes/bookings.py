@@ -5,9 +5,10 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.use_cases.create_booking import CreateBookingUseCase
+from app.application.use_cases.extend_booking import ExtendBookingUseCase
 from app.domain.entities import User
 from app.domain.enums import BookingStatus
-from app.domain.exceptions import BookingNotFoundError, QuotaExceededError
+from app.domain.exceptions import BookingError, BookingNotFoundError, PermissionError, QuotaExceededError
 from app.infrastructure.auth import require_user
 from app.infrastructure.database.session import get_async_session
 from app.infrastructure.repositories.booking_repo import BookingRepository
@@ -21,6 +22,7 @@ _repo = BookingRepository()
 _image_repo = ImageRepository()
 _hw_config_repo = HWConfigRepository()
 _use_case = CreateBookingUseCase(_repo, _image_repo, _hw_config_repo)
+_extend_use_case = ExtendBookingUseCase(_repo)
 
 
 @router.get("/", response_class=HTMLResponse)
@@ -159,6 +161,36 @@ async def release_booking(
 
     return templates.TemplateResponse(
         request, "partials/booking_row.html", {"booking": booking, "current_user": current_user}, status_code=202
+    )
+
+
+@router.put("/bookings/{booking_id}/extend")
+async def extend_booking(
+    booking_id: UUID,
+    request: Request,
+    extend_minutes: int = Form(...),
+    session: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(require_user),
+):
+    try:
+        booking = await _extend_use_case.execute(session, booking_id, extend_minutes, current_user)
+    except BookingNotFoundError:
+        raise HTTPException(status_code=404, detail="Booking not found")
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+    except BookingError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+
+    if "application/json" in request.headers.get("accept", ""):
+        return JSONResponse({
+            "id": str(booking.id),
+            "status": booking.status.value,
+            "ttl_minutes": booking.ttl_minutes,
+            "expires_at": booking.expires_at.isoformat(),
+        })
+
+    return templates.TemplateResponse(
+        request, "partials/booking_row.html", {"booking": booking, "current_user": current_user}
     )
 
 

@@ -380,6 +380,29 @@ No rebuild needed — the flag is read at worker startup.
 
 ---
 
+## Extending Bookings
+
+The owner of a `READY` booking can extend its TTL without releasing and re-creating it.
+Permanent bookings (`ttl_minutes == 0`, shown as "Forever") cannot be extended.
+
+**Via the UI:** the booking row shows an **Extend** dropdown next to the **Release** button
+when the booking is `READY` and belongs to the logged-in user. Choose a duration and click
+**Extend** — the expiry time updates immediately.
+
+**Via the API:**
+
+```bash
+curl -s -X PUT http://localhost:8000/bookings/<booking-id>/extend \
+     -H "Accept: application/json" \
+     -H "Authorization: Bearer dp_<api_key>" \
+     -d "extend_minutes=60" | python3 -m json.tool
+```
+
+The response is `200 OK` with updated `ttl_minutes` and `expires_at`. The `EXTENDED` action
+is recorded in the booking's audit trail.
+
+---
+
 ## Releasing Bookings
 
 A `READY` (or `FAILED`) booking can be released manually via the UI or the API.

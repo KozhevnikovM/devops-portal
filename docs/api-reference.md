@@ -283,6 +283,52 @@ curl -s -X POST http://localhost:8000/bookings \
 
 ---
 
+### `PUT /bookings/{booking_id}/extend`
+
+Extend the TTL of a `READY` booking. Only the booking owner may extend; admins have no override here.
+Permanent bookings (`ttl_minutes == 0`) cannot be extended.
+
+**Auth:** booking owner only.
+
+**Path parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `booking_id` | UUID | ID of the booking to extend |
+
+**Form fields:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `extend_minutes` | integer | Yes | Minutes to add to the current TTL (must be > 0) |
+
+**Responses:**
+
+- `200 OK` — TTL extended. Returns updated HTML row fragment (default) or JSON (with `Accept: application/json`).
+- `403 Forbidden` — caller is not the booking owner.
+- `404 Not Found` — booking does not exist.
+- `409 Conflict` — booking is not `READY`, or booking is permanent (`ttl_minutes == 0`).
+
+**JSON response body (200):**
+```json
+{
+  "id": "uuid",
+  "status": "READY",
+  "ttl_minutes": 480,
+  "expires_at": "2026-05-15T20:00:00+00:00"
+}
+```
+
+**Example:**
+```bash
+curl -s -X PUT http://localhost:8000/bookings/<booking-id>/extend \
+     -H "Accept: application/json" \
+     -H "Authorization: Bearer dp_<api_key>" \
+     -d "extend_minutes=60" | python3 -m json.tool
+```
+
+---
+
 ### `DELETE /bookings/{booking_id}`
 
 Release a VM booking. Only the booking owner or an admin may release.
