@@ -85,7 +85,6 @@ async def create_booking(
                 "hw_configs": hw_configs,
                 "quota_error": str(exc),
             },
-            status_code=409,
             headers={"HX-Retarget": "#booking-form-area", "HX-Reswap": "outerHTML"},
         )
 
