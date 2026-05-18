@@ -7,6 +7,7 @@ import bcrypt
 import redis.asyncio as aioredis
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from sqlalchemy.exc import IntegrityError
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -160,6 +161,47 @@ async def revoke_api_key(
     revoked = await _user_repo.revoke_api_key(session, user_id, key_id)
     if not revoked:
         raise HTTPException(status_code=404, detail="API key not found")
+
+
+# ── Admin UI ─────────────────────────────────────────────────────────────────
+
+@router.get("/admin/users", response_class=HTMLResponse)
+async def admin_users_page(
+    request: Request,
+    session: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(require_admin),
+):
+    users = await _user_repo.list_all(session)
+    return templates.TemplateResponse(
+        request, "admin/users.html",
+        {"users": users, "current_user": current_user},
+    )
+
+
+@router.post("/admin/users", response_class=HTMLResponse)
+async def admin_create_user(
+    request: Request,
+    username: str = Form(...),
+    password: str = Form(...),
+    role: str = Form("user"),
+    session: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(require_admin),
+):
+    pw_hash = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+    try:
+        await _user_repo.create(session, username, pw_hash, role)
+    except IntegrityError:
+        await session.rollback()
+        error_html = f'<span class="text-red-400 text-xs">Username "{username}" is already taken.</span>'
+        return HTMLResponse(
+            content=error_html,
+            headers={"HX-Retarget": "#user-create-error", "HX-Reswap": "innerHTML"},
+        )
+    users = await _user_repo.list_all(session)
+    return templates.TemplateResponse(
+        request, "partials/user_table.html",
+        {"users": users},
+    )
 
 
 # ── User profile ──────────────────────────────────────────────────────────────

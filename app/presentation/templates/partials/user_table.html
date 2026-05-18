@@ -1,0 +1,39 @@
+<div id="user-table">
+    <div id="user-create-error" hx-swap-oob="innerHTML"></div>
+    {% if users %}
+    <table class="w-full text-sm">
+        <thead>
+            <tr class="border-b border-gray-700 text-left">
+                <th class="px-4 py-2 text-xs text-gray-500 font-normal uppercase tracking-widest">Username</th>
+                <th class="px-4 py-2 text-xs text-gray-500 font-normal uppercase tracking-widest">Role</th>
+                <th class="px-4 py-2 text-xs text-gray-500 font-normal uppercase tracking-widest">Status</th>
+                <th class="px-4 py-2 text-xs text-gray-500 font-normal uppercase tracking-widest">Created</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for user in users %}
+            <tr class="border-b border-gray-800 last:border-0 hover:bg-gray-800/40 transition-colors">
+                <td class="px-4 py-3 text-gray-200">{{ user.username }}</td>
+                <td class="px-4 py-3">
+                    {% if user.role == 'admin' %}
+                    <span class="text-xs px-2 py-1 rounded font-semibold bg-orange-900 text-orange-300 border border-orange-700">admin</span>
+                    {% else %}
+                    <span class="text-xs px-2 py-1 rounded font-semibold bg-blue-900 text-blue-300 border border-blue-700">user</span>
+                    {% endif %}
+                </td>
+                <td class="px-4 py-3">
+                    {% if user.is_active %}
+                    <span class="text-xs text-green-400">active</span>
+                    {% else %}
+                    <span class="text-xs text-gray-500">inactive</span>
+                    {% endif %}
+                </td>
+                <td class="px-4 py-3 text-gray-500 text-xs">{{ user.created_at.strftime('%Y-%m-%d') }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p class="text-gray-600 text-sm px-4 py-6">No users yet.</p>
+    {% endif %}
+</div>
