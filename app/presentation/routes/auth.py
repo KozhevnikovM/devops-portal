@@ -170,12 +170,14 @@ _TIMEZONES = sorted(available_timezones())
 @router.get("/profile", response_class=HTMLResponse)
 async def profile_form(
     request: Request,
+    session: AsyncSession = Depends(get_async_session),
     current_user: User = Depends(require_user),
 ):
     saved = request.query_params.get("saved") == "1"
+    api_keys = await _user_repo.list_api_keys(session, current_user.id)
     return templates.TemplateResponse(
         request, "profile.html",
-        {"current_user": current_user, "timezones": _TIMEZONES, "saved": saved},
+        {"current_user": current_user, "timezones": _TIMEZONES, "saved": saved, "api_keys": api_keys},
     )
 
 
@@ -187,10 +189,11 @@ async def profile_save(
     current_user: User = Depends(require_user),
 ):
     if timezone not in available_timezones():
+        api_keys = await _user_repo.list_api_keys(session, current_user.id)
         return templates.TemplateResponse(
             request, "profile.html",
             {"current_user": current_user, "timezones": _TIMEZONES, "saved": False,
-             "error": "Invalid timezone"},
+             "error": "Invalid timezone", "api_keys": api_keys},
             status_code=400,
         )
     await _user_repo.update_timezone(session, current_user.id, timezone)
@@ -229,3 +232,37 @@ async def set_user_quota(
         "max_ssd_gb":    quota.max_ssd_gb,
         "max_hdd_gb":    quota.max_hdd_gb,
     })
+
+
+@router.post("/profile/api-keys", response_class=HTMLResponse)
+async def create_profile_api_key(
+    request: Request,
+    description: str = Form(""),
+    session: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(require_user),
+):
+    raw_key, api_key = await _user_repo.create_api_key(
+        session, current_user.id, description.strip() or None
+    )
+    api_keys = await _user_repo.list_api_keys(session, current_user.id)
+    return templates.TemplateResponse(
+        request, "partials/api_key_list.html",
+        {"api_keys": api_keys, "new_key": raw_key, "current_user": current_user},
+    )
+
+
+@router.delete("/profile/api-keys/{key_id}", response_class=HTMLResponse)
+async def revoke_profile_api_key(
+    request: Request,
+    key_id: UUID,
+    session: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(require_user),
+):
+    revoked = await _user_repo.revoke_api_key(session, current_user.id, key_id)
+    if not revoked:
+        raise HTTPException(status_code=404, detail="API key not found")
+    api_keys = await _user_repo.list_api_keys(session, current_user.id)
+    return templates.TemplateResponse(
+        request, "partials/api_key_list.html",
+        {"api_keys": api_keys, "current_user": current_user},
+    )
