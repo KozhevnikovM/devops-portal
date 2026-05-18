@@ -1,6 +1,5 @@
 import hashlib
 import json
-from datetime import datetime, timezone
 from uuid import UUID
 
 import redis.asyncio as aioredis
@@ -42,14 +41,7 @@ async def get_current_user(
         data = await r.get(f"session:{session_id}")
         if data:
             payload = json.loads(data)
-            return User(
-                id=UUID(payload["user_id"]),
-                username=payload["username"],
-                password_hash="",
-                role=payload["role"],
-                is_active=True,
-                created_at=datetime.now(timezone.utc),
-            )
+            return await _user_repo.get(session, UUID(payload["user_id"]))
 
     return None
 

@@ -1,12 +1,12 @@
 import json
 import secrets
 from uuid import UUID
+from zoneinfo import available_timezones
 
 import bcrypt
 import redis.asyncio as aioredis
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
-from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -15,9 +15,9 @@ from app.infrastructure.auth import require_admin, require_user
 from app.infrastructure.database.session import get_async_session
 from app.infrastructure.repositories.user_repo import UserRepository
 from app.domain.entities import User
+from app.presentation.templating import templates
 
 router = APIRouter()
-templates = Jinja2Templates(directory="app/presentation/templates")
 
 _user_repo = UserRepository()
 
@@ -157,3 +157,38 @@ async def revoke_api_key(
     revoked = await _user_repo.revoke_api_key(session, user_id, key_id)
     if not revoked:
         raise HTTPException(status_code=404, detail="API key not found")
+
+
+# ── User profile ──────────────────────────────────────────────────────────────
+
+_TIMEZONES = sorted(available_timezones())
+
+
+@router.get("/profile", response_class=HTMLResponse)
+async def profile_form(
+    request: Request,
+    current_user: User = Depends(require_user),
+):
+    saved = request.query_params.get("saved") == "1"
+    return templates.TemplateResponse(
+        request, "profile.html",
+        {"current_user": current_user, "timezones": _TIMEZONES, "saved": saved},
+    )
+
+
+@router.post("/profile")
+async def profile_save(
+    request: Request,
+    timezone: str = Form(...),
+    session: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(require_user),
+):
+    if timezone not in available_timezones():
+        return templates.TemplateResponse(
+            request, "profile.html",
+            {"current_user": current_user, "timezones": _TIMEZONES, "saved": False,
+             "error": "Invalid timezone"},
+            status_code=400,
+        )
+    await _user_repo.update_timezone(session, current_user.id, timezone)
+    return RedirectResponse(url="/profile?saved=1", status_code=302)

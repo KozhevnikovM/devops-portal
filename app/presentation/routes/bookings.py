@@ -2,7 +2,6 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
-from fastapi.templating import Jinja2Templates
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.use_cases.create_booking import CreateBookingUseCase
@@ -14,9 +13,9 @@ from app.infrastructure.database.session import get_async_session
 from app.infrastructure.repositories.booking_repo import BookingRepository
 from app.infrastructure.repositories.image_repo import ImageRepository
 from app.infrastructure.repositories.hw_config_repo import HWConfigRepository
+from app.presentation.templating import templates
 
 router = APIRouter()
-templates = Jinja2Templates(directory="app/presentation/templates")
 
 _repo = BookingRepository()
 _image_repo = ImageRepository()
@@ -91,7 +90,7 @@ async def create_booking(
         )
 
     return templates.TemplateResponse(
-        request, "partials/booking_row.html", {"booking": booking}, status_code=201
+        request, "partials/booking_row.html", {"booking": booking, "current_user": current_user}, status_code=201
     )
 
 
@@ -104,7 +103,7 @@ async def booking_row(
 ):
     booking = await _repo.get(session, booking_id)
     return templates.TemplateResponse(
-        request, "partials/booking_row.html", {"booking": booking}
+        request, "partials/booking_row.html", {"booking": booking, "current_user": current_user}
     )
 
 
@@ -144,7 +143,7 @@ async def release_booking(
         return JSONResponse({"id": str(booking.id), "status": booking.status.value}, status_code=202)
 
     return templates.TemplateResponse(
-        request, "partials/booking_row.html", {"booking": booking}, status_code=202
+        request, "partials/booking_row.html", {"booking": booking, "current_user": current_user}, status_code=202
     )
 
 

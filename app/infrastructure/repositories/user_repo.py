@@ -19,6 +19,7 @@ def _to_user(m: UserModel) -> User:
         role=m.role,
         is_active=m.is_active,
         created_at=m.created_at,
+        timezone=m.timezone,
     )
 
 
@@ -89,6 +90,13 @@ class UserRepository:
         await session.commit()
         await session.refresh(m)
         return _to_user(m)
+
+    async def update_timezone(self, session: AsyncSession, user_id: uuid.UUID, tz: str) -> None:
+        result = await session.execute(select(UserModel).where(UserModel.id == user_id))
+        m = result.scalar_one_or_none()
+        if m:
+            m.timezone = tz
+            await session.commit()
 
     async def list_all(self, session: AsyncSession) -> list[User]:
         result = await session.execute(select(UserModel).order_by(UserModel.created_at))
