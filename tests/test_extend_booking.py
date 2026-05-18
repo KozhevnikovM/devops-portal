@@ -126,6 +126,23 @@ async def test_extend_missing_booking_raises_404(owner, mock_session):
 
 
 @pytest.mark.asyncio
+async def test_extend_to_forever_clears_ttl(owner, mock_session):
+    booking = _make_booking(str(owner.id), ttl_minutes=120)
+    permanent_booking = Booking(
+        **{**booking.__dict__, "ttl_minutes": 0, "expires_at": datetime(9999, 12, 31, tzinfo=timezone.utc)}
+    )
+    repo = MagicMock(spec=BookingRepository)
+    repo.get = AsyncMock(side_effect=[booking, permanent_booking])
+    repo.extend = AsyncMock()
+    use_case = ExtendBookingUseCase(repo)
+
+    result = await use_case.execute(mock_session, booking.id, extend_minutes=0, current_user=owner)
+
+    repo.extend.assert_called_once_with(mock_session, booking.id, 0, actor_id=str(owner.id))
+    assert result.ttl_minutes == 0
+
+
+@pytest.mark.asyncio
 async def test_extend_failed_booking_raises_409(owner, mock_session):
     booking = _make_booking(str(owner.id), status=BookingStatus.FAILED)
     repo = _make_repo(booking)

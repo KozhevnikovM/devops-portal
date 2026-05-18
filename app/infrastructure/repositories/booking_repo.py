@@ -132,8 +132,12 @@ class BookingRepository:
         model = result.scalar_one_or_none()
         if model is None:
             raise BookingNotFoundError(booking_id)
-        model.expires_at = model.expires_at + timedelta(minutes=extend_minutes)
-        model.ttl_minutes = model.ttl_minutes + extend_minutes
+        if extend_minutes == 0:
+            model.ttl_minutes = 0
+            model.expires_at = datetime(9999, 12, 31, 23, 59, 59, tzinfo=timezone.utc)
+        else:
+            model.expires_at = model.expires_at + timedelta(minutes=extend_minutes)
+            model.ttl_minutes = model.ttl_minutes + extend_minutes
         session.add(BookingAuditModel(
             booking_id=booking_id,
             actor_id=actor_id,
