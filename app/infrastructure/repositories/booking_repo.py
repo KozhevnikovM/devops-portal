@@ -121,6 +121,31 @@ class BookingRepository:
         )
         return [_to_audit_entity(m) for m in result.scalars().all()]
 
+    async def extend(
+        self,
+        session: AsyncSession,
+        booking_id: UUID,
+        extend_minutes: int,
+        actor_id: str,
+    ) -> None:
+        result = await session.execute(select(BookingModel).where(BookingModel.id == booking_id))
+        model = result.scalar_one_or_none()
+        if model is None:
+            raise BookingNotFoundError(booking_id)
+        if extend_minutes == 0:
+            model.ttl_minutes = 0
+            model.expires_at = datetime(9999, 12, 31, 23, 59, 59, tzinfo=timezone.utc)
+        else:
+            model.expires_at = model.expires_at + timedelta(minutes=extend_minutes)
+            model.ttl_minutes = model.ttl_minutes + extend_minutes
+        session.add(BookingAuditModel(
+            booking_id=booking_id,
+            actor_id=actor_id,
+            action="EXTENDED",
+            extra={"extend_minutes": extend_minutes},
+        ))
+        await session.commit()
+
     # Sync variants used by Celery workers
     def sync_get(self, session: Session, booking_id: UUID) -> Booking:
         model = session.get(BookingModel, booking_id)
