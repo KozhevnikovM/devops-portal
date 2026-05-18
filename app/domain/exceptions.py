@@ -6,6 +6,10 @@ class BookingNotFoundError(BookingError):
     pass
 
 
+class QuotaExceededError(BookingError):
+    pass
+
+
 class AuthenticationError(Exception):
     pass
 

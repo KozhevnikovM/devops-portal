@@ -38,6 +38,10 @@ def _to_entity(m: BookingModel, owner_username: str | None = None) -> Booking:
         hw_config_name=m.hw_config_name,
         vm_ip=m.vm_ip,
         owner_username=owner_username,
+        cpus=m.cpus,
+        memory_mb=m.memory_mb,
+        ssd_mb=m.ssd_mb,
+        hdd_mb=m.hdd_mb,
     )
 
 
@@ -54,6 +58,10 @@ class BookingRepository:
             image_name=booking.image_name,
             hw_config_id=booking.hw_config_id,
             hw_config_name=booking.hw_config_name,
+            cpus=booking.cpus,
+            memory_mb=booking.memory_mb,
+            ssd_mb=booking.ssd_mb,
+            hdd_mb=booking.hdd_mb,
         )
         session.add(model)
         await session.flush()  # INSERT booking before audit to satisfy FK constraint

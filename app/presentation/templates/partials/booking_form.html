@@ -1,3 +1,7 @@
+<div id="booking-form-area">
+{% if quota_error %}
+<p class="text-red-400 text-sm mb-3">{{ quota_error }}. Release an active VM to book another.</p>
+{% endif %}
 <form
     hx-post="/bookings"
     hx-target="#bookings-list"
@@ -25,7 +29,9 @@
             class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-gray-100 focus:outline-none focus:border-green-500 text-sm"
         >
             {% for hw in hw_configs %}
-            <option value="{{ hw.id }}">{{ hw.name }} ({{ hw.cpus }} CPU / {{ hw.memory_mb // 1024 }} GB)</option>
+            <option value="{{ hw.id }}">{{ hw.name }} ({{ hw.cpus }} CPU / {{ hw.memory_mb // 1024 }} GB RAM
+                {%- if hw.ssd_mb %} / {{ hw.ssd_mb // 1024 }} GB SSD{% endif %}
+                {%- if hw.hdd_mb %} / {{ hw.hdd_mb // 1024 }} GB HDD{% endif %})</option>
             {% endfor %}
         </select>
     </div>
@@ -54,3 +60,4 @@
         Book VM
     </button>
 </form>
+</div>

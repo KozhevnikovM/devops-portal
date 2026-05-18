@@ -15,6 +15,12 @@ class Settings(BaseSettings):
     ADMIN_PASSWORD: str = "changeme"
     SESSION_TTL: int = 86400
 
+    # Per-user resource quotas (defaults applied when no per-user row exists)
+    DEFAULT_QUOTA_CPUS: int = 16
+    DEFAULT_QUOTA_MEMORY_GB: int = 32
+    DEFAULT_QUOTA_SSD_GB: int = 200
+    DEFAULT_QUOTA_HDD_GB: int = 500
+
     # Celery provision task
     PROVISION_MAX_RETRIES: int = 3
     PROVISION_RETRY_DELAY: int = 120   # seconds

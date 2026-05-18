@@ -14,10 +14,13 @@ from app.config import settings
 from app.infrastructure.auth import require_admin, require_user
 from app.infrastructure.database.session import get_async_session
 from app.infrastructure.repositories.user_repo import UserRepository
+from app.infrastructure.repositories.quota_repo import QuotaRepository
 from app.domain.entities import User
 from app.presentation.templating import templates
 
 router = APIRouter()
+
+_quota_repo = QuotaRepository()
 
 _user_repo = UserRepository()
 
@@ -192,3 +195,37 @@ async def profile_save(
         )
     await _user_repo.update_timezone(session, current_user.id, timezone)
     return RedirectResponse(url="/profile?saved=1", status_code=302)
+
+
+# ── Quota management ──────────────────────────────────────────────────────────
+
+class QuotaUpdate(BaseModel):
+    max_cpus: int | None = None
+    max_memory_gb: int | None = None
+    max_ssd_gb: int | None = None
+    max_hdd_gb: int | None = None
+
+
+@router.patch("/api/users/{user_id}/quota")
+async def set_user_quota(
+    user_id: UUID,
+    body: QuotaUpdate,
+    session: AsyncSession = Depends(get_async_session),
+    _: User = Depends(require_admin),
+):
+    current = await _quota_repo.get_limits_for_update(session, str(user_id))
+    quota = await _quota_repo.set(
+        session,
+        user_id=user_id,
+        max_cpus=      body.max_cpus      if body.max_cpus      is not None else current["max_cpus"],
+        max_memory_gb= body.max_memory_gb if body.max_memory_gb is not None else current["max_memory_gb"],
+        max_ssd_gb=    body.max_ssd_gb    if body.max_ssd_gb    is not None else current["max_ssd_gb"],
+        max_hdd_gb=    body.max_hdd_gb    if body.max_hdd_gb    is not None else current["max_hdd_gb"],
+    )
+    return JSONResponse({
+        "user_id":       str(user_id),
+        "max_cpus":      quota.max_cpus,
+        "max_memory_gb": quota.max_memory_gb,
+        "max_ssd_gb":    quota.max_ssd_gb,
+        "max_hdd_gb":    quota.max_hdd_gb,
+    })

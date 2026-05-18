@@ -27,7 +27,8 @@ class HWConfigModel(Base):
     name: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
     cpus: Mapped[int] = mapped_column(Integer, nullable=False)
     memory_mb: Mapped[int] = mapped_column(Integer, nullable=False)
-    disk_mb: Mapped[int] = mapped_column(Integer, nullable=False)
+    ssd_mb: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    hdd_mb: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
@@ -44,6 +45,10 @@ class BookingModel(Base):
     image_name: Mapped[str] = mapped_column(String(64), nullable=False)
     hw_config_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("hw_configs.id"), nullable=False)
     hw_config_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    cpus: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    memory_mb: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    ssd_mb: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    hdd_mb: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     vm_ip: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
@@ -88,6 +93,18 @@ class APIKeyModel(Base):
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     user: Mapped["UserModel"] = relationship("UserModel", back_populates="api_keys")
+
+
+class QuotaModel(Base):
+    __tablename__ = "quotas"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, unique=True)
+    max_cpus: Mapped[int] = mapped_column(Integer, nullable=False)
+    max_memory_gb: Mapped[int] = mapped_column(Integer, nullable=False)
+    max_ssd_gb: Mapped[int] = mapped_column(Integer, nullable=False)
+    max_hdd_gb: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
 class BookingAuditModel(Base):
