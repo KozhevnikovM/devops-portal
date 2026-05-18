@@ -1,0 +1,68 @@
+<div id="api-key-list">
+
+    {% if api_keys %}
+    <table class="w-full text-sm mb-4">
+        <thead>
+            <tr class="text-xs text-gray-500 border-b border-gray-800">
+                <th class="text-left pb-2 font-normal">Description</th>
+                <th class="text-left pb-2 font-normal">Created</th>
+                <th class="text-left pb-2 font-normal">Last used</th>
+                <th class="pb-2"></th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for key in api_keys %}
+            <tr class="border-b border-gray-800/50" id="api-key-row-{{ key.id }}">
+                <td class="py-2 text-gray-300">{{ key.description or "—" }}</td>
+                <td class="py-2 text-gray-500">{{ key.created_at | as_tz(current_user.timezone) }}</td>
+                <td class="py-2 text-gray-500">{{ key.last_used_at | as_tz(current_user.timezone) if key.last_used_at else "Never" }}</td>
+                <td class="py-2 text-right">
+                    <button
+                        hx-delete="/profile/api-keys/{{ key.id }}"
+                        hx-target="#api-key-list"
+                        hx-swap="outerHTML"
+                        hx-confirm="Revoke this API key? Any automation using it will stop working."
+                        class="text-xs px-2 py-1 rounded bg-red-900/50 border border-red-800 text-red-400 hover:bg-red-900 transition-colors"
+                    >Revoke</button>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p class="text-xs text-gray-500 mb-4">No API keys yet.</p>
+    {% endif %}
+
+    {% if new_key %}
+    <div class="mb-4 px-3 py-3 rounded bg-yellow-900/30 border border-yellow-700">
+        <p class="text-xs text-yellow-400 mb-2">New key (copy now — shown once):</p>
+        <div class="flex items-center gap-2">
+            <code class="flex-1 text-xs text-yellow-200 break-all" id="new-api-key-value">{{ new_key }}</code>
+            <button
+                onclick="navigator.clipboard.writeText(document.getElementById('new-api-key-value').textContent).then(() => { this.textContent = 'Copied!'; setTimeout(() => this.textContent = 'Copy', 2000); })"
+                class="shrink-0 text-xs px-2 py-1 rounded bg-yellow-800/50 border border-yellow-700 text-yellow-300 hover:bg-yellow-800 transition-colors"
+            >Copy</button>
+        </div>
+    </div>
+    {% endif %}
+
+    <form
+        hx-post="/profile/api-keys"
+        hx-target="#api-key-list"
+        hx-swap="outerHTML"
+        class="flex items-center gap-2"
+    >
+        <input
+            type="text"
+            name="description"
+            placeholder="Description (optional)"
+            maxlength="128"
+            class="flex-1 bg-gray-800 border border-gray-700 rounded px-3 py-1.5 text-xs text-gray-100 placeholder-gray-600 focus:outline-none focus:border-green-600"
+        >
+        <button
+            type="submit"
+            class="shrink-0 px-3 py-1.5 bg-green-700 hover:bg-green-600 text-green-100 text-xs rounded transition-colors"
+        >+ Generate key</button>
+    </form>
+
+</div>
