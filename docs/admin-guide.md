@@ -41,6 +41,10 @@ to the login page.
 | `ADMIN_USERNAME` | No | Username for the seeded admin account. Default: `admin` |
 | `ADMIN_PASSWORD` | No | Password for the seeded admin account. Default: `changeme` — **always override in production** |
 | `SESSION_TTL` | No | Browser session lifetime in seconds. Default: `86400` (24 h) |
+| `DEFAULT_QUOTA_CPUS` | No | Default CPU core quota per user. Default: `16` |
+| `DEFAULT_QUOTA_MEMORY_GB` | No | Default memory quota per user in GB. Default: `32` |
+| `DEFAULT_QUOTA_SSD_GB` | No | Default SSD storage quota per user in GB. Default: `200` |
+| `DEFAULT_QUOTA_HDD_GB` | No | Default HDD storage quota per user in GB. Default: `500` |
 | `VCD_URL` | When real adapter | VCD API URL, e.g. `https://vcd.example.com/api` |
 | `VCD_ORG` | When real adapter | VCD organisation name |
 | `VCD_VDC` | When real adapter | VCD virtual datacenter name |
@@ -137,6 +141,68 @@ curl -s -X DELETE http://localhost:8000/api/users/<user-id>/api-keys/<key-id> \
 curl -s http://localhost:8000/api/users \
      -H "Authorization: Bearer dp_<api_key>" | python3 -m json.tool
 ```
+
+---
+
+## VM Resource Quotas
+
+Each user is limited by four resource dimensions across all their concurrently active VMs
+(`PENDING`, `PROVISIONING`, `RETRY`, `READY`, `RELEASING`):
+
+| Dimension | Default | Env var |
+|-----------|---------|---------|
+| CPU cores | 16 | `DEFAULT_QUOTA_CPUS` |
+| Memory | 32 GB | `DEFAULT_QUOTA_MEMORY_GB` |
+| SSD storage | 200 GB | `DEFAULT_QUOTA_SSD_GB` |
+| HDD storage | 500 GB | `DEFAULT_QUOTA_HDD_GB` |
+
+Defaults apply when no per-user quota row exists. A booking is rejected if adding its
+resources would exceed **any** single dimension.
+
+### Setting a per-user quota
+
+```bash
+# Override all four dimensions for a user
+curl -s -X PATCH http://localhost:8000/api/users/<user-id>/quota \
+     -H "Content-Type: application/json" \
+     -H "Authorization: Bearer dp_<api_key>" \
+     -d '{"max_cpus": 32, "max_memory_gb": 64, "max_ssd_gb": 400, "max_hdd_gb": 1000}'
+```
+
+All four fields are optional — omitted fields keep their current value (or the global default
+if no quota row exists yet for this user):
+
+```bash
+# Raise only the CPU limit for a power user
+curl -s -X PATCH http://localhost:8000/api/users/<user-id>/quota \
+     -H "Content-Type: application/json" \
+     -H "Authorization: Bearer dp_<api_key>" \
+     -d '{"max_cpus": 64}'
+```
+
+Response:
+```json
+{
+  "user_id": "uuid",
+  "max_cpus": 64,
+  "max_memory_gb": 32,
+  "max_ssd_gb": 200,
+  "max_hdd_gb": 500
+}
+```
+
+### Quota enforcement
+
+When a booking would exceed quota, `POST /bookings` returns `409 Conflict`. Browser users
+see an error banner above the booking form; API clients receive:
+
+```json
+{ "detail": "Quota exceeded: CPU (18/16 cores), memory (36/32 GB)" }
+```
+
+The error message names each violated dimension with the projected usage and the limit.
+
+Release a `READY` or `FAILED` booking to free up its resources and retry.
 
 ---
 
@@ -250,11 +316,14 @@ curl -s -X DELETE http://localhost:8000/api/images/<image-id> \
 
 **Add a custom hardware profile:**
 
+Hardware profiles specify CPU cores, memory, and separate SSD and HDD storage quotas.
+Either `ssd_mb` or `hdd_mb` (or both) may be zero.
+
 ```bash
 curl -s -X POST http://localhost:8000/api/hardware \
      -H "Content-Type: application/json" \
      -H "Authorization: Bearer dp_<api_key>" \
-     -d '{"name": "xlarge", "cpus": 8, "memory_mb": 16384, "disk_mb": 102400}'
+     -d '{"name": "xlarge", "cpus": 8, "memory_mb": 16384, "ssd_mb": 51200, "hdd_mb": 102400}'
 ```
 
 See [docs/api-reference.md](api-reference.md) for the full API reference.
