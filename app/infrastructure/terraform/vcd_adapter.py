@@ -90,6 +90,7 @@ class TerraformVcdAdapter:
               memory           = var.memory
               resize_disk      = true
               disk_size        = var.disk_size
+              admin_password   = var.vm_password
               depends_on       = [vcd_vapp_org_network.this]
             }}
 
@@ -103,6 +104,7 @@ class TerraformVcdAdapter:
             variable "cpus"             {{ type = number }}
             variable "memory"           {{ type = number }}
             variable "disk_size"        {{ type = number }}
+            variable "vm_password"      {{ type = string }}
         """)
         (workspace_dir / "main.tf").write_text(main_tf)
 
@@ -113,6 +115,7 @@ class TerraformVcdAdapter:
             f'cpus             = {config["cpus"]}',
             f'memory           = {config["memory"]}',
             f'disk_size        = {config["disk_size"]}',
+            f'vm_password      = "{config["vm_password"]}"',
         ]
         (workspace_dir / "terraform.tfvars").write_text("\n".join(tfvars_lines) + "\n")
 

@@ -78,17 +78,17 @@ def provision_vm_task(self, booking_id: str, image_id: str, hw_config_id: str) -
             try:
                 image = image_repo.sync_get(session, UUID(image_id))
                 hw = hw_config_repo.sync_get(session, UUID(hw_config_id))
+                vm_password = "".join(
+                    secrets.choice(string.ascii_letters + string.digits) for _ in range(16)
+                )
                 config = {
                     "name":             f"portal-{booking_id[:8]}",
                     "vapp_template_id": image.vapp_template_id,
                     "cpus":             hw.cpus,
                     "memory":           hw.memory_mb,
                     "disk_size":        hw.hdd_mb,
+                    "vm_password":      vm_password,
                 }
-
-                vm_password = "".join(
-                    secrets.choice(string.ascii_letters + string.digits) for _ in range(16)
-                )
 
                 repo.sync_update_status(session, booking_uuid, BookingStatus.PROVISIONING)
                 logger.info("Provisioning started for booking %s", booking_id)
