@@ -18,11 +18,11 @@ def _mock_image(vapp_template_id="tpl-001"):
     return img
 
 
-def _mock_hw(cpus=2, memory_mb=4096, disk_mb=26624):
+def _mock_hw(cpus=2, memory_mb=4096, hdd_mb=26624):
     hw = MagicMock()
     hw.cpus = cpus
     hw.memory_mb = memory_mb
-    hw.disk_mb = disk_mb
+    hw.hdd_mb = hdd_mb
     return hw
 
 
@@ -88,12 +88,14 @@ def test_teardown_task_calls_destroy_with_workspace_id_and_config():
     booking_id = str(uuid4())
     mock_session = MagicMock()
     mock_repo = MagicMock()
-    mock_repo.sync_get = MagicMock(return_value=_mock_booking(booking_id))
+    mock_booking = _mock_booking(booking_id)
+    mock_booking.vm_password = "TestPass1234abCD"
+    mock_repo.sync_get = MagicMock(return_value=mock_booking)
     mock_image_repo = MagicMock()
     mock_image = _mock_image(vapp_template_id="tpl-abc")
     mock_image_repo.sync_get = MagicMock(return_value=mock_image)
     mock_hw_repo = MagicMock()
-    mock_hw = _mock_hw(cpus=4, memory_mb=8192, disk_mb=51200)
+    mock_hw = _mock_hw(cpus=4, memory_mb=8192, hdd_mb=51200)
     mock_hw_repo.sync_get = MagicMock(return_value=mock_hw)
 
     mock_terraform = MagicMock()
@@ -118,6 +120,7 @@ def test_teardown_task_calls_destroy_with_workspace_id_and_config():
         "cpus":             4,
         "memory":           8192,
         "disk_size":        51200,
+        "vm_password":      "TestPass1234abCD",
     }
     mock_terraform.destroy.assert_called_once_with(f"booking-{booking_id}", expected_config, None)
 

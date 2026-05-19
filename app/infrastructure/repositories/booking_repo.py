@@ -37,6 +37,7 @@ def _to_entity(m: BookingModel, owner_username: str | None = None) -> Booking:
         hw_config_id=m.hw_config_id,
         hw_config_name=m.hw_config_name,
         vm_ip=m.vm_ip,
+        vm_password=m.vm_password,
         owner_username=owner_username,
         cpus=m.cpus,
         memory_mb=m.memory_mb,
@@ -85,6 +86,7 @@ class BookingRepository:
         booking_id: UUID,
         status: BookingStatus,
         vm_ip: str | None = None,
+        vm_password: str | None = None,
         actor_id: str = "system",
     ) -> None:
         result = await session.execute(select(BookingModel).where(BookingModel.id == booking_id))
@@ -95,6 +97,8 @@ class BookingRepository:
         model.status = status.value
         if vm_ip is not None:
             model.vm_ip = vm_ip
+        if vm_password is not None:
+            model.vm_password = vm_password
         session.add(BookingAuditModel(
             booking_id=booking_id,
             actor_id=actor_id,
@@ -159,6 +163,7 @@ class BookingRepository:
         booking_id: UUID,
         status: BookingStatus,
         vm_ip: str | None = None,
+        vm_password: str | None = None,
         actor_id: str = "system",
     ) -> None:
         model = session.get(BookingModel, booking_id)
@@ -168,6 +173,8 @@ class BookingRepository:
         model.status = status.value
         if vm_ip is not None:
             model.vm_ip = vm_ip
+        if vm_password is not None:
+            model.vm_password = vm_password
         session.add(BookingAuditModel(
             booking_id=booking_id,
             actor_id=actor_id,

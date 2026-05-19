@@ -40,6 +40,18 @@
             <span class="text-gray-600">—</span>
         {% endif %}
     </td>
+    <td class="px-4 py-3 text-gray-300">
+        {% if booking.status.value == 'READY' and booking.vm_password %}
+            {% set is_owner = booking.owner_username == current_user.username %}
+            {% if is_owner or current_user.role == 'admin' %}
+                <code class="text-xs font-mono text-yellow-300 bg-gray-800 px-1 py-0.5 rounded select-all">{{ booking.vm_password }}</code>
+            {% else %}
+                <span class="text-gray-600">—</span>
+            {% endif %}
+        {% else %}
+            <span class="text-gray-600">—</span>
+        {% endif %}
+    </td>
     <td class="px-4 py-3">
         {% if booking.status.value == 'READY' %}
             {% set is_owner = booking.owner_username == current_user.username %}

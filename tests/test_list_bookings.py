@@ -70,7 +70,7 @@ def test_list_bookings_response_shape(client):
     assert set(row.keys()) == {
         "id", "user_id", "status", "ttl_minutes",
         "expires_at", "created_at", "image_id", "image_name",
-        "hw_config_id", "hw_config_name", "vm_ip",
+        "hw_config_id", "hw_config_name", "vm_ip", "vm_password",
     }
     assert row["id"] == str(booking.id)
     assert row["status"] == "READY"

@@ -60,6 +60,7 @@ class Booking:
     hw_config_id: UUID
     hw_config_name: str
     vm_ip: str | None = None
+    vm_password: str | None = None
     owner_username: str | None = None
     cpus: int = 0
     memory_mb: int = 0

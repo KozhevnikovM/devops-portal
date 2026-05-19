@@ -127,8 +127,18 @@ async def test_require_user_resolves_from_session_cookie():
         request = Request(scope)
         request._cookies = {"session_id": "abc123"}
 
+        mock_user_model = MagicMock()
+        mock_user_model.id = user.id
+        mock_user_model.username = user.username
+        mock_user_model.password_hash = ""
+        mock_user_model.role = user.role
+        mock_user_model.is_active = True
+        mock_user_model.created_at = user.created_at
+        mock_user_model.timezone = "UTC"
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = mock_user_model
         mock_session = AsyncMock()
-        resolved = await require_user.__wrapped__(request, mock_session) if hasattr(require_user, "__wrapped__") else None
+        mock_session.execute = AsyncMock(return_value=mock_result)
 
         # Use the raw function directly
         from app.infrastructure.auth import get_current_user
