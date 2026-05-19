@@ -367,6 +367,20 @@ No rebuild needed — the flag is read at worker startup.
 
 ---
 
+## VM Connection Password
+
+When a booking reaches `READY`, the portal generates a 16-character alphanumeric password
+for the VM and stores it on the booking. The password is shown in the **Password** column
+of the Active Bookings table.
+
+- The booking owner always sees their own VM password.
+- Admins can see the password for any booking.
+- Other users see `—` in the Password column.
+
+The password is also returned in the `vm_password` field of the `GET /bookings` JSON response.
+
+---
+
 ## Extending Bookings
 
 The owner of a `READY` booking can extend its TTL without releasing and re-creating it.

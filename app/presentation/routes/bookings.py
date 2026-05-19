@@ -59,6 +59,7 @@ async def list_bookings(
             "hw_config_id": str(b.hw_config_id),
             "hw_config_name": b.hw_config_name,
             "vm_ip": b.vm_ip,
+            "vm_password": b.vm_password,
         }
         for b in bookings
     ])

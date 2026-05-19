@@ -27,7 +27,7 @@ def _make_hw(**kwargs) -> HWConfig:
         name=kwargs.get("name", "medium"),
         cpus=kwargs.get("cpus", 2),
         memory_mb=kwargs.get("memory_mb", 4096),
-        disk_mb=kwargs.get("disk_mb", 26624),
+        hdd_mb=kwargs.get("hdd_mb", 26624),
         is_active=kwargs.get("is_active", True),
         created_at=kwargs.get("created_at", datetime.now(timezone.utc)),
     )
@@ -65,13 +65,21 @@ def mock_hw_repo(mock_hw):
 
 
 @pytest.fixture
+def mock_quota_repo():
+    repo = MagicMock()
+    repo.count_active_resources = AsyncMock(return_value={"cpus": 0, "memory_gb": 0, "hdd_gb": 0})
+    repo.get_limits_for_update = AsyncMock(return_value={"max_cpus": 100, "max_memory_gb": 1000, "max_hdd_gb": 1000})
+    return repo
+
+
+@pytest.fixture
 def mock_session():
     return AsyncMock()
 
 
 @pytest.mark.asyncio
-async def test_create_booking_returns_pending(mock_repo, mock_image_repo, mock_hw_repo, mock_image, mock_hw, mock_session):
-    use_case = CreateBookingUseCase(mock_repo, mock_image_repo, mock_hw_repo)
+async def test_create_booking_returns_pending(mock_repo, mock_image_repo, mock_hw_repo, mock_quota_repo, mock_image, mock_hw, mock_session):
+    use_case = CreateBookingUseCase(mock_repo, mock_image_repo, mock_hw_repo, mock_quota_repo)
 
     with patch("app.application.use_cases.create_booking.provision_vm_task") as mock_task:
         mock_task.delay = MagicMock()
@@ -83,8 +91,8 @@ async def test_create_booking_returns_pending(mock_repo, mock_image_repo, mock_h
 
 
 @pytest.mark.asyncio
-async def test_create_booking_sets_image_and_hw_fields(mock_repo, mock_image_repo, mock_hw_repo, mock_image, mock_hw, mock_session):
-    use_case = CreateBookingUseCase(mock_repo, mock_image_repo, mock_hw_repo)
+async def test_create_booking_sets_image_and_hw_fields(mock_repo, mock_image_repo, mock_hw_repo, mock_quota_repo, mock_image, mock_hw, mock_session):
+    use_case = CreateBookingUseCase(mock_repo, mock_image_repo, mock_hw_repo, mock_quota_repo)
 
     with patch("app.application.use_cases.create_booking.provision_vm_task") as mock_task:
         mock_task.delay = MagicMock()
@@ -97,8 +105,8 @@ async def test_create_booking_sets_image_and_hw_fields(mock_repo, mock_image_rep
 
 
 @pytest.mark.asyncio
-async def test_create_booking_dispatches_task(mock_repo, mock_image_repo, mock_hw_repo, mock_image, mock_hw, mock_session):
-    use_case = CreateBookingUseCase(mock_repo, mock_image_repo, mock_hw_repo)
+async def test_create_booking_dispatches_task(mock_repo, mock_image_repo, mock_hw_repo, mock_quota_repo, mock_image, mock_hw, mock_session):
+    use_case = CreateBookingUseCase(mock_repo, mock_image_repo, mock_hw_repo, mock_quota_repo)
 
     with patch("app.application.use_cases.create_booking.provision_vm_task") as mock_task:
         mock_task.delay = MagicMock()
@@ -107,8 +115,8 @@ async def test_create_booking_dispatches_task(mock_repo, mock_image_repo, mock_h
 
 
 @pytest.mark.asyncio
-async def test_create_booking_sets_correct_expiry(mock_repo, mock_image_repo, mock_hw_repo, mock_image, mock_hw, mock_session):
-    use_case = CreateBookingUseCase(mock_repo, mock_image_repo, mock_hw_repo)
+async def test_create_booking_sets_correct_expiry(mock_repo, mock_image_repo, mock_hw_repo, mock_quota_repo, mock_image, mock_hw, mock_session):
+    use_case = CreateBookingUseCase(mock_repo, mock_image_repo, mock_hw_repo, mock_quota_repo)
 
     with patch("app.application.use_cases.create_booking.provision_vm_task") as mock_task:
         mock_task.delay = MagicMock()
