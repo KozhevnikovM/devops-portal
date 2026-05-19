@@ -24,7 +24,7 @@ def _make_hw(**kwargs) -> HWConfig:
         name=kwargs.get("name", "medium"),
         cpus=kwargs.get("cpus", 2),
         memory_mb=kwargs.get("memory_mb", 4096),
-        disk_mb=kwargs.get("disk_mb", 26624),
+        hdd_mb=kwargs.get("hdd_mb", 26624),
         is_active=kwargs.get("is_active", True),
         created_at=kwargs.get("created_at", datetime.now(timezone.utc)),
     )

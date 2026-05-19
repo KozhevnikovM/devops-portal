@@ -48,6 +48,7 @@ class BookingModel(Base):
     memory_mb: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     hdd_mb: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     vm_ip: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    vm_password: Mapped[str | None] = mapped_column(String(128), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     vms: Mapped[list["VMModel"]] = relationship("VMModel", back_populates="booking", cascade="all, delete-orphan")

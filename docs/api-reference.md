@@ -264,10 +264,14 @@ List all bookings.
     "image_name": "Ubuntu 22.04",
     "hw_config_id": "uuid",
     "hw_config_name": "medium",
-    "vm_ip": "10.0.0.1"
+    "vm_ip": "10.0.0.1",
+    "vm_password": "Abc123XyZ456qwER"
   }
 ]
 ```
+
+`vm_password` is set when the booking reaches `READY`. It contains a 16-character alphanumeric
+password generated at provisioning time.
 
 **Example:**
 ```bash

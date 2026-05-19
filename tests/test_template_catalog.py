@@ -27,7 +27,7 @@ def _make_hw_model(**kwargs):
     m.name = kwargs.get("name", "medium")
     m.cpus = kwargs.get("cpus", 2)
     m.memory_mb = kwargs.get("memory_mb", 4096)
-    m.disk_mb = kwargs.get("disk_mb", 26624)
+    m.hdd_mb = kwargs.get("hdd_mb", 26624)
     m.is_active = kwargs.get("is_active", True)
     m.created_at = kwargs.get("created_at", datetime.now(timezone.utc))
     return m
@@ -120,7 +120,7 @@ def test_hw_to_entity_maps_all_fields():
     assert entity.name == model.name
     assert entity.cpus == model.cpus
     assert entity.memory_mb == model.memory_mb
-    assert entity.disk_mb == model.disk_mb
+    assert entity.hdd_mb == model.hdd_mb
     assert entity.is_active == model.is_active
 
 
@@ -173,4 +173,4 @@ def test_hw_sync_get_returns_entity():
 
     result = repo.sync_get(mock_session, model.id)
     assert isinstance(result, HWConfig)
-    assert result.disk_mb == model.disk_mb
+    assert result.hdd_mb == model.hdd_mb

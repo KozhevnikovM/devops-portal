@@ -23,6 +23,7 @@
                         <th class="text-left px-4 py-3">TTL</th>
                         <th class="text-left px-4 py-3">Expires</th>
                         <th class="text-left px-4 py-3">IP Address</th>
+                        <th class="text-left px-4 py-3">Password</th>
                         <th class="text-left px-4 py-3">Actions</th>
                     </tr>
                 </thead>
@@ -31,7 +32,7 @@
                         {% include "partials/booking_row.html" %}
                     {% else %}
                         <tr id="empty-row">
-                            <td colspan="8" class="px-4 py-6 text-center text-gray-600">No bookings yet.</td>
+                            <td colspan="9" class="px-4 py-6 text-center text-gray-600">No bookings yet.</td>
                         </tr>
                     {% endfor %}
                 </tbody>

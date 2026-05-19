@@ -46,6 +46,7 @@ def teardown_vm_task(self, booking_id: str) -> None:
                 "cpus":             hw.cpus,
                 "memory":           hw.memory_mb,
                 "disk_size":        hw.hdd_mb,
+                "vm_password":      booking.vm_password or "",
             }
 
             repo.sync_update_status(session, booking_uuid, BookingStatus.RELEASING)
