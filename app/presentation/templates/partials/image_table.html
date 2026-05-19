@@ -72,7 +72,22 @@
                         >Deactivate</button>
                     </div>
                     {% else %}
-                    <span class="text-gray-700">—</span>
+                    <div class="flex items-center gap-2">
+                        <button
+                            hx-post="/admin/catalog/images/{{ image.id }}/activate"
+                            hx-target="#image-table"
+                            hx-swap="outerHTML"
+                            class="text-xs px-2 py-1 rounded bg-green-900 text-green-300 border border-green-700 hover:bg-green-800 transition-colors"
+                        >Activate</button>
+                        <button
+                            hx-delete="/admin/catalog/images/{{ image.id }}/permanent"
+                            hx-target="#image-table"
+                            hx-swap="outerHTML"
+                            hx-confirm="Permanently delete image '{{ image.name }}'? This cannot be undone."
+                            class="text-xs px-2 py-1 rounded bg-red-900 text-red-300 border border-red-700 hover:bg-red-800 transition-colors"
+                        >Delete</button>
+                        <span id="image-delete-error-{{ image.id }}" class="text-xs"></span>
+                    </div>
                     {% endif %}
                 </td>
             </tr>

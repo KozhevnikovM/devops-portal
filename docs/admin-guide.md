@@ -297,12 +297,16 @@ profiles (`small`, `medium`, `large`).
 - Click **Add** to create a new image.
 - Click **Deactivate** to hide an image from the booking form. Existing bookings
   referencing the image are unaffected.
+- On an inactive image: click **Activate** to restore it, or **Delete** to remove it
+  permanently. Deletion is blocked if any booking still references the image.
 
 **Hardware Configs panel:**
 
 - Click **Edit** on a row to update name, CPUs, RAM (MB), or HDD (MB) inline.
 - Click **Add** to create a new hardware config.
 - Click **Deactivate** to hide a config from the booking form.
+- On an inactive config: click **Activate** to restore it, or **Delete** to remove it
+  permanently. Deletion is blocked if any booking still references the config.
 
 The JSON API (`/api/images`, `/api/hardware`) remains available for scripted workflows.
 See [docs/api-reference.md](api-reference.md) for the full API reference.

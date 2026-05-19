@@ -110,6 +110,48 @@ async def admin_update_image(
     )
 
 
+@router.post("/admin/catalog/images/{image_id}/activate", response_class=HTMLResponse)
+async def admin_activate_image(
+    request: Request,
+    image_id: UUID,
+    session: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(require_admin),
+):
+    try:
+        await _image_repo.activate(session, image_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    images = await _image_repo.list_all(session)
+    return templates.TemplateResponse(
+        request, "partials/image_table.html",
+        {"images": images, "current_user": current_user},
+    )
+
+
+@router.delete("/admin/catalog/images/{image_id}/permanent", response_class=HTMLResponse)
+async def admin_delete_image(
+    request: Request,
+    image_id: UUID,
+    session: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(require_admin),
+):
+    try:
+        await _image_repo.delete(session, image_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except IntegrityError:
+        await session.rollback()
+        return HTMLResponse(
+            content='<span class="text-red-400 text-xs">Cannot delete: bookings reference this image.</span>',
+            headers={"HX-Retarget": f"#image-delete-error-{image_id}", "HX-Reswap": "innerHTML"},
+        )
+    images = await _image_repo.list_all(session)
+    return templates.TemplateResponse(
+        request, "partials/image_table.html",
+        {"images": images, "current_user": current_user},
+    )
+
+
 @router.delete("/admin/catalog/images/{image_id}", response_class=HTMLResponse)
 async def admin_deactivate_image(
     request: Request,
@@ -204,6 +246,48 @@ async def admin_update_hw_config(
         )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
+    hw_configs = await _hw_config_repo.list_all(session)
+    return templates.TemplateResponse(
+        request, "partials/hw_config_table.html",
+        {"hw_configs": hw_configs, "current_user": current_user},
+    )
+
+
+@router.post("/admin/catalog/hardware/{hw_config_id}/activate", response_class=HTMLResponse)
+async def admin_activate_hw_config(
+    request: Request,
+    hw_config_id: UUID,
+    session: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(require_admin),
+):
+    try:
+        await _hw_config_repo.activate(session, hw_config_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    hw_configs = await _hw_config_repo.list_all(session)
+    return templates.TemplateResponse(
+        request, "partials/hw_config_table.html",
+        {"hw_configs": hw_configs, "current_user": current_user},
+    )
+
+
+@router.delete("/admin/catalog/hardware/{hw_config_id}/permanent", response_class=HTMLResponse)
+async def admin_delete_hw_config(
+    request: Request,
+    hw_config_id: UUID,
+    session: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(require_admin),
+):
+    try:
+        await _hw_config_repo.delete(session, hw_config_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except IntegrityError:
+        await session.rollback()
+        return HTMLResponse(
+            content='<span class="text-red-400 text-xs">Cannot delete: bookings reference this config.</span>',
+            headers={"HX-Retarget": f"#hw-delete-error-{hw_config_id}", "HX-Reswap": "innerHTML"},
+        )
     hw_configs = await _hw_config_repo.list_all(session)
     return templates.TemplateResponse(
         request, "partials/hw_config_table.html",

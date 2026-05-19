@@ -529,6 +529,22 @@ Deactivate a VM image. It will no longer appear in the booking form.
 
 ---
 
+### `POST /admin/catalog/images/{image_id}/activate`
+
+Re-activate a previously deactivated VM image. It will reappear in the booking form.
+
+**Responses:** `200` updated image table; `404` if image not found.
+
+---
+
+### `DELETE /admin/catalog/images/{image_id}/permanent`
+
+Permanently delete a VM image from the database.
+
+**Responses:** `200` updated image table; `404` if not found; `200` with `HX-Retarget: #image-delete-error-{id}` if bookings reference this image.
+
+---
+
 ### `POST /admin/catalog/hardware`
 
 Create a new hardware config from the HTML form.
@@ -574,6 +590,22 @@ Update a hardware config from the inline edit form.
 Deactivate a hardware config. It will no longer appear in the booking form.
 
 **Responses:** `200` updated hardware table; `404` if config not found.
+
+---
+
+### `POST /admin/catalog/hardware/{hw_config_id}/activate`
+
+Re-activate a previously deactivated hardware config. It will reappear in the booking form.
+
+**Responses:** `200` updated hardware table; `404` if config not found.
+
+---
+
+### `DELETE /admin/catalog/hardware/{hw_config_id}/permanent`
+
+Permanently delete a hardware config from the database.
+
+**Responses:** `200` updated hardware table; `404` if not found; `200` with `HX-Retarget: #hw-delete-error-{id}` if bookings reference this config.
 
 ---
 

@@ -108,7 +108,22 @@
                         >Deactivate</button>
                     </div>
                     {% else %}
-                    <span class="text-gray-700">—</span>
+                    <div class="flex items-center gap-2">
+                        <button
+                            hx-post="/admin/catalog/hardware/{{ hw.id }}/activate"
+                            hx-target="#hw-table"
+                            hx-swap="outerHTML"
+                            class="text-xs px-2 py-1 rounded bg-green-900 text-green-300 border border-green-700 hover:bg-green-800 transition-colors"
+                        >Activate</button>
+                        <button
+                            hx-delete="/admin/catalog/hardware/{{ hw.id }}/permanent"
+                            hx-target="#hw-table"
+                            hx-swap="outerHTML"
+                            hx-confirm="Permanently delete config '{{ hw.name }}'? This cannot be undone."
+                            class="text-xs px-2 py-1 rounded bg-red-900 text-red-300 border border-red-700 hover:bg-red-800 transition-colors"
+                        >Delete</button>
+                        <span id="hw-delete-error-{{ hw.id }}" class="text-xs"></span>
+                    </div>
                     {% endif %}
                 </td>
             </tr>

@@ -56,11 +56,25 @@ class ImageRepository:
         await session.refresh(model)
         return _to_entity(model)
 
+    async def activate(self, session: AsyncSession, image_id: UUID) -> None:
+        model = await session.get(VMImageModel, image_id)
+        if model is None:
+            raise ValueError(f"VM image {image_id} not found")
+        model.is_active = True
+        await session.commit()
+
     async def deactivate(self, session: AsyncSession, image_id: UUID) -> None:
         model = await session.get(VMImageModel, image_id)
         if model is None:
             raise ValueError(f"VM image {image_id} not found")
         model.is_active = False
+        await session.commit()
+
+    async def delete(self, session: AsyncSession, image_id: UUID) -> None:
+        model = await session.get(VMImageModel, image_id)
+        if model is None:
+            raise ValueError(f"VM image {image_id} not found")
+        await session.delete(model)
         await session.commit()
 
     def sync_get(self, session: Session, image_id: UUID) -> VMImage:

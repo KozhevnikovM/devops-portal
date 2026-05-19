@@ -288,3 +288,110 @@ def test_deactivate_hw_config_404_for_missing(client):
         resp = client.delete(f"/admin/catalog/hardware/{uuid4()}")
 
     assert resp.status_code == 404
+
+
+# ── POST /admin/catalog/images/{id}/activate ─────────────────────────────────
+
+def test_activate_image_returns_updated_table(client):
+    img = _make_image(is_active=False)
+    activated = _make_image(id=img.id, is_active=True)
+    with patch("app.presentation.routes.admin._image_repo") as mock_img:
+        mock_img.activate = AsyncMock()
+        mock_img.list_all = AsyncMock(return_value=[activated])
+        resp = client.post(f"/admin/catalog/images/{img.id}/activate")
+
+    assert resp.status_code == 200
+    assert "active" in resp.text
+
+
+def test_activate_image_404_for_missing(client):
+    with patch("app.presentation.routes.admin._image_repo") as mock_img:
+        mock_img.activate = AsyncMock(side_effect=ValueError("not found"))
+        resp = client.post(f"/admin/catalog/images/{uuid4()}/activate")
+
+    assert resp.status_code == 404
+
+
+# ── DELETE /admin/catalog/images/{id}/permanent ──────────────────────────────
+
+def test_hard_delete_image_returns_updated_table(client):
+    img = _make_image(is_active=False)
+    with patch("app.presentation.routes.admin._image_repo") as mock_img:
+        mock_img.delete = AsyncMock()
+        mock_img.list_all = AsyncMock(return_value=[])
+        resp = client.delete(f"/admin/catalog/images/{img.id}/permanent")
+
+    assert resp.status_code == 200
+    assert str(img.name) not in resp.text
+
+
+def test_hard_delete_image_404_for_missing(client):
+    with patch("app.presentation.routes.admin._image_repo") as mock_img:
+        mock_img.delete = AsyncMock(side_effect=ValueError("not found"))
+        resp = client.delete(f"/admin/catalog/images/{uuid4()}/permanent")
+
+    assert resp.status_code == 404
+
+
+def test_hard_delete_image_409_when_bookings_exist(client):
+    img = _make_image(is_active=False)
+    with patch("app.presentation.routes.admin._image_repo") as mock_img:
+        mock_img.delete = AsyncMock(side_effect=IntegrityError("fk", {}, None))
+        resp = client.delete(f"/admin/catalog/images/{img.id}/permanent")
+
+    assert resp.status_code == 200
+    assert resp.headers.get("HX-Retarget") == f"#image-delete-error-{img.id}"
+    assert "Cannot delete" in resp.text
+
+
+# ── POST /admin/catalog/hardware/{id}/activate ───────────────────────────────
+
+def test_activate_hw_config_returns_updated_table(client):
+    hw = _make_hw(is_active=False)
+    activated = _make_hw(id=hw.id, is_active=True)
+    with patch("app.presentation.routes.admin._hw_config_repo") as mock_hw:
+        mock_hw.activate = AsyncMock()
+        mock_hw.list_all = AsyncMock(return_value=[activated])
+        resp = client.post(f"/admin/catalog/hardware/{hw.id}/activate")
+
+    assert resp.status_code == 200
+    assert "active" in resp.text
+
+
+def test_activate_hw_config_404_for_missing(client):
+    with patch("app.presentation.routes.admin._hw_config_repo") as mock_hw:
+        mock_hw.activate = AsyncMock(side_effect=ValueError("not found"))
+        resp = client.post(f"/admin/catalog/hardware/{uuid4()}/activate")
+
+    assert resp.status_code == 404
+
+
+# ── DELETE /admin/catalog/hardware/{id}/permanent ────────────────────────────
+
+def test_hard_delete_hw_config_returns_updated_table(client):
+    hw = _make_hw(is_active=False)
+    with patch("app.presentation.routes.admin._hw_config_repo") as mock_hw:
+        mock_hw.delete = AsyncMock()
+        mock_hw.list_all = AsyncMock(return_value=[])
+        resp = client.delete(f"/admin/catalog/hardware/{hw.id}/permanent")
+
+    assert resp.status_code == 200
+
+
+def test_hard_delete_hw_config_404_for_missing(client):
+    with patch("app.presentation.routes.admin._hw_config_repo") as mock_hw:
+        mock_hw.delete = AsyncMock(side_effect=ValueError("not found"))
+        resp = client.delete(f"/admin/catalog/hardware/{uuid4()}/permanent")
+
+    assert resp.status_code == 404
+
+
+def test_hard_delete_hw_config_409_when_bookings_exist(client):
+    hw = _make_hw(is_active=False)
+    with patch("app.presentation.routes.admin._hw_config_repo") as mock_hw:
+        mock_hw.delete = AsyncMock(side_effect=IntegrityError("fk", {}, None))
+        resp = client.delete(f"/admin/catalog/hardware/{hw.id}/permanent")
+
+    assert resp.status_code == 200
+    assert resp.headers.get("HX-Retarget") == f"#hw-delete-error-{hw.id}"
+    assert "Cannot delete" in resp.text
