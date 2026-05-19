@@ -90,7 +90,7 @@ The startup log prints a `WARNING` if `ADMIN_PASSWORD` is still `changeme`.
 Regular users (role `"user"`) can create and release their own bookings but cannot
 manage VM images, hardware configs, or other users.
 
-**Via the UI:** navigate to **Admin → Users** (link in the header, visible to admins only).
+**Via the UI:** navigate to **Users** (link in the header, visible to admins only).
 Enter a username, password, and role, then click **Create**. The user list updates
 immediately without a page reload.
 
