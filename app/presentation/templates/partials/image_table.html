@@ -1,0 +1,101 @@
+<div id="image-table">
+    <div id="image-create-error" hx-swap-oob="innerHTML"></div>
+    {% if images %}
+    <table class="w-full text-sm">
+        <thead>
+            <tr class="border-b border-gray-700 text-left">
+                <th class="px-4 py-2 text-xs text-gray-500 font-normal uppercase tracking-widest">Name</th>
+                <th class="px-4 py-2 text-xs text-gray-500 font-normal uppercase tracking-widest">vApp Template ID</th>
+                <th class="px-4 py-2 text-xs text-gray-500 font-normal uppercase tracking-widest">Status</th>
+                <th class="px-4 py-2 text-xs text-gray-500 font-normal uppercase tracking-widest"></th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for image in images %}
+            {% if editing_image and image.id == editing_image.id %}
+            <tr class="border-b border-gray-800 last:border-0 bg-gray-800/60">
+                <td colspan="4" class="px-4 py-3">
+                    <form
+                        hx-patch="/admin/catalog/images/{{ image.id }}"
+                        hx-target="#image-table"
+                        hx-swap="outerHTML"
+                        class="flex items-center gap-3 flex-wrap"
+                    >
+                        <input
+                            name="name"
+                            value="{{ image.name }}"
+                            required
+                            class="bg-gray-900 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-36"
+                        >
+                        <input
+                            name="vapp_template_id"
+                            value="{{ image.vapp_template_id }}"
+                            required
+                            class="bg-gray-900 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-100 focus:outline-none focus:border-green-600 flex-1 min-w-48 font-mono"
+                        >
+                        <button type="submit" class="text-xs px-3 py-1.5 rounded bg-green-700 text-green-100 hover:bg-green-600 transition-colors">Save</button>
+                        <button type="button"
+                            hx-get="/admin/catalog/images/table"
+                            hx-target="#image-table"
+                            hx-swap="outerHTML"
+                            class="text-xs px-3 py-1.5 rounded bg-gray-700 text-gray-300 border border-gray-600 hover:bg-gray-600 transition-colors"
+                        >Cancel</button>
+                    </form>
+                </td>
+            </tr>
+            {% else %}
+            <tr class="border-b border-gray-800 last:border-0 hover:bg-gray-800/40 transition-colors">
+                <td class="px-4 py-3 text-gray-200">{{ image.name }}</td>
+                <td class="px-4 py-3 text-gray-400 text-xs font-mono">{{ image.vapp_template_id }}</td>
+                <td class="px-4 py-3">
+                    {% if image.is_active %}
+                    <span class="text-xs text-green-400">active</span>
+                    {% else %}
+                    <span class="text-xs text-gray-500">inactive</span>
+                    {% endif %}
+                </td>
+                <td class="px-4 py-3">
+                    {% if image.is_active %}
+                    <div class="flex items-center gap-2">
+                        <button
+                            hx-get="/admin/catalog/images/{{ image.id }}/edit"
+                            hx-target="#image-table"
+                            hx-swap="outerHTML"
+                            class="text-xs px-2 py-1 rounded bg-gray-700 text-gray-300 border border-gray-600 hover:bg-gray-600 transition-colors"
+                        >Edit</button>
+                        <button
+                            hx-delete="/admin/catalog/images/{{ image.id }}"
+                            hx-target="#image-table"
+                            hx-swap="outerHTML"
+                            hx-confirm="Deactivate image '{{ image.name }}'?"
+                            class="text-xs px-2 py-1 rounded bg-red-900 text-red-300 border border-red-700 hover:bg-red-800 transition-colors"
+                        >Deactivate</button>
+                    </div>
+                    {% else %}
+                    <div class="flex items-center gap-2">
+                        <button
+                            hx-post="/admin/catalog/images/{{ image.id }}/activate"
+                            hx-target="#image-table"
+                            hx-swap="outerHTML"
+                            class="text-xs px-2 py-1 rounded bg-green-900 text-green-300 border border-green-700 hover:bg-green-800 transition-colors"
+                        >Activate</button>
+                        <button
+                            hx-delete="/admin/catalog/images/{{ image.id }}/permanent"
+                            hx-target="#image-table"
+                            hx-swap="outerHTML"
+                            hx-confirm="Permanently delete image '{{ image.name }}'? This cannot be undone."
+                            class="text-xs px-2 py-1 rounded bg-red-900 text-red-300 border border-red-700 hover:bg-red-800 transition-colors"
+                        >Delete</button>
+                        <span id="image-delete-error-{{ image.id }}" class="text-xs"></span>
+                    </div>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endif %}
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p class="text-gray-600 text-sm px-4 py-6">No VM images yet.</p>
+    {% endif %}
+</div>

@@ -475,7 +475,141 @@ Returns an HTML fragment for a single booking row. Used by HTMX polling.
 
 ---
 
-## Admin — VM Images
+## Admin — Catalog UI
+
+### `GET /admin/catalog`
+
+Renders the catalog management page with two panels: VM Images and Hardware Configs.
+
+**Auth:** admin only.
+
+---
+
+### `POST /admin/catalog/images`
+
+Create a new VM image from the HTML form.
+
+**Content-Type:** `application/x-www-form-urlencoded`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | string | Unique display name |
+| `vapp_template_id` | string | VCD vApp template URN |
+
+**Responses:** `200` updated image table fragment; `200` with `HX-Retarget: #image-create-error` on duplicate name.
+
+---
+
+### `GET /admin/catalog/images/{image_id}/edit`
+
+Returns the image table with the specified row in inline edit mode.
+
+---
+
+### `PATCH /admin/catalog/images/{image_id}`
+
+Update a VM image from the inline edit form.
+
+**Content-Type:** `application/x-www-form-urlencoded`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | string | New name |
+| `vapp_template_id` | string | New vApp template URN |
+
+**Responses:** `200` updated image table; `404` if image not found.
+
+---
+
+### `DELETE /admin/catalog/images/{image_id}`
+
+Deactivate a VM image. It will no longer appear in the booking form.
+
+**Responses:** `200` updated image table; `404` if image not found.
+
+---
+
+### `POST /admin/catalog/images/{image_id}/activate`
+
+Re-activate a previously deactivated VM image. It will reappear in the booking form.
+
+**Responses:** `200` updated image table; `404` if image not found.
+
+---
+
+### `DELETE /admin/catalog/images/{image_id}/permanent`
+
+Permanently delete a VM image from the database.
+
+**Responses:** `200` updated image table; `404` if not found; `200` with `HX-Retarget: #image-delete-error-{id}` if bookings reference this image.
+
+---
+
+### `POST /admin/catalog/hardware`
+
+Create a new hardware config from the HTML form.
+
+**Content-Type:** `application/x-www-form-urlencoded`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | string | Unique display name |
+| `cpus` | integer | CPU count |
+| `memory_mb` | integer | RAM in MB |
+| `hdd_mb` | integer | HDD in MB |
+
+**Responses:** `200` updated hardware table fragment; `200` with `HX-Retarget: #hw-create-error` on duplicate name.
+
+---
+
+### `GET /admin/catalog/hardware/{hw_config_id}/edit`
+
+Returns the hardware config table with the specified row in inline edit mode.
+
+---
+
+### `PATCH /admin/catalog/hardware/{hw_config_id}`
+
+Update a hardware config from the inline edit form.
+
+**Content-Type:** `application/x-www-form-urlencoded`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | string | New name |
+| `cpus` | integer | New CPU count |
+| `memory_mb` | integer | New RAM in MB |
+| `hdd_mb` | integer | New HDD in MB |
+
+**Responses:** `200` updated hardware table; `404` if config not found.
+
+---
+
+### `DELETE /admin/catalog/hardware/{hw_config_id}`
+
+Deactivate a hardware config. It will no longer appear in the booking form.
+
+**Responses:** `200` updated hardware table; `404` if config not found.
+
+---
+
+### `POST /admin/catalog/hardware/{hw_config_id}/activate`
+
+Re-activate a previously deactivated hardware config. It will reappear in the booking form.
+
+**Responses:** `200` updated hardware table; `404` if config not found.
+
+---
+
+### `DELETE /admin/catalog/hardware/{hw_config_id}/permanent`
+
+Permanently delete a hardware config from the database.
+
+**Responses:** `200` updated hardware table; `404` if not found; `200` with `HX-Retarget: #hw-delete-error-{id}` if bookings reference this config.
+
+---
+
+## Admin — VM Images (JSON API)
 
 All `/api/images` and `/api/hardware` endpoints require **admin** role.
 
