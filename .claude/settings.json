@@ -8,7 +8,15 @@
       "Bash(git checkout *)",
       "Bash(git rm *)",
       "mcp__playwright__browser_click",
-      "mcp__playwright__browser_snapshot"
+      "mcp__playwright__browser_snapshot",
+      "mcp__playwright__browser_fill_form",
+      "Bash(python -m pytest tests/test_extend_booking.py -v)",
+      "Bash(python3 -m pytest tests/test_extend_booking.py -v)",
+      "Bash(python -m pytest tests/test_admin_catalog_ui.py -v)",
+      "Bash(pytest tests/test_admin_catalog_ui.py -v)",
+      "Bash(pytest tests/test_template_catalog.py::test_hw_to_entity_maps_all_fields tests/test_auth.py::test_require_user_resolves_from_session_cookie -v)",
+      "Bash(grep -n \"ovfenv\\\\|userdata\\\\|user_data\\\\|PropertySection\\\\|oe:key\" /usr/lib/python3*/site-packages/cloudinit/sources/DataSourceVMware.py 2>/dev/null | head -40)",
+      "Read(//usr/lib/**)"
     ]
   }
 }
