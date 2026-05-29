@@ -49,6 +49,23 @@ class QuotaRepository:
             "hdd_gb":    math.ceil(int(row.hdd_mb)    / 1024),
         }
 
+    async def get_limits(self, session: AsyncSession, user_id: str) -> dict:
+        result = await session.execute(
+            select(QuotaModel).where(QuotaModel.user_id == UUID(user_id))
+        )
+        model = result.scalar_one_or_none()
+        if model is None:
+            return {
+                "max_cpus":      settings.DEFAULT_QUOTA_CPUS,
+                "max_memory_gb": settings.DEFAULT_QUOTA_MEMORY_GB,
+                "max_hdd_gb":    settings.DEFAULT_QUOTA_HDD_GB,
+            }
+        return {
+            "max_cpus":      model.max_cpus,
+            "max_memory_gb": model.max_memory_gb,
+            "max_hdd_gb":    model.max_hdd_gb,
+        }
+
     async def get_limits_for_update(self, session: AsyncSession, user_id: str) -> dict:
         result = await session.execute(
             select(QuotaModel)
