@@ -175,7 +175,7 @@ current value (falling back to the global default if no per-user row exists yet)
 {
   "max_cpus": 32,
   "max_memory_gb": 64,
-
+  "max_ssd_gb": 500,
   "max_hdd_gb": 1000
 }
 ```
@@ -186,7 +186,7 @@ current value (falling back to the global default if no per-user row exists yet)
   "user_id": "uuid",
   "max_cpus": 32,
   "max_memory_gb": 64,
-
+  "max_ssd_gb": 500,
   "max_hdd_gb": 1000
 }
 ```
