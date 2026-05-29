@@ -138,6 +138,112 @@ Every VM deployed from the template must have:
 
 ---
 
+## Passing user-data via Terraform
+
+### Why `guest_properties` doesn't work out of the box
+
+The Terraform VCD provider's `guest_properties` block sets **OVF Properties**, which VCD
+stores inside the `guestinfo.ovfenv` XML blob:
+
+```xml
+<Property oe:key="guestinfo.userdata" oe:value="I2Nsb3VkLWNvbmZpZw=="/>
+```
+
+cloud-init reads `guestinfo.userdata` via a direct rpctool call:
+```bash
+vmware-rpctool "info-get guestinfo.userdata"   # → No value found
+```
+
+It does not parse ovfenv to find it. The result: cloud-init never sees the user-data.
+
+Confirm the data is in ovfenv but not in direct guestinfo:
+```bash
+vmware-rpctool "info-get guestinfo.ovfenv" | grep userdata   # data is here
+vmware-rpctool "info-get guestinfo.userdata"                 # No value found
+```
+
+---
+
+### Solution — `initscript` + NoCloud seed
+
+The customization `initscript` runs on the VM at first boot as part of the GC process.
+Use it to write user-data into cloud-init's **NoCloud seed directory** before cloud-init
+processes its modules.
+
+#### Step 1 — Add `NoCloud` to the datasource list on the template
+
+```bash
+# On the template VM, before templating
+cat > /etc/cloud/cloud.cfg.d/90-datasource.cfg << 'EOF'
+datasource_list: [NoCloud, VMware, None]
+EOF
+```
+
+`NoCloud` checks `/var/lib/cloud/seed/nocloud/` for `user-data` and `meta-data` files.
+It runs before `VMware`, so if the seed files exist they take precedence for user-data
+while VMware datasource still handles network/hostname via GC.
+
+#### Step 2 — Pass user-data via `initscript` in Terraform
+
+```hcl
+locals {
+  user_data = <<-EOF
+    #cloud-config
+    disable_root: false
+    ssh_pwauth: true
+    packages:
+      - nginx
+    runcmd:
+      - systemctl enable --now nginx
+  EOF
+}
+
+module "vm" {
+  # ... other vars ...
+
+  customization = {
+    force                      = false
+    change_sid                 = true
+    allow_local_admin_password = true
+    auto_generate_password     = false
+    admin_password             = var.vm_password
+    initscript                 = <<-EOT
+      #!/bin/bash
+      mkdir -p /var/lib/cloud/seed/nocloud
+      cat > /var/lib/cloud/seed/nocloud/user-data << 'USERDATA'
+      ${local.user_data}
+      USERDATA
+      touch /var/lib/cloud/seed/nocloud/meta-data
+    EOT
+  }
+}
+```
+
+#### Step 3 — Verify on the VM
+
+```bash
+# Seed files were written by initscript
+cat /var/lib/cloud/seed/nocloud/user-data
+
+# cloud-init picked them up
+cloud-init query userdata
+
+# Execution log (package installs, runcmd output, etc.)
+cat /var/log/cloud-init-output.log
+```
+
+#### How the two datasources coexist
+
+| Datasource | Provides |
+|---|---|
+| `NoCloud` | `user-data` (from seed file written by initscript) |
+| `VMware [seed=imc]` | Network config, hostname (from VCD Guest Customization) |
+
+cloud-init merges data across datasources: NoCloud provides the user-data payload,
+VMware provides the network/hostname customization. Both work simultaneously.
+
+---
+
 ## Debug Steps
 
 ### 1 — Verify the GC plugin is present
