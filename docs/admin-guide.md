@@ -69,6 +69,10 @@ to the login page.
 
 Navigate to `http://<host>:8000`. You are redirected to the login page.
 
+The **▶ DevOps Portal** logo in the top-left header is a link back to the main booking
+dashboard from any page. Each sub-page shows a breadcrumb suffix (e.g. `/ Users`,
+`/ Catalog`, `/ Profile`) so you always know where you are.
+
 Sign in with the seeded admin credentials (`admin` / `changeme` by default), then
 immediately create a new password:
 
