@@ -155,7 +155,7 @@ def test_provision_task_includes_user_data_in_config():
     apply_call_args = mock_run.call_args[0][0]
     # apply_call_args is a coroutine; check the config was built with user_data
     # by inspecting what was passed via the call to terraform.apply
-    assert mock_run.called
+    assert mock_run.called  # user_data set
 
 
 def test_provision_task_omits_user_data_when_empty():
@@ -183,4 +183,53 @@ def test_provision_task_omits_user_data_when_empty():
         from app.tasks.provision import provision_vm_task
         provision_vm_task.apply(args=[booking_id, image_id, hw_config_id])
 
-    assert mock_run.called
+    assert mock_run.called  # user_data empty
+
+
+# ── regression #97: multi-line user_data must not produce bare newlines ───────
+
+def test_hcl_escape_multiline_user_data():
+    from app.infrastructure.terraform.vcd_adapter import _hcl_escape
+
+    script = "#cloud-config\ndisable_root: false\nssh_pwauth: false"
+    escaped = _hcl_escape(script)
+
+    assert "\n" not in escaped
+    assert "\\n" in escaped
+    assert _hcl_escape('say "hi"') == 'say \\"hi\\"'
+    assert _hcl_escape("a\\b") == "a\\\\b"
+
+
+def test_write_workspace_multiline_initscript_no_bare_newlines(tmp_path, monkeypatch):
+    from app.infrastructure.terraform.vcd_adapter import TerraformVcdAdapter
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "TF_PG_CONN_STR", "postgresql://localhost/test")
+    monkeypatch.setattr(settings, "TF_MODULE_SOURCE", "./modules/vm")
+    monkeypatch.setattr(settings, "VCD_NETWORK_NAME", "test-net")
+    monkeypatch.setattr(settings, "VCD_URL", "https://vcd.example.com/api")
+    monkeypatch.setattr(settings, "VCD_ORG", "org")
+    monkeypatch.setattr(settings, "VCD_VDC", "vdc")
+    monkeypatch.setattr(settings, "VCD_ALLOW_UNVERIFIED_SSL", False)
+
+    adapter = TerraformVcdAdapter()
+    config = {
+        "name": "portal-abc12345",
+        "vapp_template_id": "urn:vcloud:vapptemplate:abc",
+        "cpus": 2,
+        "memory": 4096,
+        "disk_size": 26624,
+        "vm_password": "S3cr3t",
+        "user_data": "#cloud-config\ndisable_root: false\nssh_pwauth: false",
+    }
+    adapter._write_workspace(tmp_path, config)
+
+    tfvars = (tmp_path / "terraform.tfvars").read_text()
+    for line in tfvars.splitlines():
+        if "initscript" in line:
+            assert line.count('"') >= 2, "initscript value not properly quoted"
+            break
+    else:
+        pytest.fail("initscript not found in terraform.tfvars")
+
+    assert 'initscript                 = "#cloud-config\n' not in tfvars

@@ -15,6 +15,11 @@ class TerraformError(Exception):
     pass
 
 
+def _hcl_escape(s: str) -> str:
+    """Escape a string for use inside a double-quoted HCL string literal."""
+    return s.replace("\\", "\\\\").replace('"', '\\"').replace("\r\n", "\\n").replace("\n", "\\n").replace("\r", "")
+
+
 class TerraformVcdAdapter:
     """Provisions VMs on VMware Cloud Director via the terraform CLI."""
 
@@ -121,7 +126,7 @@ class TerraformVcdAdapter:
             '  allow_local_admin_password = true',
             '  auto_generate_password     = false',
             f'  admin_password             = "{config["vm_password"]}"',
-            f'  initscript                 = "{config.get("user_data", "")}"',
+            f'  initscript                 = "{_hcl_escape(config.get("user_data", ""))}"',
             '}',
         ]
         (workspace_dir / "terraform.tfvars").write_text("\n".join(tfvars_lines) + "\n")
