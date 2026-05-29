@@ -167,10 +167,17 @@ Each user is limited by four resource dimensions across all their concurrently a
 Defaults apply when no per-user quota row exists. A booking is rejected if adding its
 resources would exceed **any** single dimension.
 
-### Setting a per-user quota
+### Setting a per-user quota via the UI
+
+Navigate to **Admin → Users**. Each row shows the user's current quota in the
+**Quota** column (`N CPUs / N GB RAM / N GB HDD`). Click **Quota** on any row to open an
+inline edit form pre-populated with the current limits. Update the fields and click **Save**;
+the table refreshes immediately with the new values. Click **Cancel** to discard changes.
+
+### Setting a per-user quota via the API
 
 ```bash
-# Override all four dimensions for a user
+# Override all dimensions for a user
 curl -s -X PATCH http://localhost:8000/api/users/<user-id>/quota \
      -H "Content-Type: application/json" \
      -H "Authorization: Bearer dp_<api_key>" \

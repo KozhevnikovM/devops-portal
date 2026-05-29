@@ -201,6 +201,42 @@ curl -s -X PATCH http://localhost:8000/api/users/<user-id>/quota \
 
 ---
 
+### `GET /admin/users/table`
+
+Returns the user table partial (no editing state). Used internally by the Cancel button in
+the quota inline edit form.
+
+**Auth:** admin only (browser session). **Response:** `200 text/html`.
+
+---
+
+### `GET /admin/users/{user_id}/quota/edit`
+
+Returns the user table partial with the quota inline edit form open for the specified user.
+
+**Auth:** admin only (browser session). **Response:** `200 text/html`.
+
+---
+
+### `PATCH /admin/users/{user_id}/quota`
+
+HTML form handler for the quota inline editor. Accepts form-encoded fields and returns the
+updated user table partial.
+
+**Auth:** admin only (browser session).
+
+**Form fields** (all required when submitted from the UI):
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `max_cpus` | integer ≥ 1 | Maximum CPU cores |
+| `max_memory_gb` | integer ≥ 1 | Maximum RAM in GB |
+| `max_hdd_gb` | integer ≥ 1 | Maximum HDD storage in GB |
+
+**Response:** `200 text/html` — updated `#user-table` partial.
+
+---
+
 ## User Profile
 
 ### `GET /profile`
