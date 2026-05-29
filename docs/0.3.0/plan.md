@@ -10,13 +10,15 @@ The remaining friction is operational: admins must use `curl` to manage the VM c
 quotas, there is no safety mechanism for permanent bookings, and users have no self-service
 password recovery path.
 
-v0.3.0 adds five self-contained features:
+v0.3.0 adds seven self-contained features:
 
 1. **Admin catalog UI** — web UI to create/edit/deactivate VM images and hardware configs
 2. **Quota management UI** — inline quota editor on the admin users page
 3. **Keep-alive for permanent bookings** — periodic confirmation or auto-release
 4. **User email** — email address field on user accounts (admin-set + self-editable)
 5. **Password reset** — "Forgot password" flow via email link (depends on #4)
+6. **Image user-data** — store cloud-init user-data per image; passed to VM at provisioning (#89)
+7. **Navigation home link** — clickable header link returning to the main page (#90)
 
 ---
 
@@ -290,12 +292,91 @@ dev/test environments — token logged at DEBUG level).
 
 ---
 
+## Feature 6 — Image User-Data (#89)
+
+### Goal
+Allow admins to attach a cloud-init `user_data` script to each VM image. When a VM is
+provisioned from that image, the user-data is passed to the Terraform module so the VM
+bootstraps with the correct configuration automatically.
+
+### DB change
+
+Add `user_data TEXT nullable` to `vm_images`. Existing images get `NULL` (no user-data);
+the Terraform module omits the field when it is empty.
+
+New Alembic migration: `0009_image_user_data.py`.
+
+### Admin catalog UI change
+
+- **Create image form** — add a collapsible `<textarea>` labelled "User-data (cloud-init)"
+  below the `vapp_template_id` field. Optional; defaults to empty.
+- **Edit image inline form** — same textarea pre-populated with current value.
+- Both forms POST/PATCH the `user_data` field alongside existing fields.
+
+### Provisioning change
+
+`provision.py`: add `"user_data": image.user_data or ""` to the `config` dict.
+
+`vcd_adapter._write_workspace`: when `config["user_data"]` is non-empty, add
+`user_data = var.user_data` to the module call, declare `variable "user_data" { type = string }`,
+and write `user_data = "<value>"` to `terraform.tfvars`. When empty, omit the variable
+entirely so existing workspaces are unaffected.
+
+### Modified files
+
+| File | Change |
+|------|--------|
+| `app/domain/entities.py` | Add `user_data: str \| None` to `VMImage` |
+| `app/infrastructure/database/models.py` | Add `user_data` column to `VMImageModel` |
+| `app/infrastructure/repositories/image_repo.py` | Pass `user_data` in `_to_entity`, `create`, `update` |
+| `app/tasks/provision.py` | Add `user_data` to config dict |
+| `app/infrastructure/terraform/vcd_adapter.py` | Conditionally emit `user_data` variable + tfvar |
+| `app/presentation/routes/admin.py` | Accept `user_data` form field in create + patch routes |
+| `app/presentation/templates/partials/image_table.html` | user-data textarea in create + edit forms |
+| `alembic/versions/0009_image_user_data.py` | Migration |
+| `docs/admin-guide.md` | Document user-data field |
+
+### Tests
+
+- Create image with user-data → stored correctly
+- Edit image to clear user-data → NULL persisted
+- Provision task includes user-data in config when set; omits when empty
+
+---
+
+## Feature 7 — Navigation Home Link (#90)
+
+### Goal
+Add a clickable element in the top-left of every page that returns the user to the main
+dashboard (`/`). Also serves as lightweight breadcrumb context on sub-pages.
+
+### UI change (`app/presentation/templates/base.html`)
+
+Wrap the existing portal name/logo in the sidebar header with `<a href="/">`. On sub-pages
+(e.g. `/admin/catalog`, `/admin/users`, `/profile`) display a small breadcrumb line below
+the title showing the current section name, so users always know where they are.
+
+No new routes, no DB changes, no migrations needed.
+
+### Modified files
+
+| File | Change |
+|------|--------|
+| `app/presentation/templates/base.html` | Wrap logo/title in `<a href="/">`; add per-page breadcrumb |
+
+### Tests
+
+None required — purely cosmetic template change; existing route tests cover the rendered HTML.
+
+---
+
 ## Migration Plan
 
 | Migration | Contents |
 |-----------|----------|
 | `0006_keepalive.py` | Add `confirmed_at TIMESTAMPTZ` to `bookings`; backfill with `created_at` |
 | `0007_user_email.py` | Add `email VARCHAR(256) UNIQUE nullable` to `users` |
+| `0009_image_user_data.py` | Add `user_data TEXT nullable` to `vm_images` |
 
 ---
 
@@ -312,9 +393,11 @@ dev/test environments — token logged at DEBUG level).
 - `app/presentation/templates/reset_password.html`
 - `alembic/versions/0006_keepalive.py`
 - `alembic/versions/0007_user_email.py`
+- `alembic/versions/0009_image_user_data.py`
 - `tests/test_keepalive.py`
 - `tests/test_user_email.py`
 - `tests/test_password_reset.py`
+- `tests/test_image_user_data.py`
 
 ### Modified files
 - `app/presentation/routes/auth.py` — quota HTML route; email in user create/profile; password reset routes
@@ -345,6 +428,8 @@ dev/test environments — token logged at DEBUG level).
 3. `feature/62/permanent-keepalive` — DB migration + beat tasks + UI
 4. `feature/63/user-email` — DB migration; admin form + profile field
 5. `feature/64/password-reset` — depends on #63 (users need email); SMTP config + reset flow
+6. `feature/89/image-user-data` — DB migration; catalog UI textarea; provisioning pass-through
+7. `feature/90/nav-home-link` — template-only; no deps; can ship any time
 
 ---
 
@@ -359,4 +444,6 @@ dev/test environments — token logged at DEBUG level).
 7. Create a user with email; user updates email from profile; duplicate email rejected
 8. Use "Forgot password?" → receive reset email → set new password → login succeeds
 9. Reuse a reset token → rejected (single-use)
-10. `pytest tests/` — all tests pass
+10. Create an image with user-data → provision a VM → user-data applied at boot
+11. Click portal logo from `/admin/catalog` → returns to `/`; breadcrumb shows "Catalog"
+12. `pytest tests/` — all tests pass
