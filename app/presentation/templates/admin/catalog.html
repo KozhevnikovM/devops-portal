@@ -44,6 +44,17 @@
                         placeholder="urn:vcloud:vapptemplate:..."
                     >
                 </div>
+                <div class="flex flex-col gap-1.5 w-full">
+                    <label class="text-xs text-gray-500" for="new-image-userdata">User-data (cloud-init, optional)</label>
+                    <textarea
+                        id="new-image-userdata"
+                        name="user_data"
+                        rows="3"
+                        autocomplete="off"
+                        class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-green-600 font-mono resize-y"
+                        placeholder="#cloud-config&#10;..."
+                    ></textarea>
+                </div>
                 <div class="flex flex-col gap-1.5">
                     <div id="image-create-error" class="text-xs h-4"></div>
                     <button

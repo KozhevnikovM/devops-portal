@@ -15,6 +15,7 @@ def _to_entity(m: VMImageModel) -> VMImage:
         vapp_template_id=m.vapp_template_id,
         is_active=m.is_active,
         created_at=m.created_at,
+        user_data=m.user_data,
     )
 
 
@@ -39,8 +40,8 @@ class ImageRepository:
             raise ValueError(f"VM image {image_id} not found or inactive")
         return _to_entity(model)
 
-    async def create(self, session: AsyncSession, name: str, vapp_template_id: str) -> VMImage:
-        model = VMImageModel(id=uuid4(), name=name, vapp_template_id=vapp_template_id)
+    async def create(self, session: AsyncSession, name: str, vapp_template_id: str, user_data: str | None = None) -> VMImage:
+        model = VMImageModel(id=uuid4(), name=name, vapp_template_id=vapp_template_id, user_data=user_data or None)
         session.add(model)
         await session.commit()
         await session.refresh(model)

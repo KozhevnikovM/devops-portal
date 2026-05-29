@@ -34,6 +34,7 @@ class VMImage:
     vapp_template_id: str
     is_active: bool
     created_at: datetime
+    user_data: str | None = None
 
 
 @dataclass

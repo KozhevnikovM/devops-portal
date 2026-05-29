@@ -33,6 +33,12 @@
                             required
                             class="bg-gray-900 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-100 focus:outline-none focus:border-green-600 flex-1 min-w-48 font-mono"
                         >
+                        <textarea
+                            name="user_data"
+                            rows="2"
+                            class="bg-gray-900 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-full font-mono resize-y"
+                            placeholder="User-data (cloud-init, optional)"
+                        >{{ image.user_data or "" }}</textarea>
                         <button type="submit" class="text-xs px-3 py-1.5 rounded bg-green-700 text-green-100 hover:bg-green-600 transition-colors">Save</button>
                         <button type="button"
                             hx-get="/admin/catalog/images/table"

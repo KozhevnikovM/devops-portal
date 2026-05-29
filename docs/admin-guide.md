@@ -306,8 +306,10 @@ profiles (`small`, `medium`, `large`).
 
 **VM Images panel:**
 
-- Click **Edit** on a row to update the name or vApp Template ID inline.
-- Click **Add** to create a new image.
+- Click **Edit** on a row to update the name, vApp Template ID, or user-data inline.
+- Click **Add** to create a new image. The **User-data (cloud-init)** textarea is optional;
+  leave it blank for images that need no bootstrapping script. When set, the value is passed
+  to the VM's `initscript` customization field at provisioning time.
 - Click **Deactivate** to hide an image from the booking form. Existing bookings
   referencing the image are unaffected.
 - On an inactive image: click **Activate** to restore it, or **Delete** to remove it

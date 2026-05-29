@@ -54,11 +54,12 @@ async def admin_create_image(
     request: Request,
     name: str = Form(...),
     vapp_template_id: str = Form(...),
+    user_data: str = Form(""),
     session: AsyncSession = Depends(get_async_session),
     current_user: User = Depends(require_admin),
 ):
     try:
-        await _image_repo.create(session, name, vapp_template_id)
+        await _image_repo.create(session, name, vapp_template_id, user_data=user_data or None)
     except IntegrityError:
         await session.rollback()
         error_html = f'<span class="text-red-400 text-xs">Image "{name}" already exists.</span>'
@@ -96,11 +97,12 @@ async def admin_update_image(
     image_id: UUID,
     name: str = Form(...),
     vapp_template_id: str = Form(...),
+    user_data: str = Form(""),
     session: AsyncSession = Depends(get_async_session),
     current_user: User = Depends(require_admin),
 ):
     try:
-        await _image_repo.update(session, image_id, {"name": name, "vapp_template_id": vapp_template_id})
+        await _image_repo.update(session, image_id, {"name": name, "vapp_template_id": vapp_template_id, "user_data": user_data or None})
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     images = await _image_repo.list_all(session)
