@@ -269,12 +269,14 @@ async def admin_set_quota(
     user_id: UUID,
     max_cpus: int = Form(...),
     max_memory_gb: int = Form(...),
+    max_ssd_gb: int = Form(...),
     max_hdd_gb: int = Form(...),
     session: AsyncSession = Depends(get_async_session),
     current_user: User = Depends(require_admin),
 ):
     await _quota_repo.set(session, user_id=user_id, max_cpus=max_cpus,
-                          max_memory_gb=max_memory_gb, max_hdd_gb=max_hdd_gb)
+                          max_memory_gb=max_memory_gb, max_ssd_gb=max_ssd_gb,
+                          max_hdd_gb=max_hdd_gb)
     return await _user_table(request, session, current_user)
 
 
@@ -321,6 +323,7 @@ async def profile_save(
 class QuotaUpdate(BaseModel):
     max_cpus: int | None = None
     max_memory_gb: int | None = None
+    max_ssd_gb: int | None = None
     max_hdd_gb: int | None = None
 
 
@@ -337,12 +340,14 @@ async def set_user_quota(
         user_id=user_id,
         max_cpus=      body.max_cpus      if body.max_cpus      is not None else current["max_cpus"],
         max_memory_gb= body.max_memory_gb if body.max_memory_gb is not None else current["max_memory_gb"],
+        max_ssd_gb=    body.max_ssd_gb    if body.max_ssd_gb    is not None else current["max_ssd_gb"],
         max_hdd_gb=    body.max_hdd_gb    if body.max_hdd_gb    is not None else current["max_hdd_gb"],
     )
     return JSONResponse({
         "user_id":       str(user_id),
         "max_cpus":      quota.max_cpus,
         "max_memory_gb": quota.max_memory_gb,
+        "max_ssd_gb":    quota.max_ssd_gb,
         "max_hdd_gb":    quota.max_hdd_gb,
     })
 

@@ -94,5 +94,6 @@ class Quota:
     user_id: UUID
     max_cpus: int
     max_memory_gb: int
+    max_ssd_gb: int
     max_hdd_gb: int
     created_at: datetime

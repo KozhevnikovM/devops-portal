@@ -175,7 +175,7 @@ current value (falling back to the global default if no per-user row exists yet)
 {
   "max_cpus": 32,
   "max_memory_gb": 64,
-
+  "max_ssd_gb": 500,
   "max_hdd_gb": 1000
 }
 ```
@@ -186,7 +186,7 @@ current value (falling back to the global default if no per-user row exists yet)
   "user_id": "uuid",
   "max_cpus": 32,
   "max_memory_gb": 64,
-
+  "max_ssd_gb": 500,
   "max_hdd_gb": 1000
 }
 ```
@@ -231,6 +231,7 @@ updated user table partial.
 |-------|------|-------------|
 | `max_cpus` | integer ≥ 1 | Maximum CPU cores |
 | `max_memory_gb` | integer ≥ 1 | Maximum RAM in GB |
+| `max_ssd_gb` | integer ≥ 1 | Maximum SSD storage in GB |
 | `max_hdd_gb` | integer ≥ 1 | Maximum HDD storage in GB |
 
 **Response:** `200 text/html` — updated `#user-table` partial.

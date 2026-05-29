@@ -25,9 +25,28 @@ def _to_entity(m: QuotaModel) -> Quota:
         user_id=m.user_id,
         max_cpus=m.max_cpus,
         max_memory_gb=m.max_memory_gb,
+        max_ssd_gb=m.max_ssd_gb,
         max_hdd_gb=m.max_hdd_gb,
         created_at=m.created_at,
     )
+
+
+def _default_limits() -> dict:
+    return {
+        "max_cpus":      settings.DEFAULT_QUOTA_CPUS,
+        "max_memory_gb": settings.DEFAULT_QUOTA_MEMORY_GB,
+        "max_ssd_gb":    settings.DEFAULT_QUOTA_SSD_GB,
+        "max_hdd_gb":    settings.DEFAULT_QUOTA_HDD_GB,
+    }
+
+
+def _model_to_limits(m: QuotaModel) -> dict:
+    return {
+        "max_cpus":      m.max_cpus,
+        "max_memory_gb": m.max_memory_gb,
+        "max_ssd_gb":    m.max_ssd_gb,
+        "max_hdd_gb":    m.max_hdd_gb,
+    }
 
 
 class QuotaRepository:
@@ -46,6 +65,7 @@ class QuotaRepository:
         return {
             "cpus":      int(row.cpus),
             "memory_gb": math.ceil(int(row.memory_mb) / 1024),
+            "ssd_gb":    0,
             "hdd_gb":    math.ceil(int(row.hdd_mb)    / 1024),
         }
 
@@ -54,17 +74,7 @@ class QuotaRepository:
             select(QuotaModel).where(QuotaModel.user_id == UUID(user_id))
         )
         model = result.scalar_one_or_none()
-        if model is None:
-            return {
-                "max_cpus":      settings.DEFAULT_QUOTA_CPUS,
-                "max_memory_gb": settings.DEFAULT_QUOTA_MEMORY_GB,
-                "max_hdd_gb":    settings.DEFAULT_QUOTA_HDD_GB,
-            }
-        return {
-            "max_cpus":      model.max_cpus,
-            "max_memory_gb": model.max_memory_gb,
-            "max_hdd_gb":    model.max_hdd_gb,
-        }
+        return _model_to_limits(model) if model else _default_limits()
 
     async def get_limits_for_update(self, session: AsyncSession, user_id: str) -> dict:
         result = await session.execute(
@@ -73,17 +83,7 @@ class QuotaRepository:
             .with_for_update()
         )
         model = result.scalar_one_or_none()
-        if model is None:
-            return {
-                "max_cpus":      settings.DEFAULT_QUOTA_CPUS,
-                "max_memory_gb": settings.DEFAULT_QUOTA_MEMORY_GB,
-                "max_hdd_gb":    settings.DEFAULT_QUOTA_HDD_GB,
-            }
-        return {
-            "max_cpus":      model.max_cpus,
-            "max_memory_gb": model.max_memory_gb,
-            "max_hdd_gb":    model.max_hdd_gb,
-        }
+        return _model_to_limits(model) if model else _default_limits()
 
     async def set(
         self,
@@ -91,6 +91,7 @@ class QuotaRepository:
         user_id: UUID,
         max_cpus: int,
         max_memory_gb: int,
+        max_ssd_gb: int,
         max_hdd_gb: int,
     ) -> Quota:
         stmt = (
@@ -100,6 +101,7 @@ class QuotaRepository:
                 user_id=user_id,
                 max_cpus=max_cpus,
                 max_memory_gb=max_memory_gb,
+                max_ssd_gb=max_ssd_gb,
                 max_hdd_gb=max_hdd_gb,
             )
             .on_conflict_do_update(
@@ -107,6 +109,7 @@ class QuotaRepository:
                 set_={
                     "max_cpus":      max_cpus,
                     "max_memory_gb": max_memory_gb,
+                    "max_ssd_gb":    max_ssd_gb,
                     "max_hdd_gb":    max_hdd_gb,
                 },
             )

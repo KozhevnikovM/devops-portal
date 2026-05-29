@@ -51,6 +51,17 @@
                             >
                         </div>
                         <div class="flex flex-col gap-1">
+                            <label class="text-xs text-gray-500">Max SSD (GB)</label>
+                            <input
+                                name="max_ssd_gb"
+                                type="number"
+                                min="1"
+                                value="{{ user_quota.get('max_ssd_gb', 500) }}"
+                                required
+                                class="bg-gray-900 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-24"
+                            >
+                        </div>
+                        <div class="flex flex-col gap-1">
                             <label class="text-xs text-gray-500">Max HDD (GB)</label>
                             <input
                                 name="max_hdd_gb"
@@ -92,7 +103,7 @@
                 </td>
                 <td class="px-4 py-3 text-gray-400 text-xs">
                     {% if user_quota %}
-                    {{ user_quota.max_cpus }} CPUs / {{ user_quota.max_memory_gb }} GB RAM / {{ user_quota.max_hdd_gb }} GB HDD
+                    {{ user_quota.max_cpus }} CPUs / {{ user_quota.max_memory_gb }} GB RAM / {{ user_quota.max_ssd_gb }} GB SSD / {{ user_quota.max_hdd_gb }} GB HDD
                     {% else %}
                     —
                     {% endif %}
