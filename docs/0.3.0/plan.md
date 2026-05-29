@@ -84,7 +84,7 @@ These are HTML-first wrappers around the existing JSON API logic in `api.py`. Th
 
 ---
 
-## Feature 2 — Quota Management UI (#61)
+## Feature 2 — Quota Management UI (#91)
 
 ### Goal
 Allow admins to view and set per-user resource quotas directly from the `/admin/users` page
@@ -424,7 +424,7 @@ None required — purely cosmetic template change; existing route tests cover th
 ## Delivery Order
 
 1. `feature/60/admin-catalog-ui` — no deps; standalone admin page
-2. `feature/61/quota-management-ui` — no deps; extends existing admin/users page
+2. `feature/91/quota-management-ui` — no deps; extends existing admin/users page
 3. `feature/62/permanent-keepalive` — DB migration + beat tasks + UI
 4. `feature/63/user-email` — DB migration; admin form + profile field
 5. `feature/64/password-reset` — depends on #63 (users need email); SMTP config + reset flow

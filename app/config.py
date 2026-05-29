@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     # Per-user resource quotas (defaults applied when no per-user row exists)
     DEFAULT_QUOTA_CPUS: int = 16
     DEFAULT_QUOTA_MEMORY_GB: int = 32
+    DEFAULT_QUOTA_SSD_GB: int = 500
     DEFAULT_QUOTA_HDD_GB: int = 500
 
     # Celery provision task

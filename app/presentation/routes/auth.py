@@ -165,6 +165,23 @@ async def revoke_api_key(
 
 # ── Admin UI ─────────────────────────────────────────────────────────────────
 
+async def _user_table(request, session, current_user, editing_quota_user_id=None):
+    users = await _user_repo.list_all(session)
+    quotas = {
+        str(u.id): await _quota_repo.get_limits(session, str(u.id))
+        for u in users
+    }
+    return templates.TemplateResponse(
+        request, "partials/user_table.html",
+        {
+            "users": users,
+            "quotas": quotas,
+            "current_user": current_user,
+            "editing_quota_user_id": editing_quota_user_id,
+        },
+    )
+
+
 @router.get("/admin/users", response_class=HTMLResponse)
 async def admin_users_page(
     request: Request,
@@ -172,9 +189,13 @@ async def admin_users_page(
     current_user: User = Depends(require_admin),
 ):
     users = await _user_repo.list_all(session)
+    quotas = {
+        str(u.id): await _quota_repo.get_limits(session, str(u.id))
+        for u in users
+    }
     return templates.TemplateResponse(
         request, "admin/users.html",
-        {"users": users, "current_user": current_user},
+        {"users": users, "quotas": quotas, "current_user": current_user},
     )
 
 
@@ -197,11 +218,7 @@ async def admin_create_user(
             content=error_html,
             headers={"HX-Retarget": "#user-create-error", "HX-Reswap": "innerHTML"},
         )
-    users = await _user_repo.list_all(session)
-    return templates.TemplateResponse(
-        request, "partials/user_table.html",
-        {"users": users, "current_user": current_user},
-    )
+    return await _user_table(request, session, current_user)
 
 
 @router.delete("/admin/users/{user_id}", response_class=HTMLResponse)
@@ -224,12 +241,43 @@ async def admin_delete_user(
         raise HTTPException(status_code=409, detail="Cannot delete the last admin account")
 
     await _user_repo.delete(session, user_id)
+    return await _user_table(request, session, current_user)
 
-    users = await _user_repo.list_all(session)
-    return templates.TemplateResponse(
-        request, "partials/user_table.html",
-        {"users": users, "current_user": current_user},
-    )
+
+@router.get("/admin/users/table", response_class=HTMLResponse)
+async def admin_users_table(
+    request: Request,
+    session: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(require_admin),
+):
+    return await _user_table(request, session, current_user)
+
+
+@router.get("/admin/users/{user_id}/quota/edit", response_class=HTMLResponse)
+async def admin_quota_edit_form(
+    request: Request,
+    user_id: UUID,
+    session: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(require_admin),
+):
+    return await _user_table(request, session, current_user, editing_quota_user_id=str(user_id))
+
+
+@router.patch("/admin/users/{user_id}/quota", response_class=HTMLResponse)
+async def admin_set_quota(
+    request: Request,
+    user_id: UUID,
+    max_cpus: int = Form(...),
+    max_memory_gb: int = Form(...),
+    max_ssd_gb: int = Form(...),
+    max_hdd_gb: int = Form(...),
+    session: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(require_admin),
+):
+    await _quota_repo.set(session, user_id=user_id, max_cpus=max_cpus,
+                          max_memory_gb=max_memory_gb, max_ssd_gb=max_ssd_gb,
+                          max_hdd_gb=max_hdd_gb)
+    return await _user_table(request, session, current_user)
 
 
 # ── User profile ──────────────────────────────────────────────────────────────
@@ -275,6 +323,7 @@ async def profile_save(
 class QuotaUpdate(BaseModel):
     max_cpus: int | None = None
     max_memory_gb: int | None = None
+    max_ssd_gb: int | None = None
     max_hdd_gb: int | None = None
 
 
@@ -291,12 +340,14 @@ async def set_user_quota(
         user_id=user_id,
         max_cpus=      body.max_cpus      if body.max_cpus      is not None else current["max_cpus"],
         max_memory_gb= body.max_memory_gb if body.max_memory_gb is not None else current["max_memory_gb"],
+        max_ssd_gb=    body.max_ssd_gb    if body.max_ssd_gb    is not None else current["max_ssd_gb"],
         max_hdd_gb=    body.max_hdd_gb    if body.max_hdd_gb    is not None else current["max_hdd_gb"],
     )
     return JSONResponse({
         "user_id":       str(user_id),
         "max_cpus":      quota.max_cpus,
         "max_memory_gb": quota.max_memory_gb,
+        "max_ssd_gb":    quota.max_ssd_gb,
         "max_hdd_gb":    quota.max_hdd_gb,
     })
 

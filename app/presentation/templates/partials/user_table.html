@@ -8,6 +8,7 @@
                 <th class="px-4 py-2 text-xs text-gray-500 font-normal uppercase tracking-widest">Username</th>
                 <th class="px-4 py-2 text-xs text-gray-500 font-normal uppercase tracking-widest">Role</th>
                 <th class="px-4 py-2 text-xs text-gray-500 font-normal uppercase tracking-widest">Status</th>
+                <th class="px-4 py-2 text-xs text-gray-500 font-normal uppercase tracking-widest">Quota</th>
                 <th class="px-4 py-2 text-xs text-gray-500 font-normal uppercase tracking-widest">Created</th>
                 <th class="px-4 py-2 text-xs text-gray-500 font-normal uppercase tracking-widest"></th>
             </tr>
@@ -16,6 +17,74 @@
             {% for user in users %}
             {% set is_self = current_user and user.id == current_user.id %}
             {% set is_last_admin = user.role == 'admin' and admin_count <= 1 %}
+            {% set user_quota = quotas[user.id | string] if quotas and (user.id | string) in quotas else {} %}
+            {% if editing_quota_user_id and (user.id | string) == editing_quota_user_id %}
+            <tr class="border-b border-gray-800 last:border-0 bg-gray-800/60">
+                <td colspan="6" class="px-4 py-3">
+                    <form
+                        hx-patch="/admin/users/{{ user.id }}/quota"
+                        hx-target="#user-table"
+                        hx-swap="outerHTML"
+                        class="flex items-center gap-3 flex-wrap"
+                    >
+                        <span class="text-gray-300 text-sm mr-2">{{ user.username }}</span>
+                        <div class="flex flex-col gap-1">
+                            <label class="text-xs text-gray-500">Max CPUs</label>
+                            <input
+                                name="max_cpus"
+                                type="number"
+                                min="1"
+                                value="{{ user_quota.get('max_cpus', 4) }}"
+                                required
+                                class="bg-gray-900 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-20"
+                            >
+                        </div>
+                        <div class="flex flex-col gap-1">
+                            <label class="text-xs text-gray-500">Max RAM (GB)</label>
+                            <input
+                                name="max_memory_gb"
+                                type="number"
+                                min="1"
+                                value="{{ user_quota.get('max_memory_gb', 16) }}"
+                                required
+                                class="bg-gray-900 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-24"
+                            >
+                        </div>
+                        <div class="flex flex-col gap-1">
+                            <label class="text-xs text-gray-500">Max SSD (GB)</label>
+                            <input
+                                name="max_ssd_gb"
+                                type="number"
+                                min="1"
+                                value="{{ user_quota.get('max_ssd_gb', 500) }}"
+                                required
+                                class="bg-gray-900 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-24"
+                            >
+                        </div>
+                        <div class="flex flex-col gap-1">
+                            <label class="text-xs text-gray-500">Max HDD (GB)</label>
+                            <input
+                                name="max_hdd_gb"
+                                type="number"
+                                min="1"
+                                value="{{ user_quota.get('max_hdd_gb', 100) }}"
+                                required
+                                class="bg-gray-900 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-24"
+                            >
+                        </div>
+                        <div class="flex items-end gap-2 pb-0.5">
+                            <button type="submit" class="text-xs px-3 py-1.5 rounded bg-green-700 text-green-100 hover:bg-green-600 transition-colors">Save</button>
+                            <button type="button"
+                                hx-get="/admin/users/table"
+                                hx-target="#user-table"
+                                hx-swap="outerHTML"
+                                class="text-xs px-3 py-1.5 rounded bg-gray-700 text-gray-300 border border-gray-600 hover:bg-gray-600 transition-colors"
+                            >Cancel</button>
+                        </div>
+                    </form>
+                </td>
+            </tr>
+            {% else %}
             <tr class="border-b border-gray-800 last:border-0 hover:bg-gray-800/40 transition-colors">
                 <td class="px-4 py-3 text-gray-200">{{ user.username }}</td>
                 <td class="px-4 py-3">
@@ -32,23 +101,37 @@
                     <span class="text-xs text-gray-500">inactive</span>
                     {% endif %}
                 </td>
-                <td class="px-4 py-3 text-gray-500 text-xs">{{ user.created_at.strftime('%Y-%m-%d') }}</td>
-                <td class="px-4 py-3">
-                    {% if not is_self and not is_last_admin %}
-                    <button
-                        class="text-xs px-2 py-1 rounded bg-red-900 text-red-300 border border-red-700 hover:bg-red-800 transition-colors"
-                        hx-delete="/admin/users/{{ user.id }}"
-                        hx-target="#user-table"
-                        hx-swap="outerHTML"
-                        hx-confirm="Delete user '{{ user.username }}'? This cannot be undone."
-                    >
-                        Delete
-                    </button>
+                <td class="px-4 py-3 text-gray-400 text-xs">
+                    {% if user_quota %}
+                    {{ user_quota.max_cpus }} CPUs / {{ user_quota.max_memory_gb }} GB RAM / {{ user_quota.max_ssd_gb }} GB SSD / {{ user_quota.max_hdd_gb }} GB HDD
                     {% else %}
-                    <span class="text-gray-700">—</span>
+                    —
                     {% endif %}
                 </td>
+                <td class="px-4 py-3 text-gray-500 text-xs">{{ user.created_at.strftime('%Y-%m-%d') }}</td>
+                <td class="px-4 py-3">
+                    <div class="flex items-center gap-2">
+                        <button
+                            hx-get="/admin/users/{{ user.id }}/quota/edit"
+                            hx-target="#user-table"
+                            hx-swap="outerHTML"
+                            class="text-xs px-2 py-1 rounded bg-gray-700 text-gray-300 border border-gray-600 hover:bg-gray-600 transition-colors"
+                        >Quota</button>
+                        {% if not is_self and not is_last_admin %}
+                        <button
+                            class="text-xs px-2 py-1 rounded bg-red-900 text-red-300 border border-red-700 hover:bg-red-800 transition-colors"
+                            hx-delete="/admin/users/{{ user.id }}"
+                            hx-target="#user-table"
+                            hx-swap="outerHTML"
+                            hx-confirm="Delete user '{{ user.username }}'? This cannot be undone."
+                        >
+                            Delete
+                        </button>
+                        {% endif %}
+                    </div>
+                </td>
             </tr>
+            {% endif %}
             {% endfor %}
         </tbody>
     </table>
