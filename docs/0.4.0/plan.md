@@ -6,12 +6,13 @@ v0.3.0 delivers an admin catalog UI, quota management UI, and nav improvements.
 The provisioning pipeline works end-to-end but gives users no visibility into what
 is happening during PROVISIONING or RELEASING.
 
-v0.4.0 focuses on four features:
+v0.4.0 focuses on five features:
 
 1. **Provisioning & teardown progress (#64)** — live status messages during PROVISIONING/RELEASING
 2. **Admin force-delete any booking (#101)** — admins can delete in-flight bookings (PENDING, PROVISIONING, RETRY)
 3. **Booking filter (#102)** — default view shows only own bookings; toggle to see all
 4. **Hardware config UI in GB (#104)** — admin inputs RAM and HDD in GB; stored as MB internally
+5. **User default image & hardware (#105)** — per-user preferred defaults pre-selected in the booking form
 
 ---
 
@@ -256,11 +257,88 @@ ssd_mb    = ssd_gb    * 1024  # if applicable
 
 ---
 
+## Feature 5 — User Default Image & Hardware (#105)
+
+### Goal
+
+Allow users to save a preferred image and hardware config. The booking form
+pre-selects these values so repeat bookings require fewer clicks.
+
+### DB change
+
+Add two nullable FK columns to `users`:
+
+```
+default_image_id    UUID nullable FK → vm_images.id
+default_hw_config_id UUID nullable FK → hw_configs.id
+```
+
+`NULL` means no preference set — the booking form falls back to the first active option.
+
+New Alembic migration: `0011_user_defaults.py`.
+
+### Route changes
+
+`app/presentation/routes/auth.py` (profile routes):
+- `GET /profile` — already renders profile page; pass active images and hw_configs so the
+  preference selects can be populated
+- `PATCH /profile/defaults` — accepts `default_image_id` and `default_hw_config_id` form
+  fields; updates the user record; returns updated profile section partial
+
+### Booking form change
+
+`app/presentation/templates/partials/booking_form.html` — mark the user's default options
+as `selected`:
+
+```html
+<option value="{{ img.id }}"
+    {% if img.id == current_user.default_image_id %}selected{% endif %}>
+    {{ img.name }}
+</option>
+```
+
+Same for hardware config.
+
+### Profile page change
+
+`app/presentation/templates/profile.html` — add a "Booking defaults" section with two
+`<select>` dropdowns (image, hardware) and a Save button:
+
+```
+Booking defaults
+  Image    [ Ubuntu 22.04 ▾ ]
+  Hardware [ medium         ▾ ]
+  [ Save defaults ]
+```
+
+`hx-patch="/profile/defaults"`, `hx-target` swaps just the defaults section on success.
+
+### Modified files
+
+| File | Change |
+|------|--------|
+| `app/domain/entities.py` | Add `default_image_id: UUID \| None`, `default_hw_config_id: UUID \| None` to `User` |
+| `app/infrastructure/database/models.py` | Add two nullable FK columns to `UserModel` |
+| `app/infrastructure/repositories/user_repo.py` | Include new fields in `_to_entity`; add `set_defaults()` |
+| `app/presentation/routes/auth.py` | Pass images/hw_configs to profile; add `PATCH /profile/defaults` |
+| `app/presentation/templates/profile.html` | Booking defaults section |
+| `app/presentation/templates/partials/booking_form.html` | Pre-select default image and hw_config |
+| `alembic/versions/0011_user_defaults.py` | Migration |
+
+### Tests
+
+- `PATCH /profile/defaults` saves both fields; `GET /profile` reflects them
+- Booking form renders with correct `selected` attribute for user defaults
+- No default set → first active option rendered without `selected`
+
+---
+
 ## Migration Plan
 
 | Migration | Contents |
 |-----------|----------|
 | `0010_booking_status_message.py` | Add `status_message VARCHAR(128) nullable` to `bookings` |
+| `0011_user_defaults.py` | Add `default_image_id`, `default_hw_config_id` nullable FKs to `users` |
 
 > Note: if `feature/89/image-user-data` merges before v0.4.0 starts, migration numbers shift up by one.
 
@@ -274,6 +352,8 @@ ssd_mb    = ssd_gb    * 1024  # if applicable
 - `tests/test_admin_force_delete.py`
 - `tests/test_booking_filter.py`
 - `tests/test_hw_config_gb_input.py`
+- `tests/test_user_defaults.py`
+- `alembic/versions/0011_user_defaults.py`
 
 ### Modified files
 - `app/domain/entities.py` — `status_message` on `Booking`
@@ -287,6 +367,12 @@ ssd_mb    = ssd_gb    * 1024  # if applicable
 - `app/presentation/routes/admin.py` — GB → MB conversion for hardware config
 - `app/presentation/templates/admin/catalog.html` — GB labels/fields
 - `app/presentation/templates/partials/hw_config_table.html` — GB labels/fields
+- `app/domain/entities.py` — `default_image_id`, `default_hw_config_id` on `User`
+- `app/infrastructure/database/models.py` — two FK columns on `UserModel`
+- `app/infrastructure/repositories/user_repo.py` — `set_defaults()` + `_to_entity`
+- `app/presentation/routes/auth.py` — `PATCH /profile/defaults`
+- `app/presentation/templates/profile.html` — booking defaults section
+- `app/presentation/templates/partials/booking_form.html` — pre-select defaults
 
 ---
 
@@ -296,6 +382,7 @@ ssd_mb    = ssd_gb    * 1024  # if applicable
 2. `feature/101/admin-force-delete` — no deps; two-file change
 3. `feature/102/booking-filter` — no deps; no migration
 4. `feature/104/hw-config-gb-input` — no deps; no migration
+5. `feature/105/user-booking-defaults` — requires migration 0011
 
 ---
 
@@ -308,4 +395,5 @@ ssd_mb    = ssd_gb    * 1024  # if applicable
 5. As regular user, attempt delete on PENDING booking → 409
 6. Main page loads showing only own bookings; click "All VMs" → all bookings appear
 7. Create hardware config with RAM=4, HDD=50 → stored as 4096 MB / 51200 MB; edit form shows 4 / 50
-8. `pytest tests/` — all tests pass
+8. Set default image and hardware in profile → booking form pre-selects them on next visit
+9. `pytest tests/` — all tests pass
