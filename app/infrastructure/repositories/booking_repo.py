@@ -42,6 +42,7 @@ def _to_entity(m: BookingModel, owner_username: str | None = None) -> Booking:
         cpus=m.cpus,
         memory_mb=m.memory_mb,
         hdd_mb=m.hdd_mb,
+        status_message=m.status_message,
     )
 
 
@@ -183,6 +184,15 @@ class BookingRepository:
             new_status=status.value,
             extra={"vm_ip": vm_ip} if vm_ip is not None else None,
         ))
+        session.commit()
+
+    def sync_set_status_message(
+        self, session: Session, booking_id: UUID, message: str | None
+    ) -> None:
+        model = session.get(BookingModel, booking_id)
+        if model is None:
+            raise BookingNotFoundError(booking_id)
+        model.status_message = message
         session.commit()
 
     def sync_list_expired(self, session: Session) -> list[Booking]:
