@@ -10,12 +10,11 @@ The remaining friction is operational: admins must use `curl` to manage the VM c
 quotas, there is no safety mechanism for permanent bookings, and users have no self-service
 password recovery path.
 
-v0.3.0 adds four self-contained features:
+v0.3.0 adds three self-contained features:
 
 1. **Admin catalog UI** — web UI to create/edit/deactivate VM images and hardware configs
 2. **Quota management UI** — inline quota editor on the admin users page
-3. **Image user-data** — store cloud-init user-data per image; passed to VM at provisioning (#89)
-4. **Navigation home link** — clickable header link returning to the main page (#90)
+3. **Navigation home link** — clickable header link returning to the main page (#90)
 
 ---
 
@@ -114,59 +113,7 @@ the updated user row partial.
 
 ---
 
-## Feature 3 — Image User-Data (#89)
-
-### Goal
-Allow admins to attach a cloud-init `user_data` script to each VM image. When a VM is
-provisioned from that image, the user-data is passed to the Terraform module so the VM
-bootstraps with the correct configuration automatically.
-
-### DB change
-
-Add `user_data TEXT nullable` to `vm_images`. Existing images get `NULL` (no user-data);
-the Terraform module omits the field when it is empty.
-
-New Alembic migration: `0009_image_user_data.py`.
-
-### Admin catalog UI change
-
-- **Create image form** — add a collapsible `<textarea>` labelled "User-data (cloud-init)"
-  below the `vapp_template_id` field. Optional; defaults to empty.
-- **Edit image inline form** — same textarea pre-populated with current value.
-- Both forms POST/PATCH the `user_data` field alongside existing fields.
-
-### Provisioning change
-
-`provision.py`: add `"user_data": image.user_data or ""` to the `config` dict.
-
-`vcd_adapter._write_workspace`: when `config["user_data"]` is non-empty, add
-`user_data = var.user_data` to the module call, declare `variable "user_data" { type = string }`,
-and write `user_data = "<value>"` to `terraform.tfvars`. When empty, omit the variable
-entirely so existing workspaces are unaffected.
-
-### Modified files
-
-| File | Change |
-|------|--------|
-| `app/domain/entities.py` | Add `user_data: str \| None` to `VMImage` |
-| `app/infrastructure/database/models.py` | Add `user_data` column to `VMImageModel` |
-| `app/infrastructure/repositories/image_repo.py` | Pass `user_data` in `_to_entity`, `create`, `update` |
-| `app/tasks/provision.py` | Add `user_data` to config dict |
-| `app/infrastructure/terraform/vcd_adapter.py` | Conditionally emit `user_data` variable + tfvar |
-| `app/presentation/routes/admin.py` | Accept `user_data` form field in create + patch routes |
-| `app/presentation/templates/partials/image_table.html` | user-data textarea in create + edit forms |
-| `alembic/versions/0009_image_user_data.py` | Migration |
-| `docs/admin-guide.md` | Document user-data field |
-
-### Tests
-
-- Create image with user-data → stored correctly
-- Edit image to clear user-data → NULL persisted
-- Provision task includes user-data in config when set; omits when empty
-
----
-
-## Feature 4 — Navigation Home Link (#90)
+## Feature 3 — Navigation Home Link (#90)
 
 ### Goal
 Add a clickable element in the top-left of every page that returns the user to the main
@@ -194,9 +141,7 @@ None required — purely cosmetic template change; existing route tests cover th
 
 ## Migration Plan
 
-| Migration | Contents |
-|-----------|----------|
-| `0009_image_user_data.py` | Add `user_data TEXT nullable` to `vm_images` |
+No new migrations required for v0.3.0.
 
 ---
 
@@ -208,9 +153,6 @@ None required — purely cosmetic template change; existing route tests cover th
 - `app/presentation/templates/partials/image_table.html`
 - `app/presentation/templates/partials/hw_config_table.html`
 - `app/presentation/templates/partials/quota_form.html`
-- `alembic/versions/0009_image_user_data.py`
-- `tests/test_password_reset.py`
-- `tests/test_image_user_data.py`
 
 ### Modified files
 - `app/presentation/routes/auth.py` — quota HTML route
@@ -227,8 +169,7 @@ None required — purely cosmetic template change; existing route tests cover th
 
 1. `feature/60/admin-catalog-ui` — no deps; standalone admin page
 2. `feature/91/quota-management-ui` — no deps; extends existing admin/users page
-3. `feature/89/image-user-data` — DB migration; catalog UI textarea; provisioning pass-through
-4. `feature/90/nav-home-link` — template-only; no deps; can ship any time
+3. `feature/90/nav-home-link` — template-only; no deps; can ship any time
 
 ---
 
@@ -238,6 +179,5 @@ None required — purely cosmetic template change; existing route tests cover th
 2. Navigate to `/admin/catalog` → create a new VM image and hardware config via UI
 3. Deactivate a hardware config → it disappears from the booking form
 4. `/admin/users` → expand a user row → set quota → refresh confirms saved values
-5. Create an image with user-data → provision a VM → user-data applied at boot
-6. Click portal logo from `/admin/catalog` → returns to `/`; breadcrumb shows "Catalog"
+5. Click portal logo from `/admin/catalog` → returns to `/`; breadcrumb shows "Catalog"
 7. `pytest tests/` — all tests pass
