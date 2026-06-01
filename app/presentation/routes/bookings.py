@@ -125,8 +125,9 @@ async def booking_row(
     )
 
 
-_RELEASABLE_STATUSES = {BookingStatus.READY, BookingStatus.FAILED}
-_IN_FLIGHT_STATUSES  = {BookingStatus.PENDING, BookingStatus.PROVISIONING, BookingStatus.RETRY, BookingStatus.RELEASING}
+_RELEASABLE_STATUSES     = {BookingStatus.READY, BookingStatus.FAILED}
+_FORCE_DELETABLE_STATUSES = {BookingStatus.PENDING, BookingStatus.PROVISIONING, BookingStatus.RETRY}
+_IN_FLIGHT_STATUSES       = {*_FORCE_DELETABLE_STATUSES, BookingStatus.RELEASING}
 
 
 @router.delete("/bookings/{booking_id}", status_code=202)
@@ -146,11 +147,13 @@ async def release_booking(
     if booking.user_id != str(current_user.id) and current_user.role != "admin":
         raise HTTPException(status_code=403, detail="Not the booking owner")
 
-    if booking.status in _IN_FLIGHT_STATUSES:
-        raise HTTPException(status_code=409, detail="Cannot release an in-flight booking")
+    is_admin_force_delete = current_user.role == "admin" and booking.status in _FORCE_DELETABLE_STATUSES
 
-    if booking.status not in _RELEASABLE_STATUSES:
-        raise HTTPException(status_code=409, detail=f"Cannot release booking with status {booking.status.value}")
+    if not is_admin_force_delete:
+        if booking.status in _IN_FLIGHT_STATUSES:
+            raise HTTPException(status_code=409, detail="Cannot release an in-flight booking")
+        if booking.status not in _RELEASABLE_STATUSES:
+            raise HTTPException(status_code=409, detail=f"Cannot release booking with status {booking.status.value}")
 
     await _repo.update_status(session, booking_id, BookingStatus.RELEASING, actor_id=str(current_user.id))
     teardown_vm_task.delay(str(booking_id))
