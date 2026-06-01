@@ -14,7 +14,10 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.add_column("bookings", sa.Column("status_message", sa.Text, nullable=True))
+    # IF NOT EXISTS handles re-runs where the column was added as VARCHAR(128) before
+    # this migration was corrected to use TEXT.
+    op.execute("ALTER TABLE bookings ADD COLUMN IF NOT EXISTS status_message TEXT")
+    op.execute("ALTER TABLE bookings ALTER COLUMN status_message TYPE TEXT USING status_message::TEXT")
 
 
 def downgrade() -> None:
