@@ -63,7 +63,6 @@ def _run_provision(booking_id, image_id, hw_config_id, *, terraform_apply_side_e
     """Helper: run provision_vm_task with a fake terraform whose apply calls on_progress."""
     mock_session = MagicMock()
     mock_repo = MagicMock()
-    mock_repo.sync_get = MagicMock(return_value=MagicMock(status=BookingStatus.PENDING))
     mock_image_repo = MagicMock()
     mock_image_repo.sync_get = MagicMock(return_value=_make_image())
     mock_hw_repo = MagicMock()

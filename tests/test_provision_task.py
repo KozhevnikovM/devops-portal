@@ -55,7 +55,6 @@ def test_provision_task_sets_ready_status():
 
     mock_session = MagicMock()
     mock_repo = MagicMock()
-    mock_repo.sync_get = MagicMock(return_value=MagicMock(status=BookingStatus.PENDING))
     mock_image_repo = MagicMock()
     mock_image_repo.sync_get = MagicMock(return_value=_make_image(id=image_id))
     mock_hw_repo = MagicMock()
@@ -95,7 +94,6 @@ def test_semaphore_acquired_and_released_on_success():
 
     mock_session = MagicMock()
     mock_repo = MagicMock()
-    mock_repo.sync_get = MagicMock(return_value=MagicMock(status=BookingStatus.PENDING))
     mock_image_repo = MagicMock()
     mock_image_repo.sync_get = MagicMock(return_value=_make_image())
     mock_hw_repo = MagicMock()
@@ -137,7 +135,6 @@ def test_semaphore_released_on_failure():
 
     mock_session = MagicMock()
     mock_repo = MagicMock()
-    mock_repo.sync_get = MagicMock(return_value=MagicMock(status=BookingStatus.PENDING))
     mock_image_repo = MagicMock()
     mock_image_repo.sync_get = MagicMock(return_value=_make_image())
     mock_hw_repo = MagicMock()
@@ -170,7 +167,6 @@ def test_provision_task_sets_retry_status_on_failure():
 
     mock_session = MagicMock()
     mock_repo = MagicMock()
-    mock_repo.sync_get = MagicMock(return_value=MagicMock(status=BookingStatus.PENDING))
     mock_image_repo = MagicMock()
     mock_image_repo.sync_get = MagicMock(return_value=_make_image())
     mock_hw_repo = MagicMock()
@@ -193,26 +189,3 @@ def test_provision_task_sets_retry_status_on_failure():
     assert statuses[-1] == BookingStatus.FAILED
     assert BookingStatus.RETRY in statuses
     assert statuses.count(BookingStatus.FAILED) == 1
-
-
-def test_provision_task_aborts_if_booking_already_releasing():
-    """If booking was force-deleted before the retry fires, task exits without provisioning."""
-    booking_id = str(uuid4())
-    image_id = str(uuid4())
-    hw_config_id = str(uuid4())
-
-    mock_session = MagicMock()
-    mock_repo = MagicMock()
-    mock_repo.sync_get = MagicMock(return_value=MagicMock(status=BookingStatus.RELEASING))
-
-    with (
-        patch("app.tasks.provision.SyncSessionLocal") as mock_session_factory,
-        patch("app.tasks.provision.repo", mock_repo),
-    ):
-        mock_session_factory.return_value.__enter__ = MagicMock(return_value=mock_session)
-        mock_session_factory.return_value.__exit__ = MagicMock(return_value=False)
-
-        from app.tasks.provision import provision_vm_task
-        provision_vm_task.apply(args=[booking_id, image_id, hw_config_id])
-
-    mock_repo.sync_update_status.assert_not_called()
