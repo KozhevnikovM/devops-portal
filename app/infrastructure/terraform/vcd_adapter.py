@@ -21,20 +21,23 @@ def _hcl_escape(s: str) -> str:
 
 
 def _build_initscript(user_data: str) -> str:
-    """Wrap user-data in a bash script that seeds the NoCloud datasource.
+    """Wrap user-data in a bash script that applies it via cloud-init modules.
 
-    cloud-init on VMware reads user-data from guestinfo directly only when set
-    as a guestinfo property — not via OVF env. The reliable path is to have
-    initscript write the data to the NoCloud seed directory before cloud-init
-    runs its modules. See docs/vcd-cloud-init-template.md for full context.
+    Writing to the NoCloud seed directory (/var/lib/cloud/seed/nocloud/) does not
+    work: the initscript runs during the VMware datasource processing (stage 2),
+    after cloud-init-local has already selected the datasource (stage 1). The seed
+    is written too late to be picked up. See docs/bugfix/98-nocloud-seed-ignored.md.
+
+    Instead, overwrite the instance user-data file directly and re-run the config
+    and final module stages so cloud-init applies the cloud-config in the same boot.
     """
     return (
         "#!/bin/bash\n"
-        "mkdir -p /var/lib/cloud/seed/nocloud\n"
-        "cat > /var/lib/cloud/seed/nocloud/user-data << 'USERDATA'\n"
+        "cat > /var/lib/cloud/instance/user-data.txt << 'USERDATA'\n"
         f"{user_data}\n"
         "USERDATA\n"
-        "touch /var/lib/cloud/seed/nocloud/meta-data\n"
+        "cloud-init modules --mode=config\n"
+        "cloud-init modules --mode=final\n"
     )
 
 
