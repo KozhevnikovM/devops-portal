@@ -1,9 +1,12 @@
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 from uuid import uuid4
 from datetime import datetime, timezone
 
+import pytest
+
 from app.domain.entities import VMImage, HWConfig
 from app.domain.enums import BookingStatus
+from app.infrastructure.terraform.stub_adapter import StubTerraformAdapter
 
 
 def _make_image():
@@ -20,12 +23,44 @@ def _make_hw():
     )
 
 
-def test_provision_task_sets_status_messages():
-    """provision_vm_task writes progress messages then clears on success."""
-    booking_id = str(uuid4())
-    image_id = str(uuid4())
-    hw_config_id = str(uuid4())
+# ---------------------------------------------------------------------------
+# Stub adapter
+# ---------------------------------------------------------------------------
 
+@pytest.mark.asyncio
+async def test_stub_adapter_apply_calls_on_progress():
+    adapter = StubTerraformAdapter()
+    received = []
+    with patch("asyncio.sleep", return_value=None):
+        result = await adapter.apply("ws-1", {}, on_progress=received.append)
+    assert "Provisioning (stub mode)…" in received
+    assert "ip" in result
+
+
+@pytest.mark.asyncio
+async def test_stub_adapter_destroy_calls_on_progress():
+    adapter = StubTerraformAdapter()
+    received = []
+    with patch("asyncio.sleep", return_value=None):
+        await adapter.destroy("ws-1", {}, on_progress=received.append)
+    assert "Destroying (stub mode)…" in received
+
+
+@pytest.mark.asyncio
+async def test_stub_adapter_apply_no_progress_callback():
+    """on_progress=None must not raise."""
+    adapter = StubTerraformAdapter()
+    with patch("asyncio.sleep", return_value=None):
+        result = await adapter.apply("ws-1", {})
+    assert "ip" in result
+
+
+# ---------------------------------------------------------------------------
+# provision_vm_task — terraform object mocked so on_progress is invoked
+# ---------------------------------------------------------------------------
+
+def _run_provision(booking_id, image_id, hw_config_id, *, terraform_apply_side_effect=None, fake_ip="10.0.0.1"):
+    """Helper: run provision_vm_task with a fake terraform whose apply calls on_progress."""
     mock_session = MagicMock()
     mock_repo = MagicMock()
     mock_image_repo = MagicMock()
@@ -33,61 +68,60 @@ def test_provision_task_sets_status_messages():
     mock_hw_repo = MagicMock()
     mock_hw_repo.sync_get = MagicMock(return_value=_make_hw())
 
+    async def fake_apply(workspace_id, config, api_token=None, on_progress=None):
+        if terraform_apply_side_effect:
+            raise terraform_apply_side_effect
+        if on_progress:
+            on_progress("Provisioning (stub mode)…")
+        return {"ip": fake_ip}
+
+    mock_terraform = MagicMock()
+    mock_terraform.apply = fake_apply
+
     with (
-        patch("app.tasks.provision.SyncSessionLocal") as mock_session_factory,
+        patch("app.tasks.provision.SyncSessionLocal") as mock_sf,
         patch("app.tasks.provision.repo", mock_repo),
         patch("app.tasks.provision.image_repo", mock_image_repo),
         patch("app.tasks.provision.hw_config_repo", mock_hw_repo),
-        patch("app.tasks.provision.asyncio.run", return_value={"ip": "10.0.0.1"}),
+        patch("app.tasks.provision.terraform", mock_terraform),
     ):
-        mock_session_factory.return_value.__enter__ = MagicMock(return_value=mock_session)
-        mock_session_factory.return_value.__exit__ = MagicMock(return_value=False)
+        mock_sf.return_value.__enter__ = MagicMock(return_value=mock_session)
+        mock_sf.return_value.__exit__ = MagicMock(return_value=False)
 
         from app.tasks.provision import provision_vm_task
         provision_vm_task.apply(args=[booking_id, image_id, hw_config_id])
 
-    msg_calls = mock_repo.sync_set_status_message.call_args_list
-    messages = [c.args[2] for c in msg_calls]
-    assert "Initializing workspace…" in messages
-    assert "Applying configuration…" in messages
-    assert None in messages  # cleared on success
+    return mock_repo
+
+
+def test_provision_task_on_progress_called_and_cleared():
+    """on_progress is wired: adapter message written, then cleared on READY."""
+    booking_id = str(uuid4())
+    mock_repo = _run_provision(booking_id, str(uuid4()), str(uuid4()))
+
+    msg_calls = [c.args[2] for c in mock_repo.sync_set_status_message.call_args_list]
+    assert "Provisioning (stub mode)…" in msg_calls
+    assert None in msg_calls  # cleared on success
+    assert msg_calls[-1] is None  # last message is the clear
 
 
 def test_provision_task_sets_failure_message():
-    """provision_vm_task writes failure message when apply raises."""
+    """on_progress is set to failure message when apply raises."""
     booking_id = str(uuid4())
-    image_id = str(uuid4())
-    hw_config_id = str(uuid4())
+    mock_repo = _run_provision(
+        booking_id, str(uuid4()), str(uuid4()),
+        terraform_apply_side_effect=RuntimeError("VCD error"),
+    )
 
-    mock_session = MagicMock()
-    mock_repo = MagicMock()
-    mock_image_repo = MagicMock()
-    mock_image_repo.sync_get = MagicMock(return_value=_make_image())
-    mock_hw_repo = MagicMock()
-    mock_hw_repo.sync_get = MagicMock(return_value=_make_hw())
-
-    with (
-        patch("app.tasks.provision.SyncSessionLocal") as mock_session_factory,
-        patch("app.tasks.provision.repo", mock_repo),
-        patch("app.tasks.provision.image_repo", mock_image_repo),
-        patch("app.tasks.provision.hw_config_repo", mock_hw_repo),
-        patch("app.tasks.provision.asyncio.run", side_effect=RuntimeError("boom")),
-    ):
-        mock_session_factory.return_value.__enter__ = MagicMock(return_value=mock_session)
-        mock_session_factory.return_value.__exit__ = MagicMock(return_value=False)
-
-        from app.tasks.provision import provision_vm_task
-        provision_vm_task.apply(args=[booking_id, image_id, hw_config_id])
-
-    msg_calls = mock_repo.sync_set_status_message.call_args_list
-    messages = [c.args[2] for c in msg_calls]
-    assert "Failed — see audit log" in messages
+    msg_calls = [c.args[2] for c in mock_repo.sync_set_status_message.call_args_list]
+    assert "Failed — see audit log" in msg_calls
 
 
-def test_teardown_task_sets_status_messages():
-    """teardown_vm_task writes progress message then clears on success."""
-    booking_id = str(uuid4())
+# ---------------------------------------------------------------------------
+# teardown_vm_task
+# ---------------------------------------------------------------------------
 
+def _run_teardown(booking_id, *, terraform_destroy_side_effect=None):
     mock_session = MagicMock()
     mock_repo = MagicMock()
     mock_booking = MagicMock()
@@ -100,54 +134,46 @@ def test_teardown_task_sets_status_messages():
     mock_hw_repo = MagicMock()
     mock_hw_repo.sync_get = MagicMock(return_value=MagicMock(cpus=2, memory_mb=4096, hdd_mb=26624))
 
+    async def fake_destroy(workspace_id, config, api_token=None, on_progress=None):
+        if terraform_destroy_side_effect:
+            raise terraform_destroy_side_effect
+        if on_progress:
+            on_progress("Destroying (stub mode)…")
+
+    mock_terraform = MagicMock()
+    mock_terraform.destroy = fake_destroy
+
     with (
-        patch("app.tasks.teardown.SyncSessionLocal") as mock_session_factory,
+        patch("app.tasks.teardown.SyncSessionLocal") as mock_sf,
         patch("app.tasks.teardown.repo", mock_repo),
         patch("app.tasks.teardown.image_repo", mock_image_repo),
         patch("app.tasks.teardown.hw_config_repo", mock_hw_repo),
-        patch("app.tasks.teardown.asyncio.run", return_value=None),
+        patch("app.tasks.teardown.terraform", mock_terraform),
     ):
-        mock_session_factory.return_value.__enter__ = MagicMock(return_value=mock_session)
-        mock_session_factory.return_value.__exit__ = MagicMock(return_value=False)
+        mock_sf.return_value.__enter__ = MagicMock(return_value=mock_session)
+        mock_sf.return_value.__exit__ = MagicMock(return_value=False)
 
         from app.tasks.teardown import teardown_vm_task
         teardown_vm_task.apply(args=[booking_id])
 
-    msg_calls = mock_repo.sync_set_status_message.call_args_list
-    messages = [c.args[2] for c in msg_calls]
-    assert "Destroying VM…" in messages
-    assert None in messages  # cleared on success
+    return mock_repo
+
+
+def test_teardown_task_on_progress_called_and_cleared():
+    """Teardown adapter message written, then cleared on RELEASED."""
+    mock_repo = _run_teardown(str(uuid4()))
+
+    msg_calls = [c.args[2] for c in mock_repo.sync_set_status_message.call_args_list]
+    assert "Destroying (stub mode)…" in msg_calls
+    assert None in msg_calls
+    assert msg_calls[-1] is None
 
 
 def test_teardown_task_sets_failure_message():
-    """teardown_vm_task writes failure message on final retry."""
-    booking_id = str(uuid4())
+    mock_repo = _run_teardown(
+        str(uuid4()),
+        terraform_destroy_side_effect=RuntimeError("destroy failed"),
+    )
 
-    mock_session = MagicMock()
-    mock_repo = MagicMock()
-    mock_booking = MagicMock()
-    mock_booking.image_id = uuid4()
-    mock_booking.hw_config_id = uuid4()
-    mock_booking.vm_password = "pass"
-    mock_repo.sync_get = MagicMock(return_value=mock_booking)
-    mock_image_repo = MagicMock()
-    mock_image_repo.sync_get = MagicMock(return_value=MagicMock(vapp_template_id="tpl"))
-    mock_hw_repo = MagicMock()
-    mock_hw_repo.sync_get = MagicMock(return_value=MagicMock(cpus=2, memory_mb=4096, hdd_mb=26624))
-
-    with (
-        patch("app.tasks.teardown.SyncSessionLocal") as mock_session_factory,
-        patch("app.tasks.teardown.repo", mock_repo),
-        patch("app.tasks.teardown.image_repo", mock_image_repo),
-        patch("app.tasks.teardown.hw_config_repo", mock_hw_repo),
-        patch("app.tasks.teardown.asyncio.run", side_effect=RuntimeError("destroy failed")),
-    ):
-        mock_session_factory.return_value.__enter__ = MagicMock(return_value=mock_session)
-        mock_session_factory.return_value.__exit__ = MagicMock(return_value=False)
-
-        from app.tasks.teardown import teardown_vm_task
-        teardown_vm_task.apply(args=[booking_id])
-
-    msg_calls = mock_repo.sync_set_status_message.call_args_list
-    messages = [c.args[2] for c in msg_calls]
-    assert "Teardown failed — see audit log" in messages
+    msg_calls = [c.args[2] for c in mock_repo.sync_set_status_message.call_args_list]
+    assert "Teardown failed — see audit log" in msg_calls

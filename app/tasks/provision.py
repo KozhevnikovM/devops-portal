@@ -91,11 +91,14 @@ def provision_vm_task(self, booking_id: str, image_id: str, hw_config_id: str) -
                 }
 
                 repo.sync_update_status(session, booking_uuid, BookingStatus.PROVISIONING)
-                repo.sync_set_status_message(session, booking_uuid, "Initializing workspace…")
                 logger.info("Provisioning started for booking %s", booking_id)
 
-                repo.sync_set_status_message(session, booking_uuid, "Applying configuration…")
-                result = asyncio.run(terraform.apply(workspace_id, config, api_token=api_token))
+                def _on_progress(msg: str) -> None:
+                    repo.sync_set_status_message(session, booking_uuid, msg)
+
+                result = asyncio.run(
+                    terraform.apply(workspace_id, config, api_token=api_token, on_progress=_on_progress)
+                )
                 ip = result["ip"]
 
                 repo.sync_set_status_message(session, booking_uuid, None)

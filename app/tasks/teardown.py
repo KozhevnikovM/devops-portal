@@ -50,10 +50,12 @@ def teardown_vm_task(self, booking_id: str) -> None:
             }
 
             repo.sync_update_status(session, booking_uuid, BookingStatus.RELEASING)
-            repo.sync_set_status_message(session, booking_uuid, "Destroying VM…")
             logger.info("Teardown started for booking %s", booking_id)
 
-            asyncio.run(terraform.destroy(workspace_id, config, api_token))
+            def _on_progress(msg: str) -> None:
+                repo.sync_set_status_message(session, booking_uuid, msg)
+
+            asyncio.run(terraform.destroy(workspace_id, config, api_token, on_progress=_on_progress))
 
             repo.sync_set_status_message(session, booking_uuid, None)
             repo.sync_update_status(session, booking_uuid, BookingStatus.RELEASED)

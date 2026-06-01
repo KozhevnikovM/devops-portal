@@ -126,7 +126,7 @@ class TerraformVcdAdapter:
         ]
         (workspace_dir / "terraform.tfvars").write_text("\n".join(tfvars_lines) + "\n")
 
-    async def _run(self, *args: str, cwd: Path) -> str:
+    async def _run(self, *args: str, cwd: Path, on_progress=None) -> str:
         proc = await asyncio.create_subprocess_exec(
             "terraform", *args,
             cwd=str(cwd),
@@ -134,45 +134,68 @@ class TerraformVcdAdapter:
             stderr=asyncio.subprocess.STDOUT,
             env={**os.environ, "TF_CLI_CONFIG_FILE": str(Path("/app/terraform/terraformrc"))},
         )
-        stdout, _ = await proc.communicate()
-        output = stdout.decode()
+        lines: list[str] = []
+        last_push = asyncio.get_running_loop().time()
+        async for raw in proc.stdout:
+            line = raw.decode().rstrip()
+            if line:
+                lines.append(line)
+            now = asyncio.get_running_loop().time()
+            if on_progress and (now - last_push >= 15):
+                on_progress("\n".join(lines[-3:]))
+                last_push = now
+        await proc.wait()
+        output = "\n".join(lines)
         logger.debug("terraform %s:\n%s", " ".join(args), output)
         if proc.returncode != 0:
             raise TerraformError(f"terraform {args[0]} failed (exit {proc.returncode}):\n{output}")
         return output
 
-    async def apply(self, workspace_id: str, config: dict, api_token: str | None = None) -> dict:
+    async def apply(
+        self,
+        workspace_id: str,
+        config: dict,
+        api_token: str | None = None,
+        on_progress=None,
+    ) -> dict:
         workspace_dir = self._workspace_dir(workspace_id)
         self._write_workspace(workspace_dir, config, api_token)
 
-        await self._run("init", "-no-color", cwd=workspace_dir)
-        await self._run("workspace", "select", "-or-create", workspace_id, cwd=workspace_dir)
+        await self._run("init", "-no-color", cwd=workspace_dir, on_progress=on_progress)
+        await self._run("workspace", "select", "-or-create", workspace_id, cwd=workspace_dir, on_progress=on_progress)
         await self._run(
             "apply", "-auto-approve", "-no-color",
             f"-refresh={str(settings.TF_APPLY_REFRESH).lower()}",
             f"-parallelism={settings.TF_APPLY_PARALLELISM}",
             cwd=workspace_dir,
+            on_progress=on_progress,
         )
 
-        output_json = await self._run("output", "-json", cwd=workspace_dir)
+        output_json = await self._run("output", "-json", cwd=workspace_dir, on_progress=on_progress)
         outputs = json.loads(output_json)
         ip = outputs["primary_ip"]["value"]
         return {"ip": ip}
 
-    async def destroy(self, workspace_id: str, config: dict, api_token: str | None = None) -> None:
+    async def destroy(
+        self,
+        workspace_id: str,
+        config: dict,
+        api_token: str | None = None,
+        on_progress=None,
+    ) -> None:
         workspace_dir = self._workspace_dir(workspace_id)
         self._write_workspace(workspace_dir, config, api_token)
 
-        await self._run("init", "-no-color", cwd=workspace_dir)
+        await self._run("init", "-no-color", cwd=workspace_dir, on_progress=on_progress)
         try:
-            await self._run("workspace", "select", workspace_id, cwd=workspace_dir)
+            await self._run("workspace", "select", workspace_id, cwd=workspace_dir, on_progress=on_progress)
         except TerraformError:
             # Workspace never existed in PG — nothing was provisioned, nothing to destroy.
             logger.info("No PG state found for workspace %s, skipping destroy", workspace_id)
             shutil.rmtree(workspace_dir, ignore_errors=True)
             return
 
-        await self._run("destroy", "-auto-approve", "-no-color", cwd=workspace_dir)
-        await self._run("workspace", "select", "default", cwd=workspace_dir)
-        await self._run("workspace", "delete", workspace_id, cwd=workspace_dir)
+        await self._run("destroy", "-auto-approve", "-no-color", cwd=workspace_dir, on_progress=on_progress)
+        await self._run("workspace", "select", "default", cwd=workspace_dir, on_progress=on_progress)
+        await self._run("workspace", "delete", workspace_id, cwd=workspace_dir, on_progress=on_progress)
         shutil.rmtree(workspace_dir, ignore_errors=True)

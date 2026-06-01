@@ -23,7 +23,7 @@
             {{ booking.status.value }}
         </span>
         {% if booking.status_message %}
-        <div class="text-xs text-gray-500 mt-1">{{ booking.status_message }}</div>
+        <pre class="text-xs text-gray-500 mt-1 whitespace-pre-wrap break-all">{{ booking.status_message }}</pre>
         {% endif %}
     </td>
     <td class="px-4 py-3 text-gray-400">

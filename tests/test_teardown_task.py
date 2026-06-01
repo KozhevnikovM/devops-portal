@@ -122,7 +122,9 @@ def test_teardown_task_calls_destroy_with_workspace_id_and_config():
         "disk_size":        51200,
         "vm_password":      "TestPass1234abCD",
     }
-    mock_terraform.destroy.assert_called_once_with(f"booking-{booking_id}", expected_config, None)
+    call_args = mock_terraform.destroy.call_args
+    assert call_args.args == (f"booking-{booking_id}", expected_config, None)
+    assert callable(call_args.kwargs.get("on_progress"))
 
 
 @pytest.mark.asyncio

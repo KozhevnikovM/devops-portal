@@ -14,7 +14,7 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.add_column("bookings", sa.Column("status_message", sa.String(128), nullable=True))
+    op.add_column("bookings", sa.Column("status_message", sa.Text, nullable=True))
 
 
 def downgrade() -> None:
