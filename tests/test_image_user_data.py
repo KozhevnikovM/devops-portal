@@ -200,7 +200,21 @@ def test_hcl_escape_multiline_user_data():
     assert _hcl_escape("a\\b") == "a\\\\b"
 
 
-def test_write_workspace_multiline_initscript_no_bare_newlines(tmp_path, monkeypatch):
+def test_build_initscript_wraps_user_data_in_nocloud_script():
+    from app.infrastructure.terraform.vcd_adapter import _build_initscript
+
+    script = _build_initscript("#cloud-config\ndisable_root: false")
+
+    assert "#!/bin/bash" in script
+    assert "mkdir -p /var/lib/cloud/seed/nocloud" in script
+    assert "cat > /var/lib/cloud/seed/nocloud/user-data" in script
+    assert "#cloud-config" in script
+    assert "disable_root: false" in script
+    assert "touch /var/lib/cloud/seed/nocloud/meta-data" in script
+
+
+def test_write_workspace_initscript_is_nocloud_bash_script(tmp_path, monkeypatch):
+    """initscript in tfvars must be the NoCloud bash wrapper, not raw user-data."""
     from app.infrastructure.terraform.vcd_adapter import TerraformVcdAdapter
     from app.config import settings
 
@@ -225,11 +239,48 @@ def test_write_workspace_multiline_initscript_no_bare_newlines(tmp_path, monkeyp
     adapter._write_workspace(tmp_path, config)
 
     tfvars = (tmp_path / "terraform.tfvars").read_text()
+
+    # The initscript line must be a single quoted line (no bare newlines in it)
     for line in tfvars.splitlines():
         if "initscript" in line:
             assert line.count('"') >= 2, "initscript value not properly quoted"
+            # Value must contain the bash wrapper, not raw user-data
+            assert "#!/bin/bash" in line
+            assert "/var/lib/cloud/seed/nocloud" in line
+            assert "#cloud-config" in line
             break
     else:
         pytest.fail("initscript not found in terraform.tfvars")
 
-    assert 'initscript                 = "#cloud-config\n' not in tfvars
+
+def test_write_workspace_empty_user_data_leaves_initscript_blank(tmp_path, monkeypatch):
+    from app.infrastructure.terraform.vcd_adapter import TerraformVcdAdapter
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "TF_PG_CONN_STR", "postgresql://localhost/test")
+    monkeypatch.setattr(settings, "TF_MODULE_SOURCE", "./modules/vm")
+    monkeypatch.setattr(settings, "VCD_NETWORK_NAME", "test-net")
+    monkeypatch.setattr(settings, "VCD_URL", "https://vcd.example.com/api")
+    monkeypatch.setattr(settings, "VCD_ORG", "org")
+    monkeypatch.setattr(settings, "VCD_VDC", "vdc")
+    monkeypatch.setattr(settings, "VCD_ALLOW_UNVERIFIED_SSL", False)
+
+    adapter = TerraformVcdAdapter()
+    config = {
+        "name": "portal-abc12345",
+        "vapp_template_id": "urn:vcloud:vapptemplate:abc",
+        "cpus": 2,
+        "memory": 4096,
+        "disk_size": 26624,
+        "vm_password": "S3cr3t",
+        "user_data": "",
+    }
+    adapter._write_workspace(tmp_path, config)
+
+    tfvars = (tmp_path / "terraform.tfvars").read_text()
+    for line in tfvars.splitlines():
+        if "initscript" in line:
+            assert 'initscript                 = ""' in line
+            break
+    else:
+        pytest.fail("initscript not found in terraform.tfvars")

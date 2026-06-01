@@ -20,6 +20,24 @@ def _hcl_escape(s: str) -> str:
     return s.replace("\\", "\\\\").replace('"', '\\"').replace("\r\n", "\\n").replace("\n", "\\n").replace("\r", "")
 
 
+def _build_initscript(user_data: str) -> str:
+    """Wrap user-data in a bash script that seeds the NoCloud datasource.
+
+    cloud-init on VMware reads user-data from guestinfo directly only when set
+    as a guestinfo property — not via OVF env. The reliable path is to have
+    initscript write the data to the NoCloud seed directory before cloud-init
+    runs its modules. See docs/vcd-cloud-init-template.md for full context.
+    """
+    return (
+        "#!/bin/bash\n"
+        "mkdir -p /var/lib/cloud/seed/nocloud\n"
+        "cat > /var/lib/cloud/seed/nocloud/user-data << 'USERDATA'\n"
+        f"{user_data}\n"
+        "USERDATA\n"
+        "touch /var/lib/cloud/seed/nocloud/meta-data\n"
+    )
+
+
 class TerraformVcdAdapter:
     """Provisions VMs on VMware Cloud Director via the terraform CLI."""
 
@@ -126,7 +144,7 @@ class TerraformVcdAdapter:
             '  allow_local_admin_password = true',
             '  auto_generate_password     = false',
             f'  admin_password             = "{config["vm_password"]}"',
-            f'  initscript                 = "{_hcl_escape(config.get("user_data", ""))}"',
+            f'  initscript                 = "{_hcl_escape(_build_initscript(config["user_data"])) if config.get("user_data") else ""}"',
             '}',
         ]
         (workspace_dir / "terraform.tfvars").write_text("\n".join(tfvars_lines) + "\n")
