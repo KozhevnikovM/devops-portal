@@ -13,19 +13,22 @@
         <a href="/" class="text-green-400 text-lg font-bold hover:text-green-300 transition-colors">▶ DevOps Portal</a>
         <span class="text-gray-600 text-sm">/ {% block breadcrumb %}VM Booking{% endblock %}</span>
         {% if current_user %}
-        <div class="ml-auto flex items-center gap-4">
-            <span class="text-gray-400 text-sm">{{ current_user.username }}</span>
-            {% if current_user.role == 'admin' %}
-            <a href="/admin/users" class="text-xs px-3 py-1 rounded bg-gray-800 text-gray-400 border border-gray-700 hover:bg-gray-700 transition-colors">Users</a>
-            <a href="/admin/catalog" class="text-xs px-3 py-1 rounded bg-gray-800 text-gray-400 border border-gray-700 hover:bg-gray-700 transition-colors">Catalog</a>
-            {% endif %}
-            <a href="/profile" class="text-xs px-3 py-1 rounded bg-gray-800 text-gray-400 border border-gray-700 hover:bg-gray-700 transition-colors">Profile</a>
-            <form method="post" action="/auth/logout" class="inline">
-                <button type="submit" class="text-xs px-3 py-1 rounded bg-gray-800 text-gray-400 border border-gray-700 hover:bg-gray-700 transition-colors">
-                    Sign out
-                </button>
-            </form>
-        </div>
+        <details class="relative ml-auto group">
+            <summary class="list-none cursor-pointer px-2 py-1 rounded text-gray-400 hover:text-gray-200 hover:bg-gray-800 transition-colors select-none text-lg leading-none">☰</summary>
+            <div class="absolute right-0 top-full mt-1 w-44 bg-gray-900 border border-gray-700 rounded shadow-lg z-50 py-1">
+                <div class="px-4 py-2 text-xs text-gray-500 border-b border-gray-800">{{ current_user.username }}</div>
+                {% if current_user.role == 'admin' %}
+                <a href="/admin/users" class="block px-4 py-2 text-sm text-gray-300 hover:bg-gray-800 transition-colors">Users</a>
+                <a href="/admin/catalog" class="block px-4 py-2 text-sm text-gray-300 hover:bg-gray-800 transition-colors">Catalog</a>
+                {% endif %}
+                <a href="/profile" class="block px-4 py-2 text-sm text-gray-300 hover:bg-gray-800 transition-colors">Profile</a>
+                <div class="border-t border-gray-800 mt-1 pt-1">
+                    <form method="post" action="/auth/logout">
+                        <button type="submit" class="w-full text-left px-4 py-2 text-sm text-gray-300 hover:bg-gray-800 transition-colors">Sign out</button>
+                    </form>
+                </div>
+            </div>
+        </details>
         {% endif %}
     </header>
 
