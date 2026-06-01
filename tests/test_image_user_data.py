@@ -203,7 +203,8 @@ def test_hcl_escape_multiline_user_data():
 def test_build_initscript_writes_instance_userdata_and_reruns_modules():
     # Regression for #98: NoCloud seed written by initscript is ignored because
     # datasource is selected before initscript runs. Fix overwrites the instance
-    # user-data file and re-runs cloud-init module stages in the same boot.
+    # user-data file, clears module semaphores so once-per-instance modules re-run,
+    # then re-runs cloud-init config and final stages in the same boot.
     from app.infrastructure.terraform.vcd_adapter import _build_initscript
 
     script = _build_initscript("#cloud-config\ndisable_root: false")
@@ -212,6 +213,7 @@ def test_build_initscript_writes_instance_userdata_and_reruns_modules():
     assert "/var/lib/cloud/instance/user-data.txt" in script
     assert "#cloud-config" in script
     assert "disable_root: false" in script
+    assert "rm -rf /var/lib/cloud/instance/sem" in script
     assert "cloud-init modules --mode=config" in script
     assert "cloud-init modules --mode=final" in script
     assert "nocloud" not in script
@@ -249,6 +251,7 @@ def test_write_workspace_initscript_applies_via_cloud_init_modules(tmp_path, mon
             assert line.count('"') >= 2, "initscript value not properly quoted"
             assert "#!/bin/bash" in line
             assert "/var/lib/cloud/instance/user-data.txt" in line
+            assert "rm -rf /var/lib/cloud/instance/sem" in line
             assert "cloud-init modules" in line
             assert "#cloud-config" in line
             assert "nocloud" not in line

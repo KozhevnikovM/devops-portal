@@ -55,8 +55,8 @@ customization = {
 
 ### Option B — cloud-config via `cloud-init modules` (declarative)
 
-To retain cloud-config YAML syntax, write the config to the instance user-data file
-and trigger the config modules to re-run against it inside the initscript:
+To retain cloud-config YAML syntax, write the config to the instance user-data file,
+clear the module semaphores, and re-run the module stages:
 
 ```hcl
 customization = {
@@ -72,15 +72,24 @@ customization = {
     runcmd:
       - systemctl enable --now nginx
     CLOUDCONFIG
+    rm -rf /var/lib/cloud/instance/sem
     cloud-init modules --mode=config
     cloud-init modules --mode=final
   EOT
 }
 ```
 
-This overwrites the instance user-data file with the intended cloud-config, then
-re-runs the config and final module stages against it. Network and hostname (set by the
-VMware datasource in stage 1) are unaffected.
+**Why semaphores must be cleared**: cloud-init records completed modules in
+`/var/lib/cloud/instance/sem/` as `<module>.once` files. Config modules
+(e.g. `set_passwords`, `users_groups`, `runcmd`) run with `frequency: once-per-instance`
+and are already marked done before the initscript executes. Without clearing the
+semaphores, `cloud-init modules --mode=config` skips all of them and user-data
+directives are silently ignored.
+
+Clearing the entire `sem/` directory is safe: the config and final stage modules are
+designed to be idempotent (e.g. `set_passwords` sets a value; `runcmd` replaces the
+previous output). Network config and hostname are set in the `init` stage and are
+unaffected.
 
 ## Expected behaviour after the fix
 

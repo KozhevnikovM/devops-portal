@@ -28,14 +28,21 @@ def _build_initscript(user_data: str) -> str:
     after cloud-init-local has already selected the datasource (stage 1). The seed
     is written too late to be picked up. See docs/bugfix/98-nocloud-seed-ignored.md.
 
-    Instead, overwrite the instance user-data file directly and re-run the config
+    Instead, overwrite the instance user-data file directly, clear the module
+    semaphores (which track once-per-instance execution), and re-run the config
     and final module stages so cloud-init applies the cloud-config in the same boot.
+
+    Semaphores must be cleared because config modules (e.g. set_passwords, runcmd)
+    already ran once before the initscript executes. Without clearing them, modules
+    with frequency=once-per-instance are skipped on the re-run and user-data is
+    effectively ignored. See docs/bugfix/98-nocloud-seed-ignored.md.
     """
     return (
         "#!/bin/bash\n"
         "cat > /var/lib/cloud/instance/user-data.txt << 'USERDATA'\n"
         f"{user_data}\n"
         "USERDATA\n"
+        "rm -rf /var/lib/cloud/instance/sem\n"
         "cloud-init modules --mode=config\n"
         "cloud-init modules --mode=final\n"
     )
