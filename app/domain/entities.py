@@ -65,6 +65,7 @@ class Booking:
     cpus: int = 0
     memory_mb: int = 0
     hdd_mb: int = 0
+    status_message: str | None = None
 
 
 @dataclass

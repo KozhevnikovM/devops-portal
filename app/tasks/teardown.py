@@ -52,8 +52,12 @@ def teardown_vm_task(self, booking_id: str) -> None:
             repo.sync_update_status(session, booking_uuid, BookingStatus.RELEASING)
             logger.info("Teardown started for booking %s", booking_id)
 
-            asyncio.run(terraform.destroy(workspace_id, config, api_token))
+            def _on_progress(msg: str) -> None:
+                repo.sync_set_status_message(session, booking_uuid, msg)
 
+            asyncio.run(terraform.destroy(workspace_id, config, api_token, on_progress=_on_progress))
+
+            repo.sync_set_status_message(session, booking_uuid, None)
             repo.sync_update_status(session, booking_uuid, BookingStatus.RELEASED)
             logger.info("Teardown complete for booking %s", booking_id)
 
@@ -62,6 +66,7 @@ def teardown_vm_task(self, booking_id: str) -> None:
             is_last_attempt = self.request.retries >= self.max_retries
             if is_last_attempt:
                 try:
+                    repo.sync_set_status_message(session, booking_uuid, "Teardown failed — see audit log")
                     repo.sync_update_status(session, booking_uuid, BookingStatus.FAILED)
                 except Exception:
                     pass

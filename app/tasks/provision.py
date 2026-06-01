@@ -93,9 +93,15 @@ def provision_vm_task(self, booking_id: str, image_id: str, hw_config_id: str) -
                 repo.sync_update_status(session, booking_uuid, BookingStatus.PROVISIONING)
                 logger.info("Provisioning started for booking %s", booking_id)
 
-                result = asyncio.run(terraform.apply(workspace_id, config, api_token=api_token))
+                def _on_progress(msg: str) -> None:
+                    repo.sync_set_status_message(session, booking_uuid, msg)
+
+                result = asyncio.run(
+                    terraform.apply(workspace_id, config, api_token=api_token, on_progress=_on_progress)
+                )
                 ip = result["ip"]
 
+                repo.sync_set_status_message(session, booking_uuid, None)
                 repo.sync_update_status(
                     session, booking_uuid, BookingStatus.READY, vm_ip=ip, vm_password=vm_password
                 )
@@ -106,6 +112,7 @@ def provision_vm_task(self, booking_id: str, image_id: str, hw_config_id: str) -
                 is_last_attempt = self.request.retries >= self.max_retries
                 new_status = BookingStatus.FAILED if is_last_attempt else BookingStatus.RETRY
                 try:
+                    repo.sync_set_status_message(session, booking_uuid, "Failed — see audit log")
                     repo.sync_update_status(session, booking_uuid, new_status)
                 except Exception:
                     pass

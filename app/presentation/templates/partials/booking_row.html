@@ -22,6 +22,9 @@
             {% endif %}
             {{ booking.status.value }}
         </span>
+        {% if booking.status_message %}
+        <pre class="text-xs text-gray-500 mt-1 whitespace-pre-wrap break-all">{{ booking.status_message }}</pre>
+        {% endif %}
     </td>
     <td class="px-4 py-3 text-gray-400">
         {% if booking.ttl_minutes == 0 %}Forever
