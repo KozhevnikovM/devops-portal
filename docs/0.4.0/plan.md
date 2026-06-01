@@ -6,11 +6,12 @@ v0.3.0 delivers an admin catalog UI, quota management UI, and nav improvements.
 The provisioning pipeline works end-to-end but gives users no visibility into what
 is happening during PROVISIONING or RELEASING.
 
-v0.4.0 focuses on three features:
+v0.4.0 focuses on four features:
 
 1. **Provisioning & teardown progress (#64)** — live status messages during PROVISIONING/RELEASING
 2. **Admin force-delete any booking (#101)** — admins can delete in-flight bookings (PENDING, PROVISIONING, RETRY)
 3. **Booking filter (#102)** — default view shows only own bookings; toggle to see all
+4. **Hardware config UI in GB (#104)** — admin inputs RAM and HDD in GB; stored as MB internally
 
 ---
 
@@ -210,6 +211,51 @@ async def index(filter: str = "mine", ...):
 
 ---
 
+## Feature 4 — Hardware Config UI in GB (#104)
+
+### Goal
+
+The admin catalog currently shows `memory_mb` and `hdd_mb` fields in MB, requiring
+admins to enter values like `4096` and `51200`. Change the create/edit forms to accept
+GB values. Conversion to MB happens in the route. No DB schema change.
+
+### Route change
+
+`app/presentation/routes/admin.py` — in `admin_create_hardware` and `admin_update_hardware`,
+multiply received form values by 1024:
+
+```python
+memory_mb = memory_gb * 1024
+hdd_mb    = hdd_gb    * 1024
+ssd_mb    = ssd_gb    * 1024  # if applicable
+```
+
+### Template change
+
+`app/presentation/templates/partials/hw_config_table.html` and
+`app/presentation/templates/admin/catalog.html`:
+
+- Field names: `memory_gb`, `hdd_gb` (route reads these, multiplies × 1024)
+- Labels: "RAM (GB)", "HDD (GB)"
+- Displayed values in the table: divide stored MB by 1024 — already done in most places;
+  verify `memory_mb // 1024` and `hdd_mb // 1024` are used consistently
+- Placeholder examples: `4`, `50` instead of `4096`, `51200`
+
+### Modified files
+
+| File | Change |
+|------|--------|
+| `app/presentation/routes/admin.py` | Multiply `memory_gb` and `hdd_gb` form fields × 1024 |
+| `app/presentation/templates/admin/catalog.html` | Field names → GB; labels → GB |
+| `app/presentation/templates/partials/hw_config_table.html` | Field names → GB; labels → GB; display values ÷ 1024 |
+
+### Tests
+
+- Create hardware config with `memory_gb=4`, `hdd_gb=50` → stored as `memory_mb=4096`, `hdd_mb=51200`
+- Edit hardware config → form pre-populated with GB values
+
+---
+
 ## Migration Plan
 
 | Migration | Contents |
@@ -227,6 +273,7 @@ async def index(filter: str = "mine", ...):
 - `tests/test_provisioning_progress.py`
 - `tests/test_admin_force_delete.py`
 - `tests/test_booking_filter.py`
+- `tests/test_hw_config_gb_input.py`
 
 ### Modified files
 - `app/domain/entities.py` — `status_message` on `Booking`
@@ -237,6 +284,9 @@ async def index(filter: str = "mine", ...):
 - `app/presentation/routes/bookings.py` — admin in-flight override + `filter` query param
 - `app/presentation/templates/index.html` — filter toggle
 - `app/presentation/templates/partials/booking_row.html` — progress message + admin Delete option
+- `app/presentation/routes/admin.py` — GB → MB conversion for hardware config
+- `app/presentation/templates/admin/catalog.html` — GB labels/fields
+- `app/presentation/templates/partials/hw_config_table.html` — GB labels/fields
 
 ---
 
@@ -245,6 +295,7 @@ async def index(filter: str = "mine", ...):
 1. `feature/64/provisioning-progress` — single branch, no deps
 2. `feature/101/admin-force-delete` — no deps; two-file change
 3. `feature/102/booking-filter` — no deps; no migration
+4. `feature/104/hw-config-gb-input` — no deps; no migration
 
 ---
 
@@ -256,4 +307,5 @@ async def index(filter: str = "mine", ...):
 4. As admin, find a PENDING booking → `⋮` → Delete → booking transitions to RELEASING → RELEASED
 5. As regular user, attempt delete on PENDING booking → 409
 6. Main page loads showing only own bookings; click "All VMs" → all bookings appear
-7. `pytest tests/` — all tests pass
+7. Create hardware config with RAM=4, HDD=50 → stored as 4096 MB / 51200 MB; edit form shows 4 / 50
+8. `pytest tests/` — all tests pass
