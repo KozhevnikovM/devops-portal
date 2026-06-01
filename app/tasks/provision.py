@@ -76,6 +76,14 @@ def provision_vm_task(self, booking_id: str, image_id: str, hw_config_id: str) -
     try:
         with SyncSessionLocal() as session:
             try:
+                booking = repo.sync_get(session, booking_uuid)
+                if booking.status not in (BookingStatus.PENDING, BookingStatus.RETRY):
+                    logger.info(
+                        "Skipping provision for booking %s — status is %s (force-deleted?)",
+                        booking_id, booking.status.value,
+                    )
+                    return
+
                 image = image_repo.sync_get(session, UUID(image_id))
                 hw = hw_config_repo.sync_get(session, UUID(hw_config_id))
                 vm_password = "".join(
