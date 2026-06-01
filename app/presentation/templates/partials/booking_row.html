@@ -4,7 +4,7 @@
     class="border-b border-gray-800 last:border-0 hover:bg-gray-800/40 transition-colors"
     {% if not is_terminal %}
         hx-get="/bookings/{{ booking.id }}/row"
-        hx-trigger="load, every 3s [!window._bookingHovered('{{ booking.id }}')]"
+        hx-trigger="every 3s [!window._bookingHovered('{{ booking.id }}')]"
         hx-swap="outerHTML"
     {% endif %}
 >
