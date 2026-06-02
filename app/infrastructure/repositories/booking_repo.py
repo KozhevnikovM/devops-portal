@@ -126,7 +126,12 @@ class BookingRepository:
         ))
         await session.commit()
 
-    async def list_all(self, session: AsyncSession, include_released: bool = False) -> list[Booking]:
+    async def list_all(
+        self,
+        session: AsyncSession,
+        include_released: bool = False,
+        resource_type: str | None = None,
+    ) -> list[Booking]:
         stmt = (
             select(BookingModel, UserModel.username, NamespaceModel)
             .join(UserModel, cast(UserModel.id, String) == BookingModel.user_id, isouter=True)
@@ -135,11 +140,17 @@ class BookingRepository:
         )
         if not include_released:
             stmt = stmt.where(BookingModel.status != BookingStatus.RELEASED.value)
+        if resource_type is not None:
+            stmt = stmt.where(BookingModel.resource_type == resource_type)
         result = await session.execute(stmt)
         return [_to_entity(m, username, ns) for m, username, ns in result.all()]
 
     async def list_by_user(
-        self, session: AsyncSession, user_id: str, include_released: bool = False
+        self,
+        session: AsyncSession,
+        user_id: str,
+        include_released: bool = False,
+        resource_type: str | None = None,
     ) -> list[Booking]:
         stmt = (
             select(BookingModel, UserModel.username, NamespaceModel)
@@ -150,6 +161,8 @@ class BookingRepository:
         )
         if not include_released:
             stmt = stmt.where(BookingModel.status != BookingStatus.RELEASED.value)
+        if resource_type is not None:
+            stmt = stmt.where(BookingModel.resource_type == resource_type)
         result = await session.execute(stmt)
         return [_to_entity(m, username, ns) for m, username, ns in result.all()]
 

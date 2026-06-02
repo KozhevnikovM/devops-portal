@@ -204,7 +204,24 @@ The `FOR UPDATE` lock serializes two users racing for the same namespace — the
 
 ---
 
-## Feature 3 — Documentation Sync
+## Feature 3 — Booking-Type Navigation
+
+Replace the in-form VM|Namespace toggle (Feature 2) with top-level navigation: an
+always-visible header nav (**VM Booking**, **Namespace Booking**, disabled **Environment**).
+Each type gets a dedicated page showing that type's form and only that type's bookings.
+
+- `base.html` — horizontal nav with active-state highlighting (`active_nav`); ☰ menu unchanged.
+- Routes — `GET /` (+ `/book/vm`) VM page, `GET /book/namespace` namespace page, via a shared
+  `_render_bookings_page(booking_type, page_path, active_nav, …)`.
+- `booking_repo.list_all` / `list_by_user` — add a `resource_type` filter.
+- `booking_form.html` — parametrized by `booking_type` (hidden `resource_type` input; no toggle/JS).
+- `index.html` — parametrized by `booking_type` / `page_path` (breadcrumb, headers, filter targets).
+
+See `docs/features/booking-type-nav.md`. Supersedes Feature 2's in-form toggle.
+
+---
+
+## Feature 4 — Documentation Sync
 
 | File | Change |
 |------|--------|
@@ -263,9 +280,10 @@ to confirm the current model is the right incremental step toward it.
 
 ## Delivery Order
 
-1. `feature/<n>/namespace-catalog` — Feature 1: catalog + admin UI + migration 0012
-2. `feature/<n>/namespace-booking` — Feature 2: allocation use case + booking flow (depends on 1)
-3. `feature/<n>/v050-docs` — Feature 3 (depends on 1, 2)
+1. `feature/116/namespace-catalog` — Feature 1: catalog + admin UI + migration 0012 ✅
+2. `feature/118/namespace-booking` — Feature 2: allocation use case + booking flow (depends on 1) ✅
+3. `feature/120/booking-type-nav` — Feature 3: per-type pages + header nav (depends on 2)
+4. `feature/<n>/v050-docs` — Feature 4: concept/architecture docs sync (depends on 1–3)
 
 > Issue numbers assigned when the milestone is cut. Each feature follows the standard
 > branch-per-issue + feature-description-doc + approval workflow from `CLAUDE.md`.
