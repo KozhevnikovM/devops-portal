@@ -9,3 +9,8 @@ class BookingStatus(str, Enum):
     FAILED       = "FAILED"
     RELEASING    = "RELEASING"
     RELEASED     = "RELEASED"
+
+
+class ResourceType(str, Enum):
+    VM        = "VM"
+    NAMESPACE = "NAMESPACE"

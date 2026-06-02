@@ -138,5 +138,70 @@
             {% include "partials/hw_config_table.html" %}
         </div>
     </div>
+
+    {# ── Namespaces ───────────────────────────────────────────────────────── #}
+    <div class="mt-8">
+        <h3 class="text-xs text-gray-500 uppercase tracking-widest mb-4">Kubernetes Namespaces</h3>
+
+        <div class="bg-gray-900 border border-gray-800 rounded-lg p-6 mb-4">
+            <p class="text-xs text-gray-500 uppercase tracking-widest mb-4">Add Namespace</p>
+            <form
+                hx-post="/admin/catalog/namespaces"
+                hx-target="#namespace-table"
+                hx-swap="outerHTML"
+                hx-on::after-request="if(event.detail.successful) this.reset()"
+                class="flex items-end gap-3 flex-wrap"
+            >
+                <div class="flex flex-col gap-1.5">
+                    <label class="text-xs text-gray-500" for="new-ns-name">Name</label>
+                    <input
+                        id="new-ns-name"
+                        name="name"
+                        type="text"
+                        required
+                        autocomplete="off"
+                        class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-44"
+                        placeholder="team-a-dev"
+                    >
+                </div>
+                <div class="flex flex-col gap-1.5">
+                    <label class="text-xs text-gray-500" for="new-ns-cluster">Cluster</label>
+                    <input
+                        id="new-ns-cluster"
+                        name="cluster_name"
+                        type="text"
+                        required
+                        autocomplete="off"
+                        class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-40"
+                        placeholder="prod-cluster"
+                    >
+                </div>
+                <div class="flex flex-col gap-1.5">
+                    <label class="text-xs text-gray-500" for="new-ns-api">API URL</label>
+                    <input
+                        id="new-ns-api"
+                        name="api_url"
+                        type="text"
+                        autocomplete="off"
+                        class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-72 font-mono"
+                        placeholder="https://api.cluster:6443"
+                    >
+                </div>
+                <div class="flex flex-col gap-1.5">
+                    <div id="namespace-create-error" class="text-xs h-4"></div>
+                    <button
+                        type="submit"
+                        class="px-4 py-2 bg-green-700 hover:bg-green-600 text-green-100 text-sm rounded transition-colors"
+                    >
+                        Add
+                    </button>
+                </div>
+            </form>
+        </div>
+
+        <div class="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden">
+            {% include "partials/namespace_table.html" %}
+        </div>
+    </div>
 </div>
 {% endblock %}

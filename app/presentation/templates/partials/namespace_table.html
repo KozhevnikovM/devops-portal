@@ -1,0 +1,117 @@
+<div id="namespace-table">
+    <div id="namespace-create-error" hx-swap-oob="innerHTML"></div>
+    {% if namespaces %}
+    <table class="w-full text-sm">
+        <thead>
+            <tr class="border-b border-gray-700 text-left">
+                <th class="px-4 py-2 text-xs text-gray-500 font-normal uppercase tracking-widest">Name</th>
+                <th class="px-4 py-2 text-xs text-gray-500 font-normal uppercase tracking-widest">Cluster</th>
+                <th class="px-4 py-2 text-xs text-gray-500 font-normal uppercase tracking-widest">API URL</th>
+                <th class="px-4 py-2 text-xs text-gray-500 font-normal uppercase tracking-widest">Availability</th>
+                <th class="px-4 py-2 text-xs text-gray-500 font-normal uppercase tracking-widest">Status</th>
+                <th class="px-4 py-2 text-xs text-gray-500 font-normal uppercase tracking-widest"></th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for ns in namespaces %}
+            {% if editing_namespace and ns.id == editing_namespace.id %}
+            <tr class="border-b border-gray-800 last:border-0 bg-gray-800/60">
+                <td colspan="6" class="px-4 py-3">
+                    <form
+                        hx-patch="/admin/catalog/namespaces/{{ ns.id }}"
+                        hx-target="#namespace-table"
+                        hx-swap="outerHTML"
+                        class="flex items-center gap-3 flex-wrap"
+                    >
+                        <input
+                            name="name"
+                            value="{{ ns.name }}"
+                            required
+                            class="bg-gray-900 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-44"
+                        >
+                        <input
+                            name="cluster_name"
+                            value="{{ ns.cluster_name }}"
+                            required
+                            class="bg-gray-900 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-40"
+                        >
+                        <input
+                            name="api_url"
+                            value="{{ ns.api_url or '' }}"
+                            class="bg-gray-900 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-100 focus:outline-none focus:border-green-600 flex-1 min-w-48 font-mono"
+                            placeholder="https://api.cluster:6443"
+                        >
+                        <button type="submit" class="text-xs px-3 py-1.5 rounded bg-green-700 text-green-100 hover:bg-green-600 transition-colors">Save</button>
+                        <button type="button"
+                            hx-get="/admin/catalog/namespaces/table"
+                            hx-target="#namespace-table"
+                            hx-swap="outerHTML"
+                            class="text-xs px-3 py-1.5 rounded bg-gray-700 text-gray-300 border border-gray-600 hover:bg-gray-600 transition-colors"
+                        >Cancel</button>
+                    </form>
+                </td>
+            </tr>
+            {% else %}
+            <tr class="border-b border-gray-800 last:border-0 hover:bg-gray-800/40 transition-colors">
+                <td class="px-4 py-3 text-gray-200">{{ ns.name }}</td>
+                <td class="px-4 py-3 text-gray-400">{{ ns.cluster_name }}</td>
+                <td class="px-4 py-3 text-gray-400 text-xs font-mono">{{ ns.api_url or '—' }}</td>
+                <td class="px-4 py-3">
+                    {% if ns.id in namespace_held_by %}
+                    <span class="text-xs text-amber-400">Booked by {{ namespace_held_by[ns.id] or 'unknown' }}</span>
+                    {% else %}
+                    <span class="text-xs text-green-400">Available</span>
+                    {% endif %}
+                </td>
+                <td class="px-4 py-3">
+                    {% if ns.is_active %}
+                    <span class="text-xs text-green-400">active</span>
+                    {% else %}
+                    <span class="text-xs text-gray-500">inactive</span>
+                    {% endif %}
+                </td>
+                <td class="px-4 py-3">
+                    {% if ns.is_active %}
+                    <div class="flex items-center gap-2">
+                        <button
+                            hx-get="/admin/catalog/namespaces/{{ ns.id }}/edit"
+                            hx-target="#namespace-table"
+                            hx-swap="outerHTML"
+                            class="text-xs px-2 py-1 rounded bg-gray-700 text-gray-300 border border-gray-600 hover:bg-gray-600 transition-colors"
+                        >Edit</button>
+                        <button
+                            hx-delete="/admin/catalog/namespaces/{{ ns.id }}"
+                            hx-target="#namespace-table"
+                            hx-swap="outerHTML"
+                            hx-confirm="Deactivate namespace '{{ ns.name }}'?"
+                            class="text-xs px-2 py-1 rounded bg-red-900 text-red-300 border border-red-700 hover:bg-red-800 transition-colors"
+                        >Deactivate</button>
+                    </div>
+                    {% else %}
+                    <div class="flex items-center gap-2">
+                        <button
+                            hx-post="/admin/catalog/namespaces/{{ ns.id }}/activate"
+                            hx-target="#namespace-table"
+                            hx-swap="outerHTML"
+                            class="text-xs px-2 py-1 rounded bg-green-900 text-green-300 border border-green-700 hover:bg-green-800 transition-colors"
+                        >Activate</button>
+                        <button
+                            hx-delete="/admin/catalog/namespaces/{{ ns.id }}/permanent"
+                            hx-target="#namespace-table"
+                            hx-swap="outerHTML"
+                            hx-confirm="Permanently delete namespace '{{ ns.name }}'? This cannot be undone."
+                            class="text-xs px-2 py-1 rounded bg-red-900 text-red-300 border border-red-700 hover:bg-red-800 transition-colors"
+                        >Delete</button>
+                        <span id="namespace-delete-error-{{ ns.id }}" class="text-xs"></span>
+                    </div>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endif %}
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p class="text-gray-600 text-sm px-4 py-6">No namespaces yet.</p>
+    {% endif %}
+</div>

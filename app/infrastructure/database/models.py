@@ -32,18 +32,31 @@ class HWConfigModel(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
+class NamespaceModel(Base):
+    __tablename__ = "namespaces"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String(63), unique=True, nullable=False)
+    cluster_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    api_url: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
 class BookingModel(Base):
     __tablename__ = "bookings"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id: Mapped[str] = mapped_column(String(64), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False)
+    resource_type: Mapped[str] = mapped_column(String(16), nullable=False, default="VM", server_default="VM")
     ttl_minutes: Mapped[int] = mapped_column(Integer, nullable=False)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    image_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("vm_images.id"), nullable=False)
-    image_name: Mapped[str] = mapped_column(String(64), nullable=False)
-    hw_config_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("hw_configs.id"), nullable=False)
-    hw_config_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    image_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("vm_images.id"), nullable=True)
+    image_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    hw_config_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("hw_configs.id"), nullable=True)
+    hw_config_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    namespace_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("namespaces.id"), nullable=True)
     cpus: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     memory_mb: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     hdd_mb: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

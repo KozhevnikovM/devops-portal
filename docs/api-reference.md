@@ -557,7 +557,8 @@ Returns an HTML fragment for a single booking row. Used by HTMX polling.
 
 ### `GET /admin/catalog`
 
-Renders the catalog management page with two panels: VM Images and Hardware Configs.
+Renders the catalog management page with three panels: VM Images, Hardware Configs, and
+Kubernetes Namespaces.
 
 **Auth:** admin only.
 
@@ -684,6 +685,61 @@ Re-activate a previously deactivated hardware config. It will reappear in the bo
 Permanently delete a hardware config from the database.
 
 **Responses:** `200` updated hardware table; `404` if not found; `200` with `HX-Retarget: #hw-delete-error-{id}` if bookings reference this config.
+
+---
+
+### `POST /admin/catalog/namespaces`
+
+Register a pre-created Kubernetes namespace in the bookable pool.
+
+**Content-Type:** `application/x-www-form-urlencoded`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | string | Unique namespace name (RFC-1123 label) |
+| `cluster_name` | string | Cluster the namespace lives on |
+| `api_url` | string | Optional cluster API server URL (display only) |
+
+**Responses:** `200` updated namespace table fragment; `200` with `HX-Retarget: #namespace-create-error` on duplicate name.
+
+---
+
+### `GET /admin/catalog/namespaces/{namespace_id}/edit`
+
+Returns the namespace table with the specified row in inline edit mode.
+
+---
+
+### `PATCH /admin/catalog/namespaces/{namespace_id}`
+
+Update a namespace (`name`, `cluster_name`, `api_url`) from the inline edit form.
+
+**Responses:** `200` updated namespace table; `404` if not found; `200` with `HX-Retarget: #namespace-create-error` on duplicate name.
+
+---
+
+### `DELETE /admin/catalog/namespaces/{namespace_id}`
+
+Deactivate a namespace. It will no longer be offered for new bookings; any existing booking
+that holds it is unaffected.
+
+**Responses:** `200` updated namespace table; `404` if not found.
+
+---
+
+### `POST /admin/catalog/namespaces/{namespace_id}/activate`
+
+Re-activate a previously deactivated namespace.
+
+**Responses:** `200` updated namespace table; `404` if not found.
+
+---
+
+### `DELETE /admin/catalog/namespaces/{namespace_id}/permanent`
+
+Permanently delete a namespace from the catalog.
+
+**Responses:** `200` updated namespace table; `404` if not found; `200` with `HX-Retarget: #namespace-delete-error-{id}` if bookings reference this namespace.
 
 ---
 

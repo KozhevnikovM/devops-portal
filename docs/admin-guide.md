@@ -321,6 +321,24 @@ profiles (`small`, `medium`, `large`).
 - On an inactive config: click **Activate** to restore it, or **Delete** to remove it
   permanently. Deletion is blocked if any booking still references the config.
 
+**Kubernetes Namespaces panel:**
+
+Namespaces are **pre-created out-of-band** (the portal does not create or delete them) and
+registered here as a bookable pool. Each entry records a `name`, `cluster`, and optional
+API URL.
+
+- Click **Add** to register an existing namespace.
+- Click **Edit** to update its name, cluster, or API URL inline.
+- The **Availability** column shows `Available` or `Booked by {user}` — a namespace is
+  considered held while a non-terminal booking references it, and returns to the pool on
+  release / TTL expiry.
+- **Deactivate** removes a namespace from the booking dropdown without affecting an existing
+  booking that holds it; **Activate** restores it; **Delete** removes it permanently
+  (blocked if any booking references it).
+
+> Booking a namespace (the user-facing flow) arrives in a later v0.5.0 feature; this panel
+> establishes the pool admins manage.
+
 The JSON API (`/api/images`, `/api/hardware`) remains available for scripted workflows.
 See [docs/api-reference.md](api-reference.md) for the full API reference.
 

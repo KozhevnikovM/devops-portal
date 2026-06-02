@@ -10,12 +10,14 @@ from app.infrastructure.auth import require_admin
 from app.infrastructure.database.session import get_async_session
 from app.infrastructure.repositories.hw_config_repo import HWConfigRepository
 from app.infrastructure.repositories.image_repo import ImageRepository
+from app.infrastructure.repositories.namespace_repo import NamespaceRepository
 from app.presentation.templating import templates
 
 router = APIRouter()
 
 _image_repo = ImageRepository()
 _hw_config_repo = HWConfigRepository()
+_namespace_repo = NamespaceRepository()
 
 
 # ── Catalog page ──────────────────────────────────────────────────────────────
@@ -28,9 +30,17 @@ async def admin_catalog_page(
 ):
     images = await _image_repo.list_all(session)
     hw_configs = await _hw_config_repo.list_all(session)
+    namespaces = await _namespace_repo.list_all(session)
+    held_by = await _namespace_repo.held_by(session)
     return templates.TemplateResponse(
         request, "admin/catalog.html",
-        {"images": images, "hw_configs": hw_configs, "current_user": current_user},
+        {
+            "images": images,
+            "hw_configs": hw_configs,
+            "namespaces": namespaces,
+            "namespace_held_by": held_by,
+            "current_user": current_user,
+        },
     )
 
 
@@ -311,3 +321,142 @@ async def admin_deactivate_hw_config(
         request, "partials/hw_config_table.html",
         {"hw_configs": hw_configs, "current_user": current_user},
     )
+
+
+# ── Namespaces ──────────────────────────────────────────────────────────────
+
+async def _namespace_table(request, session, current_user):
+    namespaces = await _namespace_repo.list_all(session)
+    held_by = await _namespace_repo.held_by(session)
+    return templates.TemplateResponse(
+        request, "partials/namespace_table.html",
+        {"namespaces": namespaces, "namespace_held_by": held_by, "current_user": current_user},
+    )
+
+
+@router.get("/admin/catalog/namespaces/table", response_class=HTMLResponse)
+async def namespace_table(
+    request: Request,
+    session: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(require_admin),
+):
+    return await _namespace_table(request, session, current_user)
+
+
+@router.post("/admin/catalog/namespaces", response_class=HTMLResponse)
+async def admin_create_namespace(
+    request: Request,
+    name: str = Form(...),
+    cluster_name: str = Form(...),
+    api_url: str = Form(""),
+    session: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(require_admin),
+):
+    try:
+        await _namespace_repo.create(session, name, cluster_name, api_url.strip() or None)
+    except IntegrityError:
+        await session.rollback()
+        error_html = f'<span class="text-red-400 text-xs">Namespace "{name}" already exists.</span>'
+        return HTMLResponse(
+            content=error_html,
+            headers={"HX-Retarget": "#namespace-create-error", "HX-Reswap": "innerHTML"},
+        )
+    return await _namespace_table(request, session, current_user)
+
+
+@router.get("/admin/catalog/namespaces/{namespace_id}/edit", response_class=HTMLResponse)
+async def admin_edit_namespace_form(
+    request: Request,
+    namespace_id: UUID,
+    session: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(require_admin),
+):
+    namespaces = await _namespace_repo.list_all(session)
+    editing_namespace = next((ns for ns in namespaces if ns.id == namespace_id), None)
+    if editing_namespace is None:
+        raise HTTPException(status_code=404, detail="Namespace not found")
+    held_by = await _namespace_repo.held_by(session)
+    return templates.TemplateResponse(
+        request, "partials/namespace_table.html",
+        {
+            "namespaces": namespaces,
+            "namespace_held_by": held_by,
+            "editing_namespace": editing_namespace,
+            "current_user": current_user,
+        },
+    )
+
+
+@router.patch("/admin/catalog/namespaces/{namespace_id}", response_class=HTMLResponse)
+async def admin_update_namespace(
+    request: Request,
+    namespace_id: UUID,
+    name: str = Form(...),
+    cluster_name: str = Form(...),
+    api_url: str = Form(""),
+    session: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(require_admin),
+):
+    try:
+        await _namespace_repo.update(
+            session, namespace_id,
+            {"name": name, "cluster_name": cluster_name, "api_url": api_url.strip() or None},
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except IntegrityError:
+        await session.rollback()
+        error_html = f'<span class="text-red-400 text-xs">Namespace "{name}" already exists.</span>'
+        return HTMLResponse(
+            content=error_html,
+            headers={"HX-Retarget": "#namespace-create-error", "HX-Reswap": "innerHTML"},
+        )
+    return await _namespace_table(request, session, current_user)
+
+
+@router.post("/admin/catalog/namespaces/{namespace_id}/activate", response_class=HTMLResponse)
+async def admin_activate_namespace(
+    request: Request,
+    namespace_id: UUID,
+    session: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(require_admin),
+):
+    try:
+        await _namespace_repo.activate(session, namespace_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    return await _namespace_table(request, session, current_user)
+
+
+@router.delete("/admin/catalog/namespaces/{namespace_id}/permanent", response_class=HTMLResponse)
+async def admin_delete_namespace(
+    request: Request,
+    namespace_id: UUID,
+    session: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(require_admin),
+):
+    try:
+        await _namespace_repo.delete(session, namespace_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except IntegrityError:
+        await session.rollback()
+        return HTMLResponse(
+            content='<span class="text-red-400 text-xs">Cannot delete: bookings reference this namespace.</span>',
+            headers={"HX-Retarget": f"#namespace-delete-error-{namespace_id}", "HX-Reswap": "innerHTML"},
+        )
+    return await _namespace_table(request, session, current_user)
+
+
+@router.delete("/admin/catalog/namespaces/{namespace_id}", response_class=HTMLResponse)
+async def admin_deactivate_namespace(
+    request: Request,
+    namespace_id: UUID,
+    session: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(require_admin),
+):
+    try:
+        await _namespace_repo.deactivate(session, namespace_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    return await _namespace_table(request, session, current_user)
