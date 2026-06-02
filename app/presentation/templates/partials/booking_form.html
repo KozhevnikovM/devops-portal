@@ -17,7 +17,7 @@
             class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-gray-100 focus:outline-none focus:border-green-500 text-sm"
         >
             {% for img in vm_images %}
-            <option value="{{ img.id }}">{{ img.name }}</option>
+            <option value="{{ img.id }}" {% if current_user is defined and img.id == current_user.default_image_id %}selected{% endif %}>{{ img.name }}</option>
             {% endfor %}
         </select>
     </div>
@@ -29,7 +29,7 @@
             class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-gray-100 focus:outline-none focus:border-green-500 text-sm"
         >
             {% for hw in hw_configs %}
-            <option value="{{ hw.id }}">{{ hw.name }} ({{ hw.cpus }} CPU / {{ hw.memory_mb // 1024 }} GB RAM / {{ hw.hdd_mb // 1024 }} GB HDD)</option>
+            <option value="{{ hw.id }}" {% if current_user is defined and hw.id == current_user.default_hw_config_id %}selected{% endif %}>{{ hw.name }} ({{ hw.cpus }} CPU / {{ hw.memory_mb // 1024 }} GB RAM / {{ hw.hdd_mb // 1024 }} GB HDD)</option>
             {% endfor %}
         </select>
     </div>

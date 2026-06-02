@@ -16,6 +16,8 @@ from app.infrastructure.auth import require_admin, require_user
 from app.infrastructure.database.session import get_async_session
 from app.infrastructure.repositories.user_repo import UserRepository
 from app.infrastructure.repositories.quota_repo import QuotaRepository
+from app.infrastructure.repositories.image_repo import ImageRepository
+from app.infrastructure.repositories.hw_config_repo import HWConfigRepository
 from app.domain.entities import User
 from app.presentation.templating import templates
 
@@ -24,6 +26,10 @@ router = APIRouter()
 _quota_repo = QuotaRepository()
 
 _user_repo = UserRepository()
+
+_image_repo = ImageRepository()
+
+_hw_config_repo = HWConfigRepository()
 
 
 def _get_redis() -> aioredis.Redis:
@@ -285,6 +291,22 @@ async def admin_set_quota(
 _TIMEZONES = sorted(available_timezones())
 
 
+async def _profile_context(request, session, current_user, **extra):
+    api_keys = await _user_repo.list_api_keys(session, current_user.id)
+    vm_images = await _image_repo.list_active(session)
+    hw_configs = await _hw_config_repo.list_active(session)
+    ctx = {
+        "current_user": current_user,
+        "timezones": _TIMEZONES,
+        "api_keys": api_keys,
+        "vm_images": vm_images,
+        "hw_configs": hw_configs,
+        "saved": False,
+    }
+    ctx.update(extra)
+    return ctx
+
+
 @router.get("/profile", response_class=HTMLResponse)
 async def profile_form(
     request: Request,
@@ -292,11 +314,8 @@ async def profile_form(
     current_user: User = Depends(require_user),
 ):
     saved = request.query_params.get("saved") == "1"
-    api_keys = await _user_repo.list_api_keys(session, current_user.id)
-    return templates.TemplateResponse(
-        request, "profile.html",
-        {"current_user": current_user, "timezones": _TIMEZONES, "saved": saved, "api_keys": api_keys},
-    )
+    ctx = await _profile_context(request, session, current_user, saved=saved)
+    return templates.TemplateResponse(request, "profile.html", ctx)
 
 
 @router.post("/profile")
@@ -307,15 +326,35 @@ async def profile_save(
     current_user: User = Depends(require_user),
 ):
     if timezone not in available_timezones():
-        api_keys = await _user_repo.list_api_keys(session, current_user.id)
-        return templates.TemplateResponse(
-            request, "profile.html",
-            {"current_user": current_user, "timezones": _TIMEZONES, "saved": False,
-             "error": "Invalid timezone", "api_keys": api_keys},
-            status_code=400,
-        )
+        ctx = await _profile_context(request, session, current_user, error="Invalid timezone")
+        return templates.TemplateResponse(request, "profile.html", ctx, status_code=400)
     await _user_repo.update_timezone(session, current_user.id, timezone)
     return RedirectResponse(url="/profile?saved=1", status_code=302)
+
+
+@router.patch("/profile/defaults", response_class=HTMLResponse)
+async def profile_save_defaults(
+    request: Request,
+    default_image_id: str = Form(""),
+    default_hw_config_id: str = Form(""),
+    session: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(require_user),
+):
+    image_id = UUID(default_image_id) if default_image_id else None
+    hw_config_id = UUID(default_hw_config_id) if default_hw_config_id else None
+
+    # Validate that any chosen option is a real, active option.
+    vm_images = await _image_repo.list_active(session)
+    hw_configs = await _hw_config_repo.list_active(session)
+    if image_id is not None and image_id not in {img.id for img in vm_images}:
+        raise HTTPException(status_code=400, detail="Unknown image")
+    if hw_config_id is not None and hw_config_id not in {hw.id for hw in hw_configs}:
+        raise HTTPException(status_code=400, detail="Unknown hardware config")
+
+    await _user_repo.set_defaults(session, current_user.id, image_id, hw_config_id)
+    refreshed = await _user_repo.get(session, current_user.id)
+    ctx = await _profile_context(request, session, refreshed, defaults_saved=True)
+    return templates.TemplateResponse(request, "partials/booking_defaults.html", ctx)
 
 
 # ── Quota management ──────────────────────────────────────────────────────────

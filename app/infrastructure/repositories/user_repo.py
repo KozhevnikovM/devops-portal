@@ -20,6 +20,8 @@ def _to_user(m: UserModel) -> User:
         is_active=m.is_active,
         created_at=m.created_at,
         timezone=m.timezone,
+        default_image_id=m.default_image_id,
+        default_hw_config_id=m.default_hw_config_id,
     )
 
 
@@ -96,6 +98,20 @@ class UserRepository:
         m = result.scalar_one_or_none()
         if m:
             m.timezone = tz
+            await session.commit()
+
+    async def set_defaults(
+        self,
+        session: AsyncSession,
+        user_id: uuid.UUID,
+        image_id: uuid.UUID | None,
+        hw_config_id: uuid.UUID | None,
+    ) -> None:
+        result = await session.execute(select(UserModel).where(UserModel.id == user_id))
+        m = result.scalar_one_or_none()
+        if m:
+            m.default_image_id = image_id
+            m.default_hw_config_id = hw_config_id
             await session.commit()
 
     async def list_all(self, session: AsyncSession) -> list[User]:

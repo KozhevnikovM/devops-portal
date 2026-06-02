@@ -242,7 +242,8 @@ updated user table partial.
 
 ### `GET /profile`
 
-Renders the user profile page with a timezone selector.
+Renders the user profile page with a timezone selector and a **Booking defaults**
+section for choosing a preferred VM image and hardware config.
 
 **Auth:** any authenticated user.
 
@@ -269,6 +270,33 @@ Save the user's preferred timezone. Redirects to `/profile?saved=1` on success.
 
 All booking expiry timestamps in the UI are displayed in the user's chosen timezone.
 The stored value and all API responses remain UTC.
+
+---
+
+### `PATCH /profile/defaults`
+
+Save the user's preferred default VM image and hardware config. The booking form
+pre-selects these values so repeat bookings require fewer clicks. Returns the
+re-rendered **Booking defaults** section as an HTMX fragment.
+
+**Auth:** any authenticated user.
+
+**Content-Type:** `application/x-www-form-urlencoded`
+
+**Form fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `default_image_id` | string (UUID) | Preferred VM image id. Empty string clears the preference. |
+| `default_hw_config_id` | string (UUID) | Preferred hardware config id. Empty string clears the preference. |
+
+**Responses:**
+
+- `200` rendered Booking defaults fragment on success
+- `400` if either id does not match a currently active image / hardware config
+
+A `NULL`/cleared preference means no default — the booking form falls back to the
+first active option.
 
 ---
 

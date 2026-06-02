@@ -96,6 +96,7 @@ async def create_booking(
             {
                 "vm_images": vm_images,
                 "hw_configs": hw_configs,
+                "current_user": current_user,
                 "quota_error": str(exc),
             },
             headers={"HX-Retarget": "#booking-form-area", "HX-Reswap": "outerHTML"},

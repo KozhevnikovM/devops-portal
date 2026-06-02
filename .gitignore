@@ -14,3 +14,4 @@ app/static/css/*.css
 app/static/js/*.js
 terraform/providers-mirror/
 .playwright-mcp/
+celerybeat-schedule
