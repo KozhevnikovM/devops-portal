@@ -118,6 +118,15 @@ class BookingRepository:
         )
         return [_to_entity(m, username) for m, username in result.all()]
 
+    async def list_by_user(self, session: AsyncSession, user_id: str) -> list[Booking]:
+        result = await session.execute(
+            select(BookingModel, UserModel.username)
+            .join(UserModel, cast(UserModel.id, String) == BookingModel.user_id, isouter=True)
+            .where(BookingModel.user_id == user_id)
+            .order_by(BookingModel.created_at.desc())
+        )
+        return [_to_entity(m, username) for m, username in result.all()]
+
     async def list_audit(self, session: AsyncSession, booking_id: UUID) -> list[BookingAuditEntry]:
         result = await session.execute(
             select(BookingAuditModel)
