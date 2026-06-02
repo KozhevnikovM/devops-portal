@@ -20,11 +20,17 @@ def upgrade() -> None:
         sa.Column("name", sa.String(64), nullable=False, unique=True),
         sa.Column("host", sa.String(256), nullable=False),
         sa.Column("username", sa.String(64), nullable=False),
-        sa.Column("password", sa.String(256), nullable=False),
+        sa.Column("password", sa.String(256), nullable=True),
+        sa.Column("ssh_key", sa.Text(), nullable=True),
         sa.Column("cpus", sa.Integer(), nullable=True),
         sa.Column("memory_mb", sa.Integer(), nullable=True),
         sa.Column("is_active", sa.Boolean(), nullable=False, server_default=sa.true()),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        # at least one credential (password or ssh_key) must be present
+        sa.CheckConstraint(
+            "password IS NOT NULL OR ssh_key IS NOT NULL",
+            name="ck_static_vms_credential_present",
+        ),
     )
 
     op.add_column("bookings", sa.Column("static_vm_id", sa.UUID(), nullable=True))

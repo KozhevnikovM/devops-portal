@@ -16,6 +16,7 @@ def _make_svm(**kwargs) -> StaticVM:
         host=kwargs.get("host", "10.0.0.12"),
         username=kwargs.get("username", "ubuntu"),
         password=kwargs.get("password", "secret"),
+        ssh_key=kwargs.get("ssh_key", None),
         cpus=kwargs.get("cpus", 2),
         memory_mb=kwargs.get("memory_mb", 4096),
         is_active=kwargs.get("is_active", True),
@@ -84,8 +85,47 @@ def test_create_static_vm_returns_updated_table(client):
     assert resp.status_code == 200
     assert "new-vm" in resp.text
     assert "static-vm-table" in resp.text
+    # args: session, name, host, username, password, ssh_key, cpus, memory_mb
+    assert mock_svm.create.call_args.args[4] == "pw"  # password
+    assert mock_svm.create.call_args.args[5] is None  # ssh_key
     # memory entered in GB is stored as MB
-    assert mock_svm.create.call_args.args[6] == 4096
+    assert mock_svm.create.call_args.args[7] == 4096
+
+
+def test_create_static_vm_with_ssh_key_only(client):
+    vm = _make_svm(name="key-vm", password=None, ssh_key="ssh-ed25519 AAAA")
+    with patch("app.presentation.routes.admin._static_vm_repo") as mock_svm:
+        mock_svm.create = AsyncMock(return_value=vm)
+        mock_svm.list_all = AsyncMock(return_value=[vm])
+        mock_svm.held_by = AsyncMock(return_value={})
+        resp = client.post(
+            "/admin/catalog/static-vms",
+            data={
+                "name": "key-vm", "host": "10.0.0.22", "username": "ubuntu",
+                "password": "", "ssh_key": "ssh-ed25519 AAAA", "cpus": "", "memory_gb": "",
+            },
+        )
+
+    assert resp.status_code == 200
+    assert mock_svm.create.call_args.args[4] is None  # password
+    assert mock_svm.create.call_args.args[5] == "ssh-ed25519 AAAA"  # ssh_key
+
+
+def test_create_static_vm_requires_a_credential(client):
+    with patch("app.presentation.routes.admin._static_vm_repo") as mock_svm:
+        mock_svm.create = AsyncMock()
+        resp = client.post(
+            "/admin/catalog/static-vms",
+            data={
+                "name": "no-cred-vm", "host": "10.0.0.23", "username": "ubuntu",
+                "password": "", "ssh_key": "", "cpus": "", "memory_gb": "",
+            },
+        )
+
+    assert resp.status_code == 200
+    assert resp.headers.get("HX-Retarget") == "#static-vm-create-error"
+    assert "password or an SSH key" in resp.text
+    mock_svm.create.assert_not_called()
 
 
 def test_create_static_vm_optional_specs_blank(client):
@@ -103,9 +143,9 @@ def test_create_static_vm_optional_specs_blank(client):
         )
 
     assert resp.status_code == 200
-    # blank cpus/memory → None
-    assert mock_svm.create.call_args.args[5] is None
+    # blank cpus/memory → None (args: …, ssh_key[5], cpus[6], memory_mb[7])
     assert mock_svm.create.call_args.args[6] is None
+    assert mock_svm.create.call_args.args[7] is None
 
 
 def test_create_static_vm_duplicate_returns_error_fragment(client):
@@ -172,7 +212,7 @@ def test_update_static_vm_404_for_missing(client):
             f"/admin/catalog/static-vms/{uuid4()}",
             data={
                 "name": "x", "host": "h", "username": "u",
-                "password": "p", "cpus": "", "memory_gb": "",
+                "password": "p", "ssh_key": "", "cpus": "", "memory_gb": "",
             },
         )
 

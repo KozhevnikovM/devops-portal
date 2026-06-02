@@ -22,11 +22,16 @@ host + credentials to the booking owner.
    | `name` | VARCHAR(64) UNIQUE NOT NULL | admin label |
    | `host` | VARCHAR(256) NOT NULL | IP or hostname handed to the owner |
    | `username` | VARCHAR(64) NOT NULL | login handed to the owner |
-   | `password` | VARCHAR(256) NOT NULL | credential handed to the owner |
+   | `password` | VARCHAR(256) NULL | credential handed to the owner |
+   | `ssh_key` | TEXT NULL | SSH key credential handed to the owner |
    | `cpus` | INT NULL | display + future quota |
    | `memory_mb` | INT NULL | display + future quota |
    | `is_active` | BOOL NOT NULL default true | |
    | `created_at` | timestamptz default now() | |
+
+   **At least one credential is required** — a `CHECK (password IS NOT NULL OR ssh_key
+   IS NOT NULL)` constraint enforces it at the DB level, and the admin routes validate it
+   (inline error) before insert/update. Both may be set; either alone is valid.
 
 2. `bookings`:
    - add `static_vm_id UUID NULL` FK → `static_vms.id` (parallel to `namespace_id`).
@@ -37,8 +42,9 @@ host + credentials to the booking owner.
 
 - `app/domain/enums.py`: `ResourceType` gains `STATIC_VM` (= `"STATIC_VM"`). Existing `VM` and
   `NAMESPACE` unchanged.
-- `app/domain/entities.py`: `StaticVM` — `id`, `name`, `host`, `username`, `password`,
-  `cpus: int | None`, `memory_mb: int | None`, `is_active`, `created_at`.
+- `app/domain/entities.py`: `StaticVM` — `id`, `name`, `host`, `username`,
+  `password: str | None`, `ssh_key: str | None`, `cpus: int | None`, `memory_mb: int | None`,
+  `is_active`, `created_at`.
 
 ## Model (`app/infrastructure/database/models.py`)
 
@@ -87,10 +93,13 @@ New section mirroring the namespace catalog (admin-only, HTMX fragments swapping
 - `admin/catalog.html` — add a **Static VMs** section (Add form: Name, Host, Username,
   Password, CPUs, Memory (GB)) + `{% include "partials/static_vm_table.html" %}`. Page heading
   stays "Catalog".
-- `partials/static_vm_table.html` (new) — columns: Name, Host, Username, **Password** (masked,
-  e.g. `••••••`), CPUs/Memory, **Availability** (Available / "Booked by {{ user }}"), Status
-  (active/inactive), actions (Edit / Deactivate / Activate / Delete) — same structure as
-  `namespace_table.html`.
+- `partials/static_vm_table.html` (new) — columns: Name, Host, Username, **Password** and
+  **SSH Key** (each masked `••••••` when set, `—` when not), CPUs/Memory, **Availability**
+  (Available / "Booked by {{ user }}"), Status (active/inactive), actions (Edit / Deactivate /
+  Activate / Delete) — same structure as `namespace_table.html`.
+
+The Add/Edit form accepts both credential fields; neither is individually `required`, but
+submitting with both blank returns the inline error "Provide a password or an SSH key."
 
 Memory is entered in **GB** in the admin form and stored as MB (consistent with the existing
 hardware-config inputs, #104).
@@ -104,6 +113,8 @@ hardware-config inputs, #104).
   delete: bookings reference this static VM."
 - `list_available` excludes inactive and currently-held static VMs.
 - Optional `cpus` / `memory_mb` left blank → stored NULL, rendered as "—".
+- Both `password` and `ssh_key` left blank → rejected (inline error + DB CHECK); at least one
+  must be provided. A VM may carry both.
 
 ## Tests (`tests/test_static_vm_catalog.py`)
 

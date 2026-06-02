@@ -20,6 +20,7 @@ def _to_entity(m: StaticVMModel) -> StaticVM:
         host=m.host,
         username=m.username,
         password=m.password,
+        ssh_key=m.ssh_key,
         cpus=m.cpus,
         memory_mb=m.memory_mb,
         is_active=m.is_active,
@@ -96,7 +97,8 @@ class StaticVMRepository:
         name: str,
         host: str,
         username: str,
-        password: str,
+        password: str | None,
+        ssh_key: str | None,
         cpus: int | None,
         memory_mb: int | None,
     ) -> StaticVM:
@@ -106,6 +108,7 @@ class StaticVMRepository:
             host=host,
             username=username,
             password=password,
+            ssh_key=ssh_key,
             cpus=cpus,
             memory_mb=memory_mb,
         )

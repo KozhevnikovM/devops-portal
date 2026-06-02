@@ -65,7 +65,8 @@ class StaticVM:
     name: str
     host: str
     username: str
-    password: str
+    password: str | None
+    ssh_key: str | None
     cpus: int | None
     memory_mb: int | None
     is_active: bool

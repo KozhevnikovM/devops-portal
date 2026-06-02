@@ -258,10 +258,20 @@
                         id="new-svm-pass"
                         name="password"
                         type="text"
-                        required
                         autocomplete="off"
                         class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-36 font-mono"
                         placeholder="secret"
+                    >
+                </div>
+                <div class="flex flex-col gap-1.5">
+                    <label class="text-xs text-gray-500" for="new-svm-key">SSH Key</label>
+                    <input
+                        id="new-svm-key"
+                        name="ssh_key"
+                        type="text"
+                        autocomplete="off"
+                        class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-56 font-mono"
+                        placeholder="ssh-ed25519 AAAA…"
                     >
                 </div>
                 <div class="flex flex-col gap-1.5">

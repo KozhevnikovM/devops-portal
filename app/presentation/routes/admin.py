@@ -484,6 +484,13 @@ def _gb_to_mb(value: str) -> int | None:
     return int(value) * 1024 if value else None
 
 
+def _credential_error() -> HTMLResponse:
+    return HTMLResponse(
+        content='<span class="text-red-400 text-xs">Provide a password or an SSH key.</span>',
+        headers={"HX-Retarget": "#static-vm-create-error", "HX-Reswap": "innerHTML"},
+    )
+
+
 @router.get("/admin/catalog/static-vms/table", response_class=HTMLResponse)
 async def static_vm_table(
     request: Request,
@@ -499,15 +506,20 @@ async def admin_create_static_vm(
     name: str = Form(...),
     host: str = Form(...),
     username: str = Form(...),
-    password: str = Form(...),
+    password: str = Form(""),
+    ssh_key: str = Form(""),
     cpus: str = Form(""),
     memory_gb: str = Form(""),
     session: AsyncSession = Depends(get_async_session),
     current_user: User = Depends(require_admin),
 ):
+    if not password.strip() and not ssh_key.strip():
+        return _credential_error()
     try:
         await _static_vm_repo.create(
-            session, name, host, username, password,
+            session, name, host, username,
+            password.strip() or None,
+            ssh_key.strip() or None,
             int(cpus.strip()) if cpus.strip() else None,
             _gb_to_mb(memory_gb),
         )
@@ -551,12 +563,15 @@ async def admin_update_static_vm(
     name: str = Form(...),
     host: str = Form(...),
     username: str = Form(...),
-    password: str = Form(...),
+    password: str = Form(""),
+    ssh_key: str = Form(""),
     cpus: str = Form(""),
     memory_gb: str = Form(""),
     session: AsyncSession = Depends(get_async_session),
     current_user: User = Depends(require_admin),
 ):
+    if not password.strip() and not ssh_key.strip():
+        return _credential_error()
     try:
         await _static_vm_repo.update(
             session, static_vm_id,
@@ -564,7 +579,8 @@ async def admin_update_static_vm(
                 "name": name,
                 "host": host,
                 "username": username,
-                "password": password,
+                "password": password.strip() or None,
+                "ssh_key": ssh_key.strip() or None,
                 "cpus": int(cpus.strip()) if cpus.strip() else None,
                 "memory_mb": _gb_to_mb(memory_gb),
             },
