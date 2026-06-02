@@ -44,23 +44,23 @@
                             >
                         </div>
                         <div class="flex flex-col gap-1">
-                            <label class="text-xs text-gray-500">RAM (MB)</label>
+                            <label class="text-xs text-gray-500">RAM (GB)</label>
                             <input
-                                name="memory_mb"
+                                name="memory_gb"
                                 type="number"
                                 min="1"
-                                value="{{ hw.memory_mb }}"
+                                value="{{ hw.memory_mb // 1024 }}"
                                 required
                                 class="bg-gray-900 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-24"
                             >
                         </div>
                         <div class="flex flex-col gap-1">
-                            <label class="text-xs text-gray-500">HDD (MB)</label>
+                            <label class="text-xs text-gray-500">HDD (GB)</label>
                             <input
-                                name="hdd_mb"
+                                name="hdd_gb"
                                 type="number"
                                 min="0"
-                                value="{{ hw.hdd_mb }}"
+                                value="{{ hw.hdd_mb // 1024 }}"
                                 required
                                 class="bg-gray-900 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-24"
                             >
