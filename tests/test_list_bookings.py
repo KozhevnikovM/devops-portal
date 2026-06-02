@@ -72,6 +72,7 @@ def test_list_bookings_response_shape(client):
         "expires_at", "created_at", "image_id", "image_name",
         "hw_config_id", "hw_config_name", "vm_ip", "vm_password",
         "namespace", "cluster", "api_url",
+        "static_vm", "host", "username",
     }
     assert row["id"] == str(booking.id)
     assert row["status"] == "READY"

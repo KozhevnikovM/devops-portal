@@ -215,11 +215,13 @@ def test_namespace_page_renders_namespace_form(client):
     with patch("app.presentation.routes.bookings._repo") as mock_repo, \
          patch("app.presentation.routes.bookings._image_repo") as mock_img, \
          patch("app.presentation.routes.bookings._hw_config_repo") as mock_hw, \
-         patch("app.presentation.routes.bookings._namespace_repo") as mock_ns:
+         patch("app.presentation.routes.bookings._namespace_repo") as mock_ns, \
+         patch("app.presentation.routes.bookings._static_vm_repo") as mock_svm:
         mock_repo.list_by_user = AsyncMock(return_value=[])
         mock_img.list_active = AsyncMock(return_value=[])
         mock_hw.list_active = AsyncMock(return_value=[])
         mock_ns.list_available = AsyncMock(return_value=[ns])
+        mock_svm.count_available = AsyncMock(return_value=0)
         resp = cl.get("/book/namespace")
 
     assert resp.status_code == 200
@@ -237,16 +239,19 @@ def test_vm_page_lists_only_vm_bookings(client):
     with patch("app.presentation.routes.bookings._repo") as mock_repo, \
          patch("app.presentation.routes.bookings._image_repo") as mock_img, \
          patch("app.presentation.routes.bookings._hw_config_repo") as mock_hw, \
-         patch("app.presentation.routes.bookings._namespace_repo") as mock_ns:
+         patch("app.presentation.routes.bookings._namespace_repo") as mock_ns, \
+         patch("app.presentation.routes.bookings._static_vm_repo") as mock_svm:
         mock_repo.list_by_user = AsyncMock(return_value=[])
         mock_img.list_active = AsyncMock(return_value=[])
         mock_hw.list_active = AsyncMock(return_value=[])
         mock_ns.list_available = AsyncMock(return_value=[])
+        mock_svm.count_available = AsyncMock(return_value=0)
         resp = cl.get("/")
 
     assert resp.status_code == 200
     assert 'name="image_id"' in resp.text
-    assert mock_repo.list_by_user.call_args.kwargs["resource_type"] == "VM"
+    # VM page lists both provisioned and static VMs.
+    assert mock_repo.list_by_user.call_args.kwargs["resource_type"] == ["VM", "STATIC_VM"]
 
 
 def test_action_menu_not_clipped_by_table_wrapper(client):
@@ -271,11 +276,13 @@ def test_action_menu_not_clipped_by_table_wrapper(client):
     with patch("app.presentation.routes.bookings._repo") as mock_repo, \
          patch("app.presentation.routes.bookings._image_repo") as mock_img, \
          patch("app.presentation.routes.bookings._hw_config_repo") as mock_hw, \
-         patch("app.presentation.routes.bookings._namespace_repo") as mock_ns:
+         patch("app.presentation.routes.bookings._namespace_repo") as mock_ns, \
+         patch("app.presentation.routes.bookings._static_vm_repo") as mock_svm:
         mock_repo.list_by_user = AsyncMock(return_value=[booking])
         mock_img.list_active = AsyncMock(return_value=[])
         mock_hw.list_active = AsyncMock(return_value=[])
         mock_ns.list_available = AsyncMock(return_value=[])
+        mock_svm.count_available = AsyncMock(return_value=0)
         resp = cl.get("/")
 
     assert resp.status_code == 200
@@ -292,11 +299,13 @@ def test_header_nav_shows_booking_types(client):
     with patch("app.presentation.routes.bookings._repo") as mock_repo, \
          patch("app.presentation.routes.bookings._image_repo") as mock_img, \
          patch("app.presentation.routes.bookings._hw_config_repo") as mock_hw, \
-         patch("app.presentation.routes.bookings._namespace_repo") as mock_ns:
+         patch("app.presentation.routes.bookings._namespace_repo") as mock_ns, \
+         patch("app.presentation.routes.bookings._static_vm_repo") as mock_svm:
         mock_repo.list_by_user = AsyncMock(return_value=[])
         mock_img.list_active = AsyncMock(return_value=[])
         mock_hw.list_active = AsyncMock(return_value=[])
         mock_ns.list_available = AsyncMock(return_value=[])
+        mock_svm.count_available = AsyncMock(return_value=0)
         resp = cl.get("/")
 
     assert resp.status_code == 200

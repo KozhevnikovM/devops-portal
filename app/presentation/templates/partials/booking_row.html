@@ -15,6 +15,8 @@
         <span class="text-gray-500">ns</span> {{ booking.namespace_name }}
         <span class="text-gray-500">/</span>
         {{ booking.cluster_name }}
+        {% elif booking.resource_type.value == 'STATIC_VM' %}
+        <span class="text-gray-500">static</span> {{ booking.static_vm_name }}
         {% else %}
         {{ booking.image_name }}
         <span class="text-gray-500">/</span>
@@ -49,6 +51,12 @@
             {% else %}
                 <span class="text-gray-600">—</span>
             {% endif %}
+        {% elif booking.resource_type.value == 'STATIC_VM' %}
+            {% if booking.static_vm_host %}
+                <span class="text-green-400 font-mono">{{ booking.static_vm_host }}</span>
+            {% else %}
+                <span class="text-gray-600">—</span>
+            {% endif %}
         {% elif booking.vm_ip %}
             <span class="text-green-400">{{ booking.vm_ip }}</span>
         {% else %}
@@ -56,13 +64,22 @@
         {% endif %}
     </td>
     <td class="px-4 py-3 text-gray-300">
-        {% if booking.status.value == 'READY' and booking.vm_password %}
-            {% set is_owner = booking.owner_username == current_user.username %}
-            {% if is_owner or current_user.role == 'admin' %}
-                <code class="text-xs font-mono text-yellow-300 bg-gray-800 px-1 py-0.5 rounded select-all">{{ booking.vm_password }}</code>
-            {% else %}
-                <span class="text-gray-600">—</span>
-            {% endif %}
+        {% set is_owner = booking.owner_username == current_user.username %}
+        {% set can_see_creds = is_owner or current_user.role == 'admin' %}
+        {% if booking.resource_type.value == 'STATIC_VM' and booking.status.value == 'READY' and can_see_creds %}
+            <div class="space-y-1">
+                {% if booking.static_vm_username %}
+                <div class="text-xs"><span class="text-gray-500">user</span> <code class="font-mono text-gray-300 select-all">{{ booking.static_vm_username }}</code></div>
+                {% endif %}
+                {% if booking.static_vm_password %}
+                <div class="text-xs"><span class="text-gray-500">pw</span> <code class="font-mono text-yellow-300 bg-gray-800 px-1 py-0.5 rounded select-all">{{ booking.static_vm_password }}</code></div>
+                {% endif %}
+                {% if booking.static_vm_ssh_key %}
+                <div class="text-xs"><span class="text-gray-500">key</span> <code class="font-mono text-yellow-300 bg-gray-800 px-1 py-0.5 rounded select-all inline-block max-w-[12rem] truncate align-bottom" title="{{ booking.static_vm_ssh_key }}">{{ booking.static_vm_ssh_key }}</code></div>
+                {% endif %}
+            </div>
+        {% elif booking.status.value == 'READY' and booking.vm_password and can_see_creds %}
+            <code class="text-xs font-mono text-yellow-300 bg-gray-800 px-1 py-0.5 rounded select-all">{{ booking.vm_password }}</code>
         {% else %}
             <span class="text-gray-600">—</span>
         {% endif %}
@@ -101,7 +118,7 @@
                             hx-delete="/bookings/{{ booking.id }}"
                             hx-target="#booking-{{ booking.id }}"
                             hx-swap="outerHTML"
-                            hx-confirm="{% if booking.resource_type.value == 'NAMESPACE' %}Release this namespace? It returns to the pool.{% else %}Release this VM? The machine will be destroyed.{% endif %}"
+                            hx-confirm="{% if booking.resource_type.value == 'NAMESPACE' %}Release this namespace? It returns to the pool.{% elif booking.resource_type.value == 'STATIC_VM' %}Release this static VM? It returns to the pool.{% else %}Release this VM? The machine will be destroyed.{% endif %}"
                         >
                             Release
                         </button>

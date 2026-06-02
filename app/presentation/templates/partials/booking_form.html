@@ -5,6 +5,10 @@
 {% if namespace_error %}
 <p class="text-red-400 text-sm mb-3">{{ namespace_error }}</p>
 {% endif %}
+{% if static_vm_error %}
+<p class="text-red-400 text-sm mb-3">{{ static_vm_error }}</p>
+{% endif %}
+{% set sel = 'STATIC_VM' if static_vm_error else 'VM' %}
 <form
     hx-post="/bookings"
     hx-target="#bookings-list"
@@ -12,10 +16,9 @@
     hx-on::after-request="document.getElementById('empty-row')?.remove()"
     class="flex items-end gap-4 flex-wrap"
 >
-    <input type="hidden" name="resource_type" value="{{ booking_type | default('VM') }}">
-
     {% if booking_type == 'NAMESPACE' %}
     {# ── Namespace ── #}
+    <input type="hidden" name="resource_type" value="NAMESPACE">
     <div class="flex flex-col gap-1">
         <label for="namespace_id" class="text-xs text-gray-500">Namespace</label>
         <select
@@ -31,30 +34,59 @@
         </select>
     </div>
     {% else %}
-    {# ── VM ── #}
+    {# ── VM: Provisioned | Static ── #}
     <div class="flex flex-col gap-1">
-        <label for="image_id" class="text-xs text-gray-500">Image</label>
-        <select
-            id="image_id"
-            name="image_id"
-            class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-gray-100 focus:outline-none focus:border-green-500 text-sm"
-        >
-            {% for img in vm_images %}
-            <option value="{{ img.id }}" {% if current_user is defined and img.id == current_user.default_image_id %}selected{% endif %}>{{ img.name }}</option>
-            {% endfor %}
-        </select>
+        <span class="text-xs text-gray-500">Type</span>
+        <div class="flex items-center gap-4 h-[42px]">
+            <label class="flex items-center gap-1.5 text-sm text-gray-300 cursor-pointer">
+                <input type="radio" name="resource_type" value="VM" {% if sel != 'STATIC_VM' %}checked{% endif %} class="accent-green-600">
+                Provisioned
+            </label>
+            <label class="flex items-center gap-1.5 text-sm text-gray-300 cursor-pointer">
+                <input type="radio" name="resource_type" value="STATIC_VM" {% if sel == 'STATIC_VM' %}checked{% endif %} class="accent-green-600">
+                Static
+            </label>
+        </div>
     </div>
-    <div class="flex flex-col gap-1">
-        <label for="hw_config_id" class="text-xs text-gray-500">Hardware</label>
-        <select
-            id="hw_config_id"
-            name="hw_config_id"
-            class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-gray-100 focus:outline-none focus:border-green-500 text-sm"
-        >
-            {% for hw in hw_configs %}
-            <option value="{{ hw.id }}" {% if current_user is defined and hw.id == current_user.default_hw_config_id %}selected{% endif %}>{{ hw.name }} ({{ hw.cpus }} CPU / {{ hw.memory_mb // 1024 }} GB RAM / {{ hw.hdd_mb // 1024 }} GB HDD)</option>
-            {% endfor %}
-        </select>
+
+    <div id="provisioned-fields" class="flex items-end gap-4 {% if sel == 'STATIC_VM' %}hidden{% endif %}">
+        <div class="flex flex-col gap-1">
+            <label for="image_id" class="text-xs text-gray-500">Image</label>
+            <select
+                id="image_id"
+                name="image_id"
+                {% if sel == 'STATIC_VM' %}disabled{% endif %}
+                class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-gray-100 focus:outline-none focus:border-green-500 text-sm"
+            >
+                {% for img in vm_images %}
+                <option value="{{ img.id }}" {% if current_user is defined and img.id == current_user.default_image_id %}selected{% endif %}>{{ img.name }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="flex flex-col gap-1">
+            <label for="hw_config_id" class="text-xs text-gray-500">Hardware</label>
+            <select
+                id="hw_config_id"
+                name="hw_config_id"
+                {% if sel == 'STATIC_VM' %}disabled{% endif %}
+                class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-gray-100 focus:outline-none focus:border-green-500 text-sm"
+            >
+                {% for hw in hw_configs %}
+                <option value="{{ hw.id }}" {% if current_user is defined and hw.id == current_user.default_hw_config_id %}selected{% endif %}>{{ hw.name }} ({{ hw.cpus }} CPU / {{ hw.memory_mb // 1024 }} GB RAM / {{ hw.hdd_mb // 1024 }} GB HDD)</option>
+                {% endfor %}
+            </select>
+        </div>
+    </div>
+
+    <div id="static-fields" class="flex flex-col gap-1 {% if sel != 'STATIC_VM' %}hidden{% endif %}">
+        <span class="text-xs text-gray-500">Pool</span>
+        <div class="h-[42px] flex items-center text-sm">
+            {% if static_vm_count and static_vm_count > 0 %}
+            <span class="text-green-400">{{ static_vm_count }} available</span>
+            {% else %}
+            <span class="text-gray-500">No static VMs available</span>
+            {% endif %}
+        </div>
     </div>
     {% endif %}
 
@@ -83,4 +115,27 @@
         Book
     </button>
 </form>
+{% if booking_type != 'NAMESPACE' %}
+<script>
+(function () {
+    var area = document.currentScript.closest('#booking-form-area');
+    if (!area) return;
+    var radios = area.querySelectorAll('input[name="resource_type"]');
+    var prov = area.querySelector('#provisioned-fields');
+    var stat = area.querySelector('#static-fields');
+    var imageSel = area.querySelector('#image_id');
+    var hwSel = area.querySelector('#hw_config_id');
+    function sync() {
+        var checked = area.querySelector('input[name="resource_type"]:checked');
+        var isStatic = checked && checked.value === 'STATIC_VM';
+        if (prov) prov.classList.toggle('hidden', isStatic);
+        if (stat) stat.classList.toggle('hidden', !isStatic);
+        if (imageSel) imageSel.disabled = isStatic;  // disabled inputs aren't submitted
+        if (hwSel) hwSel.disabled = isStatic;
+    }
+    radios.forEach(function (r) { r.addEventListener('change', sync); });
+    sync();
+})();
+</script>
+{% endif %}
 </div>

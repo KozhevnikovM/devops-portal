@@ -39,10 +39,11 @@ def teardown_vm_task(self, booking_id: str) -> None:
         try:
             booking = repo.sync_get(session, booking_uuid)
 
-            # Pooled namespaces aren't provisioned — releasing just frees them.
-            if booking.resource_type == ResourceType.NAMESPACE:
+            # Pooled resources (namespaces, static VMs) aren't provisioned —
+            # releasing just returns them to the pool.
+            if booking.resource_type in (ResourceType.NAMESPACE, ResourceType.STATIC_VM):
                 repo.sync_update_status(session, booking_uuid, BookingStatus.RELEASED)
-                logger.info("Released namespace booking %s", booking_id)
+                logger.info("Released pooled booking %s (%s)", booking_id, booking.resource_type.value)
                 return
 
             image = image_repo.sync_get(session, booking.image_id)

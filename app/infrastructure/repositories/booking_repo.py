@@ -8,7 +8,9 @@ from sqlalchemy.orm import Session
 from app.domain.entities import Booking, BookingAuditEntry
 from app.domain.enums import BookingStatus, ResourceType
 from app.domain.exceptions import BookingNotFoundError
-from app.infrastructure.database.models import BookingAuditModel, BookingModel, NamespaceModel, UserModel
+from app.infrastructure.database.models import (
+    BookingAuditModel, BookingModel, NamespaceModel, StaticVMModel, UserModel,
+)
 
 
 def _to_audit_entity(m: BookingAuditModel) -> BookingAuditEntry:
@@ -28,6 +30,7 @@ def _to_entity(
     m: BookingModel,
     owner_username: str | None = None,
     namespace: NamespaceModel | None = None,
+    static_vm: StaticVMModel | None = None,
 ) -> Booking:
     return Booking(
         id=m.id,
@@ -52,7 +55,22 @@ def _to_entity(
         namespace_name=namespace.name if namespace else None,
         cluster_name=namespace.cluster_name if namespace else None,
         api_url=namespace.api_url if namespace else None,
+        static_vm_id=m.static_vm_id,
+        static_vm_name=static_vm.name if static_vm else None,
+        static_vm_host=static_vm.host if static_vm else None,
+        static_vm_username=static_vm.username if static_vm else None,
+        static_vm_password=static_vm.password if static_vm else None,
+        static_vm_ssh_key=static_vm.ssh_key if static_vm else None,
     )
+
+
+def _apply_resource_type_filter(stmt, resource_type: str | list[str] | None):
+    """Filter by a single resource_type or any of a list (VM page wants VM + STATIC_VM)."""
+    if resource_type is None:
+        return stmt
+    if isinstance(resource_type, (list, tuple, set)):
+        return stmt.where(BookingModel.resource_type.in_(list(resource_type)))
+    return stmt.where(BookingModel.resource_type == resource_type)
 
 
 class BookingRepository:
@@ -70,6 +88,7 @@ class BookingRepository:
             hw_config_name=booking.hw_config_name,
             resource_type=booking.resource_type.value,
             namespace_id=booking.namespace_id,
+            static_vm_id=booking.static_vm_id,
             cpus=booking.cpus,
             memory_mb=booking.memory_mb,
             hdd_mb=booking.hdd_mb,
@@ -87,15 +106,16 @@ class BookingRepository:
 
     async def get(self, session: AsyncSession, booking_id: UUID) -> Booking:
         result = await session.execute(
-            select(BookingModel, NamespaceModel)
+            select(BookingModel, NamespaceModel, StaticVMModel)
             .outerjoin(NamespaceModel, NamespaceModel.id == BookingModel.namespace_id)
+            .outerjoin(StaticVMModel, StaticVMModel.id == BookingModel.static_vm_id)
             .where(BookingModel.id == booking_id)
         )
         row = result.first()
         if row is None:
             raise BookingNotFoundError(booking_id)
-        model, namespace = row
-        return _to_entity(model, namespace=namespace)
+        model, namespace, static_vm = row
+        return _to_entity(model, namespace=namespace, static_vm=static_vm)
 
     async def update_status(
         self,
@@ -130,41 +150,41 @@ class BookingRepository:
         self,
         session: AsyncSession,
         include_released: bool = False,
-        resource_type: str | None = None,
+        resource_type: str | list[str] | None = None,
     ) -> list[Booking]:
         stmt = (
-            select(BookingModel, UserModel.username, NamespaceModel)
+            select(BookingModel, UserModel.username, NamespaceModel, StaticVMModel)
             .join(UserModel, cast(UserModel.id, String) == BookingModel.user_id, isouter=True)
             .outerjoin(NamespaceModel, NamespaceModel.id == BookingModel.namespace_id)
+            .outerjoin(StaticVMModel, StaticVMModel.id == BookingModel.static_vm_id)
             .order_by(BookingModel.created_at.desc())
         )
         if not include_released:
             stmt = stmt.where(BookingModel.status != BookingStatus.RELEASED.value)
-        if resource_type is not None:
-            stmt = stmt.where(BookingModel.resource_type == resource_type)
+        stmt = _apply_resource_type_filter(stmt, resource_type)
         result = await session.execute(stmt)
-        return [_to_entity(m, username, ns) for m, username, ns in result.all()]
+        return [_to_entity(m, username, ns, svm) for m, username, ns, svm in result.all()]
 
     async def list_by_user(
         self,
         session: AsyncSession,
         user_id: str,
         include_released: bool = False,
-        resource_type: str | None = None,
+        resource_type: str | list[str] | None = None,
     ) -> list[Booking]:
         stmt = (
-            select(BookingModel, UserModel.username, NamespaceModel)
+            select(BookingModel, UserModel.username, NamespaceModel, StaticVMModel)
             .join(UserModel, cast(UserModel.id, String) == BookingModel.user_id, isouter=True)
             .outerjoin(NamespaceModel, NamespaceModel.id == BookingModel.namespace_id)
+            .outerjoin(StaticVMModel, StaticVMModel.id == BookingModel.static_vm_id)
             .where(BookingModel.user_id == user_id)
             .order_by(BookingModel.created_at.desc())
         )
         if not include_released:
             stmt = stmt.where(BookingModel.status != BookingStatus.RELEASED.value)
-        if resource_type is not None:
-            stmt = stmt.where(BookingModel.resource_type == resource_type)
+        stmt = _apply_resource_type_filter(stmt, resource_type)
         result = await session.execute(stmt)
-        return [_to_entity(m, username, ns) for m, username, ns in result.all()]
+        return [_to_entity(m, username, ns, svm) for m, username, ns, svm in result.all()]
 
     async def list_audit(self, session: AsyncSession, booking_id: UUID) -> list[BookingAuditEntry]:
         result = await session.execute(

@@ -154,6 +154,25 @@ class StaticVMRepository:
         """SELECT … FOR UPDATE the static VM row — serializes concurrent allocation."""
         return await session.get(StaticVMModel, static_vm_id, with_for_update=True)
 
+    async def lock_next_available(self, session: AsyncSession) -> StaticVMModel | None:
+        """Reserve the next free static VM from the pool.
+
+        `FOR UPDATE SKIP LOCKED` lets concurrent reservations each grab a different
+        free row — no double-allocation, no lock contention. Returns None when the
+        pool is exhausted.
+        """
+        result = await session.execute(
+            select(StaticVMModel)
+            .where(
+                StaticVMModel.is_active.is_(True),
+                StaticVMModel.id.not_in(_held_subquery()),
+            )
+            .order_by(StaticVMModel.name)
+            .limit(1)
+            .with_for_update(skip_locked=True)
+        )
+        return result.scalar_one_or_none()
+
     async def is_held(self, session: AsyncSession, static_vm_id: UUID) -> bool:
         """True if a live (non-terminal) booking currently holds this static VM."""
         result = await session.execute(
