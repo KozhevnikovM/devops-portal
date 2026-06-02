@@ -10,8 +10,26 @@
     </section>
 
     {# Bookings table #}
-    <section>
-        <h2 class="text-sm text-gray-400 uppercase tracking-widest mb-3">Active Bookings</h2>
+    <section id="bookings-section">
+        <div class="flex items-center justify-between mb-3">
+            <h2 class="text-sm text-gray-400 uppercase tracking-widest">Active Bookings</h2>
+            <div class="flex gap-1">
+                <button
+                    hx-get="/?filter=mine"
+                    hx-target="#bookings-section"
+                    hx-select="#bookings-section"
+                    hx-push-url="true"
+                    class="text-xs px-3 py-1 rounded border transition-colors {% if active_filter != 'all' %}bg-gray-700 text-green-400 border-green-700{% else %}bg-gray-800 text-gray-500 border-gray-700 hover:text-gray-300{% endif %}"
+                >My VMs</button>
+                <button
+                    hx-get="/?filter=all"
+                    hx-target="#bookings-section"
+                    hx-select="#bookings-section"
+                    hx-push-url="true"
+                    class="text-xs px-3 py-1 rounded border transition-colors {% if active_filter == 'all' %}bg-gray-700 text-green-400 border-green-700{% else %}bg-gray-800 text-gray-500 border-gray-700 hover:text-gray-300{% endif %}"
+                >All VMs</button>
+            </div>
+        </div>
         <div class="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden">
             <table class="w-full text-sm">
                 <thead class="border-b border-gray-800">

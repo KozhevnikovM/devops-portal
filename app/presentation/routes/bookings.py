@@ -28,15 +28,25 @@ _extend_use_case = ExtendBookingUseCase(_repo)
 @router.get("/", response_class=HTMLResponse)
 async def index(
     request: Request,
+    filter: str = "mine",
     session: AsyncSession = Depends(get_async_session),
     current_user: User = Depends(require_user),
 ):
-    bookings = await _repo.list_all(session)
+    if filter == "all":
+        bookings = await _repo.list_all(session)
+    else:
+        bookings = await _repo.list_by_user(session, str(current_user.id))
     vm_images = await _image_repo.list_active(session)
     hw_configs = await _hw_config_repo.list_active(session)
     return templates.TemplateResponse(
         request, "index.html",
-        {"bookings": bookings, "vm_images": vm_images, "hw_configs": hw_configs, "current_user": current_user},
+        {
+            "bookings": bookings,
+            "vm_images": vm_images,
+            "hw_configs": hw_configs,
+            "current_user": current_user,
+            "active_filter": filter,
+        },
     )
 
 
