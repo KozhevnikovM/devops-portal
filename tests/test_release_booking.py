@@ -86,18 +86,13 @@ def test_delete_failed_booking_returns_202(client):
     assert resp.status_code == 202
 
 
-def test_delete_in_flight_booking_returns_409(client):
-    for status in (BookingStatus.PENDING, BookingStatus.PROVISIONING, BookingStatus.RETRY, BookingStatus.RELEASING):
-        booking = _make_booking(status)
-        with patch("app.presentation.routes.bookings._repo") as mock_repo:
-            mock_repo.get = AsyncMock(return_value=booking)
-
-            resp = client.delete(
-                f"/bookings/{booking.id}",
-                headers={"Accept": "application/json"},
-            )
-
-        assert resp.status_code == 409, f"Expected 409 for status {status.value}"
+def test_delete_releasing_booking_returns_409_for_admin(client):
+    """RELEASING is always 409 — teardown already queued."""
+    booking = _make_booking(BookingStatus.RELEASING)
+    with patch("app.presentation.routes.bookings._repo") as mock_repo:
+        mock_repo.get = AsyncMock(return_value=booking)
+        resp = client.delete(f"/bookings/{booking.id}", headers={"Accept": "application/json"})
+    assert resp.status_code == 409
 
 
 def test_delete_missing_booking_returns_404(client):

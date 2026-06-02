@@ -4,7 +4,7 @@
     class="border-b border-gray-800 last:border-0 hover:bg-gray-800/40 transition-colors"
     {% if not is_terminal %}
         hx-get="/bookings/{{ booking.id }}/row"
-        hx-trigger="load, every 3s"
+        hx-trigger="every 3s [!window._bookingHovered('{{ booking.id }}')]"
         hx-swap="outerHTML"
     {% endif %}
 >
@@ -56,13 +56,13 @@
         {% endif %}
     </td>
     <td class="px-4 py-3">
-        {% if booking.status.value == 'READY' %}
+        {% if booking.status.value in ('READY', 'FAILED') %}
             {% set is_owner = booking.owner_username == current_user.username %}
             {% if is_owner or current_user.role == 'admin' %}
                 <details class="relative">
                     <summary class="list-none cursor-pointer w-7 h-7 flex items-center justify-center rounded text-gray-400 hover:text-gray-200 hover:bg-gray-700 transition-colors select-none text-lg leading-none">⋮</summary>
-                    <div class="absolute right-0 mt-1 w-48 bg-gray-900 border border-gray-700 rounded shadow-lg z-50 py-1">
-                        {% if is_owner and booking.ttl_minutes != 0 %}
+                    <div class="absolute right-0 bottom-full mb-1 w-48 bg-gray-900 border border-gray-700 rounded shadow-lg z-50 py-1">
+                        {% if is_owner and booking.ttl_minutes != 0 and booking.status.value == 'READY' %}
                         <form
                             hx-put="/bookings/{{ booking.id }}/extend"
                             hx-target="closest tr"
@@ -98,6 +98,21 @@
             {% else %}
                 <span class="text-gray-600">—</span>
             {% endif %}
+        {% elif booking.status.value in ('PENDING', 'PROVISIONING', 'RETRY') and current_user.role == 'admin' %}
+            <details class="relative">
+                <summary class="list-none cursor-pointer w-7 h-7 flex items-center justify-center rounded text-gray-400 hover:text-gray-200 hover:bg-gray-700 transition-colors select-none text-lg leading-none">⋮</summary>
+                <div class="absolute right-0 bottom-full mb-1 w-48 bg-gray-900 border border-gray-700 rounded shadow-lg z-50 py-1">
+                    <button
+                        class="w-full text-left px-3 py-2 text-sm text-red-400 hover:bg-gray-800 transition-colors"
+                        hx-delete="/bookings/{{ booking.id }}"
+                        hx-target="#booking-{{ booking.id }}"
+                        hx-swap="outerHTML"
+                        hx-confirm="Force-delete this booking? Any in-progress provisioning will be abandoned."
+                    >
+                        Delete
+                    </button>
+                </div>
+            </details>
         {% else %}
             <span class="text-gray-600">—</span>
         {% endif %}

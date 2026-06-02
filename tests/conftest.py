@@ -5,6 +5,18 @@ from uuid import uuid4
 from app.domain.entities import User
 
 
+def make_fake_user() -> User:
+    """Return a fake regular user for use in dependency overrides."""
+    return User(
+        id=uuid4(),
+        username="test-user",
+        password_hash="",
+        role="user",
+        is_active=True,
+        created_at=datetime.now(timezone.utc),
+    )
+
+
 def make_fake_admin() -> User:
     """Return a fake admin user for use in dependency overrides."""
     return User(

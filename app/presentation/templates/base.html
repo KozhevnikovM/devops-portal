@@ -7,6 +7,20 @@
     <link rel="stylesheet" href="/static/css/tailwind.css?v=2">
     <script src="/static/js/htmx.min.js"></script>
     <script src="/static/js/htmx-sse.js"></script>
+    <script>
+      (function () {
+        var hovered = new Set();
+        document.addEventListener('mouseover', function (e) {
+          var tr = e.target.closest('tr[id^="booking-"]');
+          if (tr) hovered.add(tr.id);
+        });
+        document.addEventListener('mouseout', function (e) {
+          var tr = e.target.closest('tr[id^="booking-"]');
+          if (tr && !tr.contains(e.relatedTarget)) hovered.delete(tr.id);
+        });
+        window._bookingHovered = function (id) { return hovered.has('booking-' + id); };
+      })();
+    </script>
 </head>
 <body class="h-full text-gray-100 font-mono">
     <header class="border-b border-gray-800 px-6 py-4 flex items-center gap-3">
