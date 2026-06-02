@@ -3,8 +3,6 @@
 {% set is_ns = booking_type == 'NAMESPACE' %}
 {% set type_label = 'Namespace' if is_ns else 'VM' %}
 
-{% block breadcrumb %}{{ type_label }} Booking{% endblock %}
-
 {% block content %}
 <div class="space-y-8">
 
