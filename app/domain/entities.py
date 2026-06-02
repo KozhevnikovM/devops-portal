@@ -14,6 +14,8 @@ class User:
     is_active: bool
     created_at: datetime
     timezone: str = "UTC"
+    default_image_id: UUID | None = None
+    default_hw_config_id: UUID | None = None
 
 
 @dataclass
