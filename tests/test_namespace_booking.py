@@ -249,6 +249,42 @@ def test_vm_page_lists_only_vm_bookings(client):
     assert mock_repo.list_by_user.call_args.kwargs["resource_type"] == "VM"
 
 
+def test_action_menu_not_clipped_by_table_wrapper(client):
+    """Regression: the bookings table wrapper must not clip the row's ⋮ dropdown."""
+    cl, fake_user = client
+    now = datetime.now(timezone.utc)
+    booking = Booking(
+        id=uuid4(),
+        user_id=str(fake_user.id),
+        status=BookingStatus.READY,
+        resource_type=ResourceType.VM,
+        ttl_minutes=240,
+        expires_at=now + timedelta(minutes=240),
+        created_at=now,
+        image_id=uuid4(),
+        image_name="Ubuntu 22.04",
+        hw_config_id=uuid4(),
+        hw_config_name="medium",
+        vm_ip="10.0.0.1",
+        owner_username=fake_user.username,
+    )
+    with patch("app.presentation.routes.bookings._repo") as mock_repo, \
+         patch("app.presentation.routes.bookings._image_repo") as mock_img, \
+         patch("app.presentation.routes.bookings._hw_config_repo") as mock_hw, \
+         patch("app.presentation.routes.bookings._namespace_repo") as mock_ns:
+        mock_repo.list_by_user = AsyncMock(return_value=[booking])
+        mock_img.list_active = AsyncMock(return_value=[])
+        mock_hw.list_active = AsyncMock(return_value=[])
+        mock_ns.list_available = AsyncMock(return_value=[])
+        resp = cl.get("/")
+
+    assert resp.status_code == 200
+    # The ⋮ dropdown layer is rendered …
+    assert "z-50" in resp.text
+    # … and the table wrapper no longer clips it.
+    assert "rounded-lg overflow-hidden" not in resp.text
+
+
 def test_header_nav_shows_booking_types(client):
     cl, _ = client
     with patch("app.presentation.routes.bookings._repo") as mock_repo, \
