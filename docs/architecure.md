@@ -84,6 +84,13 @@ This keeps the routing layer unified. The `CreateBookingUseCase` is shared; only
 ### 4.1 Request Flow
 `FastAPI` → `Redis` → `Celery Worker` → `TerraformAdapter` → `VMware`
 
+> **Namespaces are the exception (v0.5.0).** A Kubernetes namespace booking is *reserved from
+> an admin-managed pool*, not provisioned. The namespace allocation use case picks a free,
+> active namespace synchronously under a `SELECT … FOR UPDATE` row lock and the booking goes
+> straight to `READY` — **no Celery task, no Terraform, no credentials issued**. Release / TTL
+> expiry returns the namespace to the pool. The Terraform request flow above applies to VMs
+> only; namespaces never touch Redis / the worker / `TerraformAdapter`.
+
 ### 4.2 State Management
 State management and progress tracking are handled entirely at the **PostgreSQL** level.
 
@@ -164,6 +171,10 @@ Writes happen in the Application Layer (Use Cases), ensuring audit entries are a
 The code is divided into four layers with strict dependency direction (outer layers depend on inner, never the reverse):
 
 - **Domain Layer:** Entities (`Booking`, `Resource`, `Quota`, `Environment`), Value Objects, domain services. Pure Python, no framework dependencies.
+  > *Status (v0.5.0):* `Booking`, `Quota`, and a `Namespace` catalog entity exist today. A
+  > `Booking` distinguishes resource kinds via a `resource_type` discriminator (`VM` |
+  > `NAMESPACE`) rather than a polymorphic `Resource`; the dedicated `Resource` / `Environment`
+  > entities remain planned (see `docs/0.5.0/plan.md` → "Future Direction: Environments").
 - **Application Layer:** Use Cases (e.g., `CreateBookingUseCase`, `ExtendBookingUseCase`). Coordinates DB repositories, quota enforcement, Celery task dispatch, and audit writes.
 - **Infrastructure Layer:** Repository implementations (SQLAlchemy / PostgreSQL), Celery task definitions, `TerraformAdapter` (CLI wrapper with workspace and lock management).
 - **Presentation Layer:** FastAPI routes — content-negotiated responses returning either Jinja2 HTML templates or Pydantic JSON schemas.
