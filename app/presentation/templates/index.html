@@ -1,35 +1,40 @@
 {% extends "base.html" %}
 
+{% set is_ns = booking_type == 'NAMESPACE' %}
+{% set type_label = 'Namespace' if is_ns else 'VM' %}
+
+{% block breadcrumb %}{{ type_label }} Booking{% endblock %}
+
 {% block content %}
 <div class="space-y-8">
 
     {# Booking form #}
     <section class="bg-gray-900 border border-gray-800 rounded-lg p-6">
-        <h2 class="text-sm text-gray-400 uppercase tracking-widest mb-4">New Booking</h2>
+        <h2 class="text-sm text-gray-400 uppercase tracking-widest mb-4">New {{ type_label }} Booking</h2>
         {% include "partials/booking_form.html" %}
     </section>
 
     {# Bookings table #}
     <section id="bookings-section">
         <div class="flex items-center justify-between mb-3">
-            <h2 class="text-sm text-gray-400 uppercase tracking-widest">Active Bookings</h2>
+            <h2 class="text-sm text-gray-400 uppercase tracking-widest">{{ type_label }} Bookings</h2>
             <div class="flex gap-1">
                 <button
-                    hx-get="/?filter=mine{% if show_released %}&show_released=1{% endif %}"
+                    hx-get="{{ page_path }}?filter=mine{% if show_released %}&show_released=1{% endif %}"
                     hx-target="#bookings-section"
                     hx-select="#bookings-section"
                     hx-push-url="true"
                     class="text-xs px-3 py-1 rounded border transition-colors {% if active_filter != 'all' %}bg-gray-700 text-green-400 border-green-700{% else %}bg-gray-800 text-gray-500 border-gray-700 hover:text-gray-300{% endif %}"
-                >My VMs</button>
+                >Mine</button>
                 <button
-                    hx-get="/?filter=all{% if show_released %}&show_released=1{% endif %}"
+                    hx-get="{{ page_path }}?filter=all{% if show_released %}&show_released=1{% endif %}"
                     hx-target="#bookings-section"
                     hx-select="#bookings-section"
                     hx-push-url="true"
                     class="text-xs px-3 py-1 rounded border transition-colors {% if active_filter == 'all' %}bg-gray-700 text-green-400 border-green-700{% else %}bg-gray-800 text-gray-500 border-gray-700 hover:text-gray-300{% endif %}"
-                >All VMs</button>
+                >All</button>
                 <button
-                    hx-get="/?filter={{ active_filter }}{% if not show_released %}&show_released=1{% endif %}"
+                    hx-get="{{ page_path }}?filter={{ active_filter }}{% if not show_released %}&show_released=1{% endif %}"
                     hx-target="#bookings-section"
                     hx-select="#bookings-section"
                     hx-push-url="true"
@@ -43,12 +48,12 @@
                     <tr class="text-gray-500 text-xs uppercase tracking-wider">
                         <th class="text-left px-4 py-3">ID</th>
                         <th class="text-left px-4 py-3">Owner</th>
-                        <th class="text-left px-4 py-3">Image</th>
+                        <th class="text-left px-4 py-3">{{ 'Namespace' if is_ns else 'Image' }}</th>
                         <th class="text-left px-4 py-3">Status</th>
                         <th class="text-left px-4 py-3">TTL</th>
                         <th class="text-left px-4 py-3">Expires</th>
-                        <th class="text-left px-4 py-3">IP Address</th>
-                        <th class="text-left px-4 py-3">Password</th>
+                        <th class="text-left px-4 py-3">{{ 'API URL' if is_ns else 'IP Address' }}</th>
+                        <th class="text-left px-4 py-3">{% if not is_ns %}Password{% endif %}</th>
                         <th class="text-left px-4 py-3">Actions</th>
                     </tr>
                 </thead>
@@ -57,7 +62,7 @@
                         {% include "partials/booking_row.html" %}
                     {% else %}
                         <tr id="empty-row">
-                            <td colspan="9" class="px-4 py-6 text-center text-gray-600">No bookings yet.</td>
+                            <td colspan="9" class="px-4 py-6 text-center text-gray-600">No {{ type_label.lower() }} bookings yet.</td>
                         </tr>
                     {% endfor %}
                 </tbody>

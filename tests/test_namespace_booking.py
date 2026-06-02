@@ -209,7 +209,7 @@ def test_teardown_task_namespace_releases_without_adapter():
 
 # ── Booking form rendering ────────────────────────────────────────────────────
 
-def test_booking_form_has_namespace_toggle(client):
+def test_namespace_page_renders_namespace_form(client):
     cl, _ = client
     ns = SimpleNamespace(id=uuid4(), name="team-a-dev", cluster_name="prod-cluster")
     with patch("app.presentation.routes.bookings._repo") as mock_repo, \
@@ -220,9 +220,49 @@ def test_booking_form_has_namespace_toggle(client):
         mock_img.list_active = AsyncMock(return_value=[])
         mock_hw.list_active = AsyncMock(return_value=[])
         mock_ns.list_available = AsyncMock(return_value=[ns])
+        resp = cl.get("/book/namespace")
+
+    assert resp.status_code == 200
+    # The namespace page submits a hidden NAMESPACE resource_type and offers the dropdown.
+    assert 'name="resource_type" value="NAMESPACE"' in resp.text
+    assert "team-a-dev (prod-cluster)" in resp.text
+    # VM-only fields are not on the namespace page.
+    assert 'name="image_id"' not in resp.text
+    # Lists only namespace bookings.
+    assert mock_repo.list_by_user.call_args.kwargs["resource_type"] == "NAMESPACE"
+
+
+def test_vm_page_lists_only_vm_bookings(client):
+    cl, _ = client
+    with patch("app.presentation.routes.bookings._repo") as mock_repo, \
+         patch("app.presentation.routes.bookings._image_repo") as mock_img, \
+         patch("app.presentation.routes.bookings._hw_config_repo") as mock_hw, \
+         patch("app.presentation.routes.bookings._namespace_repo") as mock_ns:
+        mock_repo.list_by_user = AsyncMock(return_value=[])
+        mock_img.list_active = AsyncMock(return_value=[])
+        mock_hw.list_active = AsyncMock(return_value=[])
+        mock_ns.list_available = AsyncMock(return_value=[])
         resp = cl.get("/")
 
     assert resp.status_code == 200
-    assert 'name="resource_type"' in resp.text
-    assert 'value="NAMESPACE"' in resp.text
-    assert "team-a-dev (prod-cluster)" in resp.text
+    assert 'name="image_id"' in resp.text
+    assert mock_repo.list_by_user.call_args.kwargs["resource_type"] == "VM"
+
+
+def test_header_nav_shows_booking_types(client):
+    cl, _ = client
+    with patch("app.presentation.routes.bookings._repo") as mock_repo, \
+         patch("app.presentation.routes.bookings._image_repo") as mock_img, \
+         patch("app.presentation.routes.bookings._hw_config_repo") as mock_hw, \
+         patch("app.presentation.routes.bookings._namespace_repo") as mock_ns:
+        mock_repo.list_by_user = AsyncMock(return_value=[])
+        mock_img.list_active = AsyncMock(return_value=[])
+        mock_hw.list_active = AsyncMock(return_value=[])
+        mock_ns.list_available = AsyncMock(return_value=[])
+        resp = cl.get("/")
+
+    assert resp.status_code == 200
+    assert 'href="/book/vm"' in resp.text
+    assert 'href="/book/namespace"' in resp.text
+    assert "Environment" in resp.text
+    assert "cursor-not-allowed" in resp.text  # Environment is disabled

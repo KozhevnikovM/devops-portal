@@ -31,19 +31,16 @@ _extend_use_case = ExtendBookingUseCase(_repo)
 _book_namespace_use_case = BookNamespaceUseCase(_repo, _namespace_repo)
 
 
-@router.get("/", response_class=HTMLResponse)
-async def index(
-    request: Request,
-    filter: str = "mine",
-    show_released: bool = False,
-    session: AsyncSession = Depends(get_async_session),
-    current_user: User = Depends(require_user),
+async def _render_bookings_page(
+    request, session, current_user, *, booking_type, page_path, active_nav, filter, show_released,
 ):
     if filter == "all":
-        bookings = await _repo.list_all(session, include_released=show_released)
+        bookings = await _repo.list_all(
+            session, include_released=show_released, resource_type=booking_type
+        )
     else:
         bookings = await _repo.list_by_user(
-            session, str(current_user.id), include_released=show_released
+            session, str(current_user.id), include_released=show_released, resource_type=booking_type
         )
     vm_images = await _image_repo.list_active(session)
     hw_configs = await _hw_config_repo.list_active(session)
@@ -58,7 +55,41 @@ async def index(
             "current_user": current_user,
             "active_filter": filter,
             "show_released": show_released,
+            "booking_type": booking_type,
+            "page_path": page_path,
+            "active_nav": active_nav,
         },
+    )
+
+
+@router.get("/", response_class=HTMLResponse)
+@router.get("/book/vm", response_class=HTMLResponse)
+async def vm_bookings_page(
+    request: Request,
+    filter: str = "mine",
+    show_released: bool = False,
+    session: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(require_user),
+):
+    return await _render_bookings_page(
+        request, session, current_user,
+        booking_type="VM", page_path="/", active_nav="vm",
+        filter=filter, show_released=show_released,
+    )
+
+
+@router.get("/book/namespace", response_class=HTMLResponse)
+async def namespace_bookings_page(
+    request: Request,
+    filter: str = "mine",
+    show_released: bool = False,
+    session: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(require_user),
+):
+    return await _render_bookings_page(
+        request, session, current_user,
+        booking_type="NAMESPACE", page_path="/book/namespace", active_nav="namespace",
+        filter=filter, show_released=show_released,
     )
 
 
@@ -91,13 +122,14 @@ async def list_bookings(
     ])
 
 
-async def _render_form_error(request, session, current_user, **errors):
+async def _render_form_error(request, session, current_user, booking_type="VM", **errors):
     """Re-render the booking form with an error banner (HTMX swaps the form area)."""
     ctx = {
         "vm_images": await _image_repo.list_active(session),
         "hw_configs": await _hw_config_repo.list_active(session),
         "available_namespaces": await _namespace_repo.list_available(session),
         "current_user": current_user,
+        "booking_type": booking_type,
     }
     ctx.update(errors)
     return templates.TemplateResponse(
@@ -125,7 +157,8 @@ async def create_booking(
             if wants_json:
                 raise HTTPException(status_code=400, detail="namespace_id is required")
             return await _render_form_error(
-                request, session, current_user, namespace_error="Select a namespace to book."
+                request, session, current_user,
+                booking_type="NAMESPACE", namespace_error="Select a namespace to book.",
             )
         try:
             booking = await _book_namespace_use_case.execute(
@@ -134,7 +167,9 @@ async def create_booking(
         except NamespaceUnavailableError as exc:
             if wants_json:
                 raise HTTPException(status_code=409, detail=str(exc))
-            return await _render_form_error(request, session, current_user, namespace_error=str(exc))
+            return await _render_form_error(
+                request, session, current_user, booking_type="NAMESPACE", namespace_error=str(exc)
+            )
 
         booking.owner_username = current_user.username
         if wants_json:
