@@ -50,6 +50,16 @@ class HWConfig:
 
 
 @dataclass
+class Namespace:
+    id: UUID
+    name: str
+    cluster_name: str
+    api_url: str | None
+    is_active: bool
+    created_at: datetime
+
+
+@dataclass
 class Booking:
     id: UUID
     user_id: str
