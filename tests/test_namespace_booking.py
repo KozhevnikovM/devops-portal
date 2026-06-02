@@ -283,6 +283,8 @@ def test_action_menu_not_clipped_by_table_wrapper(client):
     assert "z-50" in resp.text
     # … and the table wrapper no longer clips it.
     assert "rounded-lg overflow-hidden" not in resp.text
+    # … and a click-outside handler closes open dropdowns.
+    assert "details[open]" in resp.text
 
 
 def test_header_nav_shows_booking_types(client):

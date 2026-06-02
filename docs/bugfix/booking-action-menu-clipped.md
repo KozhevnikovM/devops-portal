@@ -38,6 +38,13 @@ the table's inner corners go square, which is not visible against the dark fill.
 No behaviour change beyond the menu rendering on top. Applies to both booking pages (shared
 `index.html`).
 
+## Related: close on outside click
+
+The `⋮` row menu and the `☰` nav are native `<details>` elements, which stay open until the
+summary is clicked again — clicking elsewhere left them open. Added a global click handler in
+`base.html` that closes any open `<details>` when the click lands outside it (also gives
+one-open-at-a-time behaviour).
+
 ## Regression test
 
 Render a bookings page containing a `READY` booking (so the `⋮` menu is present) and assert

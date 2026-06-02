@@ -19,6 +19,13 @@
           if (tr && !tr.contains(e.relatedTarget)) hovered.delete(tr.id);
         });
         window._bookingHovered = function (id) { return hovered.has('booking-' + id); };
+
+        // Close any open <details> dropdown (⋮ row menu, ☰ nav) when clicking outside it.
+        document.addEventListener('click', function (e) {
+          document.querySelectorAll('details[open]').forEach(function (d) {
+            if (!d.contains(e.target)) d.removeAttribute('open');
+          });
+        });
       })();
     </script>
 </head>
