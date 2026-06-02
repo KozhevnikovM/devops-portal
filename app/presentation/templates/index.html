@@ -15,19 +15,26 @@
             <h2 class="text-sm text-gray-400 uppercase tracking-widest">Active Bookings</h2>
             <div class="flex gap-1">
                 <button
-                    hx-get="/?filter=mine"
+                    hx-get="/?filter=mine{% if show_released %}&show_released=1{% endif %}"
                     hx-target="#bookings-section"
                     hx-select="#bookings-section"
                     hx-push-url="true"
                     class="text-xs px-3 py-1 rounded border transition-colors {% if active_filter != 'all' %}bg-gray-700 text-green-400 border-green-700{% else %}bg-gray-800 text-gray-500 border-gray-700 hover:text-gray-300{% endif %}"
                 >My VMs</button>
                 <button
-                    hx-get="/?filter=all"
+                    hx-get="/?filter=all{% if show_released %}&show_released=1{% endif %}"
                     hx-target="#bookings-section"
                     hx-select="#bookings-section"
                     hx-push-url="true"
                     class="text-xs px-3 py-1 rounded border transition-colors {% if active_filter == 'all' %}bg-gray-700 text-green-400 border-green-700{% else %}bg-gray-800 text-gray-500 border-gray-700 hover:text-gray-300{% endif %}"
                 >All VMs</button>
+                <button
+                    hx-get="/?filter={{ active_filter }}{% if not show_released %}&show_released=1{% endif %}"
+                    hx-target="#bookings-section"
+                    hx-select="#bookings-section"
+                    hx-push-url="true"
+                    class="text-xs px-3 py-1 rounded border transition-colors ml-2 {% if show_released %}bg-gray-700 text-green-400 border-green-700{% else %}bg-gray-800 text-gray-500 border-gray-700 hover:text-gray-300{% endif %}"
+                >{% if show_released %}Hide released{% else %}Show released{% endif %}</button>
             </div>
         </div>
         <div class="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden">

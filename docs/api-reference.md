@@ -306,6 +306,15 @@ first active option.
 
 Returns the main HTML page with the booking form and active bookings table.
 
+**Query params:**
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `filter` | `mine` \| `all` | `mine` | `mine` shows only the current user's bookings; `all` shows everyone's |
+| `show_released` | bool | `false` | When omitted/false, RELEASED bookings are hidden. Pass `show_released=1` to include them. |
+
+The two filters are independent and compose, e.g. `/?filter=all&show_released=1`.
+
 ---
 
 ### `GET /bookings`

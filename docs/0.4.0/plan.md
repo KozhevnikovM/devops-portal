@@ -6,13 +6,14 @@ v0.3.0 delivers an admin catalog UI, quota management UI, and nav improvements.
 The provisioning pipeline works end-to-end but gives users no visibility into what
 is happening during PROVISIONING or RELEASING.
 
-v0.4.0 focuses on five features:
+v0.4.0 focuses on six features:
 
 1. **Provisioning & teardown progress (#64)** — live status messages during PROVISIONING/RELEASING
 2. **Admin force-delete any booking (#101)** — admins can delete in-flight bookings (PENDING, PROVISIONING, RETRY)
 3. **Booking filter (#102)** — default view shows only own bookings; toggle to see all
 4. **Hardware config UI in GB (#104)** — admin inputs RAM and HDD in GB; stored as MB internally
 5. **User default image & hardware (#105)** — per-user preferred defaults pre-selected in the booking form
+6. **Hide released bookings (#110)** — hide RELEASED rows by default; toggle to show, composes with #102
 
 ---
 
@@ -333,6 +334,56 @@ Booking defaults
 
 ---
 
+## Feature 6 — Hide Released Bookings (#110)
+
+### Goal
+
+The bookings table fills up with RELEASED rows over time, making active VMs harder to
+find. Hide RELEASED bookings by default with a toggle to show them. Composes with the
+owner filter (#102) — released is an independent axis. No DB change.
+
+### Repository change
+
+`app/infrastructure/repositories/booking_repo.py` — add `include_released: bool = False`
+to `list_all` and `list_by_user`. When `False`, add
+`.where(BookingModel.status != BookingStatus.RELEASED.value)`.
+
+### Route change
+
+`app/presentation/routes/bookings.py` — `GET /` index accepts `show_released: bool = False`
+alongside `filter`, and passes it both to the repo call and the template.
+
+```python
+@router.get("/")
+async def index(filter: str = "mine", show_released: bool = False, ...):
+    if filter == "all":
+        bookings = await _repo.list_all(session, include_released=show_released)
+    else:
+        bookings = await _repo.list_by_user(session, str(current_user.id), include_released=show_released)
+```
+
+### UI change
+
+`app/presentation/templates/index.html` — add a "Show released" / "Hide released" toggle
+to the existing filter button group. All filter buttons preserve both `filter` and
+`show_released` so the two axes don't clobber each other (e.g. `/?filter=all&show_released=1`).
+
+### Modified files
+
+| File | Change |
+|------|--------|
+| `app/infrastructure/repositories/booking_repo.py` | `include_released` param on `list_all` / `list_by_user` |
+| `app/presentation/routes/bookings.py` | `show_released` query param; pass through + to template |
+| `app/presentation/templates/index.html` | "Show/Hide released" toggle; preserve filter + show_released across buttons |
+
+### Tests
+
+- `GET /` (default) excludes RELEASED; `GET /?show_released=1` includes them
+- `GET /?filter=all` excludes RELEASED across users; `?filter=all&show_released=1` includes
+- Repository: `include_released=False` filters RELEASED; `True` returns them
+
+---
+
 ## Migration Plan
 
 | Migration | Contents |
@@ -354,6 +405,7 @@ Booking defaults
 - `tests/test_hw_config_gb_input.py`
 - `tests/test_user_defaults.py`
 - `alembic/versions/0011_user_defaults.py`
+- `tests/test_hide_released.py`
 
 ### Modified files
 - `app/domain/entities.py` — `status_message` on `Booking`
@@ -383,6 +435,7 @@ Booking defaults
 3. `feature/102/booking-filter` — no deps; no migration
 4. `feature/104/hw-config-gb-input` — no deps; no migration
 5. `feature/105/user-booking-defaults` — requires migration 0011
+6. `feature/110/hide-released-bookings` — builds on #102 filter; no migration
 
 ---
 
@@ -396,4 +449,5 @@ Booking defaults
 6. Main page loads showing only own bookings; click "All VMs" → all bookings appear
 7. Create hardware config with RAM=4, HDD=50 → stored as 4096 MB / 51200 MB; edit form shows 4 / 50
 8. Set default image and hardware in profile → booking form pre-selects them on next visit
-9. `pytest tests/` — all tests pass
+9. Main page hides RELEASED bookings; click "Show released" → released rows appear; URL gains `?show_released=1`
+10. `pytest tests/` — all tests pass
