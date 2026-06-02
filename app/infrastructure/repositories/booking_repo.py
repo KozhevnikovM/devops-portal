@@ -110,21 +110,29 @@ class BookingRepository:
         ))
         await session.commit()
 
-    async def list_all(self, session: AsyncSession) -> list[Booking]:
-        result = await session.execute(
+    async def list_all(self, session: AsyncSession, include_released: bool = False) -> list[Booking]:
+        stmt = (
             select(BookingModel, UserModel.username)
             .join(UserModel, cast(UserModel.id, String) == BookingModel.user_id, isouter=True)
             .order_by(BookingModel.created_at.desc())
         )
+        if not include_released:
+            stmt = stmt.where(BookingModel.status != BookingStatus.RELEASED.value)
+        result = await session.execute(stmt)
         return [_to_entity(m, username) for m, username in result.all()]
 
-    async def list_by_user(self, session: AsyncSession, user_id: str) -> list[Booking]:
-        result = await session.execute(
+    async def list_by_user(
+        self, session: AsyncSession, user_id: str, include_released: bool = False
+    ) -> list[Booking]:
+        stmt = (
             select(BookingModel, UserModel.username)
             .join(UserModel, cast(UserModel.id, String) == BookingModel.user_id, isouter=True)
             .where(BookingModel.user_id == user_id)
             .order_by(BookingModel.created_at.desc())
         )
+        if not include_released:
+            stmt = stmt.where(BookingModel.status != BookingStatus.RELEASED.value)
+        result = await session.execute(stmt)
         return [_to_entity(m, username) for m, username in result.all()]
 
     async def list_audit(self, session: AsyncSession, booking_id: UUID) -> list[BookingAuditEntry]:
