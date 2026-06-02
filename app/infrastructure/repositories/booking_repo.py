@@ -6,9 +6,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
 from app.domain.entities import Booking, BookingAuditEntry
-from app.domain.enums import BookingStatus
+from app.domain.enums import BookingStatus, ResourceType
 from app.domain.exceptions import BookingNotFoundError
-from app.infrastructure.database.models import BookingAuditModel, BookingModel, UserModel
+from app.infrastructure.database.models import BookingAuditModel, BookingModel, NamespaceModel, UserModel
 
 
 def _to_audit_entity(m: BookingAuditModel) -> BookingAuditEntry:
@@ -24,11 +24,16 @@ def _to_audit_entity(m: BookingAuditModel) -> BookingAuditEntry:
     )
 
 
-def _to_entity(m: BookingModel, owner_username: str | None = None) -> Booking:
+def _to_entity(
+    m: BookingModel,
+    owner_username: str | None = None,
+    namespace: NamespaceModel | None = None,
+) -> Booking:
     return Booking(
         id=m.id,
         user_id=m.user_id,
         status=BookingStatus(m.status),
+        resource_type=ResourceType(m.resource_type),
         ttl_minutes=m.ttl_minutes,
         expires_at=m.expires_at,
         created_at=m.created_at,
@@ -43,6 +48,10 @@ def _to_entity(m: BookingModel, owner_username: str | None = None) -> Booking:
         memory_mb=m.memory_mb,
         hdd_mb=m.hdd_mb,
         status_message=m.status_message,
+        namespace_id=m.namespace_id,
+        namespace_name=namespace.name if namespace else None,
+        cluster_name=namespace.cluster_name if namespace else None,
+        api_url=namespace.api_url if namespace else None,
     )
 
 
@@ -59,6 +68,8 @@ class BookingRepository:
             image_name=booking.image_name,
             hw_config_id=booking.hw_config_id,
             hw_config_name=booking.hw_config_name,
+            resource_type=booking.resource_type.value,
+            namespace_id=booking.namespace_id,
             cpus=booking.cpus,
             memory_mb=booking.memory_mb,
             hdd_mb=booking.hdd_mb,
@@ -75,11 +86,16 @@ class BookingRepository:
         return _to_entity(model)
 
     async def get(self, session: AsyncSession, booking_id: UUID) -> Booking:
-        result = await session.execute(select(BookingModel).where(BookingModel.id == booking_id))
-        model = result.scalar_one_or_none()
-        if model is None:
+        result = await session.execute(
+            select(BookingModel, NamespaceModel)
+            .outerjoin(NamespaceModel, NamespaceModel.id == BookingModel.namespace_id)
+            .where(BookingModel.id == booking_id)
+        )
+        row = result.first()
+        if row is None:
             raise BookingNotFoundError(booking_id)
-        return _to_entity(model)
+        model, namespace = row
+        return _to_entity(model, namespace=namespace)
 
     async def update_status(
         self,
@@ -112,28 +128,30 @@ class BookingRepository:
 
     async def list_all(self, session: AsyncSession, include_released: bool = False) -> list[Booking]:
         stmt = (
-            select(BookingModel, UserModel.username)
+            select(BookingModel, UserModel.username, NamespaceModel)
             .join(UserModel, cast(UserModel.id, String) == BookingModel.user_id, isouter=True)
+            .outerjoin(NamespaceModel, NamespaceModel.id == BookingModel.namespace_id)
             .order_by(BookingModel.created_at.desc())
         )
         if not include_released:
             stmt = stmt.where(BookingModel.status != BookingStatus.RELEASED.value)
         result = await session.execute(stmt)
-        return [_to_entity(m, username) for m, username in result.all()]
+        return [_to_entity(m, username, ns) for m, username, ns in result.all()]
 
     async def list_by_user(
         self, session: AsyncSession, user_id: str, include_released: bool = False
     ) -> list[Booking]:
         stmt = (
-            select(BookingModel, UserModel.username)
+            select(BookingModel, UserModel.username, NamespaceModel)
             .join(UserModel, cast(UserModel.id, String) == BookingModel.user_id, isouter=True)
+            .outerjoin(NamespaceModel, NamespaceModel.id == BookingModel.namespace_id)
             .where(BookingModel.user_id == user_id)
             .order_by(BookingModel.created_at.desc())
         )
         if not include_released:
             stmt = stmt.where(BookingModel.status != BookingStatus.RELEASED.value)
         result = await session.execute(stmt)
-        return [_to_entity(m, username) for m, username in result.all()]
+        return [_to_entity(m, username, ns) for m, username, ns in result.all()]
 
     async def list_audit(self, session: AsyncSession, booking_id: UUID) -> list[BookingAuditEntry]:
         result = await session.execute(

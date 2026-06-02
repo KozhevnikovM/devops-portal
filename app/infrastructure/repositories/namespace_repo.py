@@ -2,7 +2,6 @@ from uuid import UUID, uuid4
 
 from sqlalchemy import String, cast, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import Session
 
 from app.domain.entities import Namespace
 from app.domain.enums import BookingStatus
@@ -120,6 +119,20 @@ class NamespaceRepository:
         await session.delete(model)
         await session.commit()
 
-    def lock_for_allocation(self, session: Session, namespace_id: UUID) -> NamespaceModel | None:
-        """SELECT … FOR UPDATE the namespace row; used by the allocation use case (Feature 2)."""
-        return session.get(NamespaceModel, namespace_id, with_for_update=True)
+    async def lock_for_allocation(
+        self, session: AsyncSession, namespace_id: UUID
+    ) -> NamespaceModel | None:
+        """SELECT … FOR UPDATE the namespace row — serializes concurrent allocation."""
+        return await session.get(NamespaceModel, namespace_id, with_for_update=True)
+
+    async def is_held(self, session: AsyncSession, namespace_id: UUID) -> bool:
+        """True if a live (non-terminal) booking currently holds this namespace."""
+        result = await session.execute(
+            select(BookingModel.id)
+            .where(
+                BookingModel.namespace_id == namespace_id,
+                BookingModel.status.in_(_LIVE_STATUSES),
+            )
+            .limit(1)
+        )
+        return result.first() is not None

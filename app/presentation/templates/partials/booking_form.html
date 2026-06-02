@@ -1,38 +1,77 @@
 <div id="booking-form-area">
 {% if quota_error %}
-<p class="text-red-400 text-sm mb-3">{{ quota_error }}. Release an active VM to book another.</p>
+<p class="text-red-400 text-sm mb-3">{{ quota_error }}.</p>
+{% endif %}
+{% if namespace_error %}
+<p class="text-red-400 text-sm mb-3">{{ namespace_error }}</p>
 {% endif %}
 <form
     hx-post="/bookings"
     hx-target="#bookings-list"
     hx-swap="afterbegin"
     hx-on::after-request="document.getElementById('empty-row')?.remove()"
-    class="flex items-end gap-4"
+    class="flex items-end gap-4 flex-wrap"
 >
     <div class="flex flex-col gap-1">
-        <label for="image_id" class="text-xs text-gray-500">Image</label>
+        <label for="resource_type" class="text-xs text-gray-500">Type</label>
         <select
-            id="image_id"
-            name="image_id"
+            id="resource_type"
+            name="resource_type"
+            onchange="_toggleResourceType(this.value)"
             class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-gray-100 focus:outline-none focus:border-green-500 text-sm"
         >
-            {% for img in vm_images %}
-            <option value="{{ img.id }}" {% if current_user is defined and img.id == current_user.default_image_id %}selected{% endif %}>{{ img.name }}</option>
-            {% endfor %}
+            <option value="VM">VM</option>
+            <option value="NAMESPACE">Namespace</option>
         </select>
     </div>
-    <div class="flex flex-col gap-1">
-        <label for="hw_config_id" class="text-xs text-gray-500">Hardware</label>
-        <select
-            id="hw_config_id"
-            name="hw_config_id"
-            class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-gray-100 focus:outline-none focus:border-green-500 text-sm"
-        >
-            {% for hw in hw_configs %}
-            <option value="{{ hw.id }}" {% if current_user is defined and hw.id == current_user.default_hw_config_id %}selected{% endif %}>{{ hw.name }} ({{ hw.cpus }} CPU / {{ hw.memory_mb // 1024 }} GB RAM / {{ hw.hdd_mb // 1024 }} GB HDD)</option>
-            {% endfor %}
-        </select>
+
+    {# ── VM fields ── #}
+    <div class="flex items-end gap-4" data-resource-group="VM">
+        <div class="flex flex-col gap-1">
+            <label for="image_id" class="text-xs text-gray-500">Image</label>
+            <select
+                id="image_id"
+                name="image_id"
+                class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-gray-100 focus:outline-none focus:border-green-500 text-sm"
+            >
+                {% for img in vm_images %}
+                <option value="{{ img.id }}" {% if current_user is defined and img.id == current_user.default_image_id %}selected{% endif %}>{{ img.name }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="flex flex-col gap-1">
+            <label for="hw_config_id" class="text-xs text-gray-500">Hardware</label>
+            <select
+                id="hw_config_id"
+                name="hw_config_id"
+                class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-gray-100 focus:outline-none focus:border-green-500 text-sm"
+            >
+                {% for hw in hw_configs %}
+                <option value="{{ hw.id }}" {% if current_user is defined and hw.id == current_user.default_hw_config_id %}selected{% endif %}>{{ hw.name }} ({{ hw.cpus }} CPU / {{ hw.memory_mb // 1024 }} GB RAM / {{ hw.hdd_mb // 1024 }} GB HDD)</option>
+                {% endfor %}
+            </select>
+        </div>
     </div>
+
+    {# ── Namespace fields (hidden until selected) ── #}
+    <div class="flex items-end gap-4 hidden" data-resource-group="NAMESPACE">
+        <div class="flex flex-col gap-1">
+            <label for="namespace_id" class="text-xs text-gray-500">Namespace</label>
+            <select
+                id="namespace_id"
+                {% if available_namespaces %}name="namespace_id"{% endif %}
+                disabled
+                class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-gray-100 focus:outline-none focus:border-green-500 text-sm"
+            >
+                {% for ns in available_namespaces %}
+                <option value="{{ ns.id }}">{{ ns.name }} ({{ ns.cluster_name }})</option>
+                {% else %}
+                <option value="">No namespaces available</option>
+                {% endfor %}
+            </select>
+        </div>
+    </div>
+
     <div class="flex flex-col gap-1">
         <label for="ttl_minutes" class="text-xs text-gray-500">Duration</label>
         <select
@@ -55,7 +94,17 @@
         type="submit"
         class="bg-green-600 hover:bg-green-500 text-white text-sm px-5 py-2 rounded transition-colors"
     >
-        Book VM
+        Book
     </button>
 </form>
+<script>
+function _toggleResourceType(v) {
+    document.querySelectorAll('#booking-form-area [data-resource-group]').forEach(function (g) {
+        var on = g.getAttribute('data-resource-group') === v;
+        g.classList.toggle('hidden', !on);
+        g.querySelectorAll('select, input').forEach(function (e) { e.disabled = !on; });
+    });
+}
+_toggleResourceType((document.getElementById('resource_type') || {}).value || 'VM');
+</script>
 </div>

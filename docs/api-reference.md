@@ -357,7 +357,8 @@ curl -s http://localhost:8000/bookings \
 
 ### `POST /bookings`
 
-Create a new VM booking.
+Create a new booking. A booking is either a **VM** (provisioned via Terraform) or a
+**namespace** (allocated from the pre-created pool), selected with `resource_type`.
 
 **Auth:** any authenticated user. The booking is created under the caller's identity.
 
@@ -367,18 +368,21 @@ Create a new VM booking.
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `image_id` | UUID | Yes | VM image to deploy |
-| `hw_config_id` | UUID | Yes | Hardware configuration |
+| `resource_type` | string | No | `VM` (default) or `NAMESPACE` |
 | `ttl_minutes` | integer | Yes | Booking duration in minutes; `0` = no expiry |
+| `image_id` | UUID | VM only | VM image to deploy |
+| `hw_config_id` | UUID | VM only | Hardware configuration |
+| `namespace_id` | UUID | Namespace only | A currently-available namespace from the pool |
 
-**Response:**
+**VM response:**
 
-- With `Accept: application/json` → `201` JSON body:
+- With `Accept: application/json` → `201`:
 
 ```json
 {
   "id": "uuid",
   "status": "PENDING",
+  "resource_type": "VM",
   "ttl_minutes": 240,
   "expires_at": "2026-05-14T12:00:00+00:00",
   "created_at": "2026-05-14T08:00:00+00:00",
@@ -389,22 +393,48 @@ Create a new VM booking.
 }
 ```
 
-- Without `Accept: application/json` → `201` HTMX HTML fragment (booking row)
-- `409 Conflict` — resource quota exceeded. JSON clients receive:
+- `409 Conflict` — resource quota exceeded:
 
 ```json
 { "detail": "Quota exceeded: CPU (18/16 cores), memory (36/32 GB)" }
 ```
 
-Browser users see an error banner above the booking form. The error lists each violated
-dimension with projected usage and the limit. Release an active VM to free resources.
+**Namespace response:**
+
+A namespace booking is allocated synchronously and is `READY` immediately (no provisioning,
+no credentials issued). With `Accept: application/json` → `201`:
+
+```json
+{
+  "id": "uuid",
+  "status": "READY",
+  "resource_type": "NAMESPACE",
+  "ttl_minutes": 240,
+  "expires_at": "2026-05-14T12:00:00+00:00",
+  "created_at": "2026-05-14T08:00:00+00:00",
+  "namespace": "team-a-dev",
+  "cluster": "prod-cluster",
+  "api_url": "https://api.cluster:6443"
+}
+```
+
+- `409 Conflict` — the chosen namespace is inactive or already booked (e.g. lost a race).
+- Releasing a namespace booking (or its TTL expiring) returns it to the pool.
+
+Without `Accept: application/json`, both return a `201` HTMX HTML fragment (booking row), and
+errors re-render the booking form with a banner.
 
 **Example (Jenkins/CI):**
 ```bash
+# VM
 curl -s -X POST http://localhost:8000/bookings \
-     -H "Accept: application/json" \
-     -H "Authorization: Bearer dp_<api_key>" \
+     -H "Accept: application/json" -H "Authorization: Bearer dp_<api_key>" \
      -d "ttl_minutes=240&image_id=<image-uuid>&hw_config_id=<hw-config-uuid>" | python3 -m json.tool
+
+# Namespace
+curl -s -X POST http://localhost:8000/bookings \
+     -H "Accept: application/json" -H "Authorization: Bearer dp_<api_key>" \
+     -d "resource_type=NAMESPACE&ttl_minutes=240&namespace_id=<namespace-uuid>" | python3 -m json.tool
 ```
 
 ---

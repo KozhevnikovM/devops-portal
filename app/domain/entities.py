@@ -2,7 +2,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from uuid import UUID
 
-from app.domain.enums import BookingStatus
+from app.domain.enums import BookingStatus, ResourceType
 
 
 @dataclass
@@ -67,10 +67,11 @@ class Booking:
     ttl_minutes: int
     expires_at: datetime
     created_at: datetime
-    image_id: UUID
-    image_name: str
-    hw_config_id: UUID
-    hw_config_name: str
+    resource_type: ResourceType = ResourceType.VM
+    image_id: UUID | None = None
+    image_name: str | None = None
+    hw_config_id: UUID | None = None
+    hw_config_name: str | None = None
     vm_ip: str | None = None
     vm_password: str | None = None
     owner_username: str | None = None
@@ -78,6 +79,10 @@ class Booking:
     memory_mb: int = 0
     hdd_mb: int = 0
     status_message: str | None = None
+    namespace_id: UUID | None = None
+    namespace_name: str | None = None
+    cluster_name: str | None = None
+    api_url: str | None = None
 
 
 @dataclass
