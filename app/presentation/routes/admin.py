@@ -11,6 +11,7 @@ from app.infrastructure.database.session import get_async_session
 from app.infrastructure.repositories.hw_config_repo import HWConfigRepository
 from app.infrastructure.repositories.image_repo import ImageRepository
 from app.infrastructure.repositories.namespace_repo import NamespaceRepository
+from app.infrastructure.repositories.static_vm_repo import StaticVMRepository
 from app.presentation.templating import templates
 
 router = APIRouter()
@@ -18,6 +19,7 @@ router = APIRouter()
 _image_repo = ImageRepository()
 _hw_config_repo = HWConfigRepository()
 _namespace_repo = NamespaceRepository()
+_static_vm_repo = StaticVMRepository()
 
 
 # ── Catalog page ──────────────────────────────────────────────────────────────
@@ -32,6 +34,8 @@ async def admin_catalog_page(
     hw_configs = await _hw_config_repo.list_all(session)
     namespaces = await _namespace_repo.list_all(session)
     held_by = await _namespace_repo.held_by(session)
+    static_vms = await _static_vm_repo.list_all(session)
+    static_vm_held_by = await _static_vm_repo.held_by(session)
     return templates.TemplateResponse(
         request, "admin/catalog.html",
         {
@@ -39,6 +43,8 @@ async def admin_catalog_page(
             "hw_configs": hw_configs,
             "namespaces": namespaces,
             "namespace_held_by": held_by,
+            "static_vms": static_vms,
+            "static_vm_held_by": static_vm_held_by,
             "current_user": current_user,
         },
     )
@@ -460,3 +466,180 @@ async def admin_deactivate_namespace(
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     return await _namespace_table(request, session, current_user)
+
+
+# ── Static VMs ────────────────────────────────────────────────────────────────
+
+async def _static_vm_table(request, session, current_user):
+    static_vms = await _static_vm_repo.list_all(session)
+    held_by = await _static_vm_repo.held_by(session)
+    return templates.TemplateResponse(
+        request, "partials/static_vm_table.html",
+        {"static_vms": static_vms, "static_vm_held_by": held_by, "current_user": current_user},
+    )
+
+
+def _gb_to_mb(value: str) -> int | None:
+    value = value.strip()
+    return int(value) * 1024 if value else None
+
+
+def _credential_error() -> HTMLResponse:
+    return HTMLResponse(
+        content='<span class="text-red-400 text-xs">Provide a password or an SSH key.</span>',
+        headers={"HX-Retarget": "#static-vm-create-error", "HX-Reswap": "innerHTML"},
+    )
+
+
+@router.get("/admin/catalog/static-vms/table", response_class=HTMLResponse)
+async def static_vm_table(
+    request: Request,
+    session: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(require_admin),
+):
+    return await _static_vm_table(request, session, current_user)
+
+
+@router.post("/admin/catalog/static-vms", response_class=HTMLResponse)
+async def admin_create_static_vm(
+    request: Request,
+    name: str = Form(...),
+    host: str = Form(...),
+    username: str = Form(...),
+    password: str = Form(""),
+    ssh_key: str = Form(""),
+    cpus: str = Form(""),
+    memory_gb: str = Form(""),
+    session: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(require_admin),
+):
+    if not password.strip() and not ssh_key.strip():
+        return _credential_error()
+    try:
+        await _static_vm_repo.create(
+            session, name, host, username,
+            password.strip() or None,
+            ssh_key.strip() or None,
+            int(cpus.strip()) if cpus.strip() else None,
+            _gb_to_mb(memory_gb),
+        )
+    except IntegrityError:
+        await session.rollback()
+        error_html = f'<span class="text-red-400 text-xs">Static VM "{name}" already exists.</span>'
+        return HTMLResponse(
+            content=error_html,
+            headers={"HX-Retarget": "#static-vm-create-error", "HX-Reswap": "innerHTML"},
+        )
+    return await _static_vm_table(request, session, current_user)
+
+
+@router.get("/admin/catalog/static-vms/{static_vm_id}/edit", response_class=HTMLResponse)
+async def admin_edit_static_vm_form(
+    request: Request,
+    static_vm_id: UUID,
+    session: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(require_admin),
+):
+    static_vms = await _static_vm_repo.list_all(session)
+    editing_static_vm = next((vm for vm in static_vms if vm.id == static_vm_id), None)
+    if editing_static_vm is None:
+        raise HTTPException(status_code=404, detail="Static VM not found")
+    held_by = await _static_vm_repo.held_by(session)
+    return templates.TemplateResponse(
+        request, "partials/static_vm_table.html",
+        {
+            "static_vms": static_vms,
+            "static_vm_held_by": held_by,
+            "editing_static_vm": editing_static_vm,
+            "current_user": current_user,
+        },
+    )
+
+
+@router.patch("/admin/catalog/static-vms/{static_vm_id}", response_class=HTMLResponse)
+async def admin_update_static_vm(
+    request: Request,
+    static_vm_id: UUID,
+    name: str = Form(...),
+    host: str = Form(...),
+    username: str = Form(...),
+    password: str = Form(""),
+    ssh_key: str = Form(""),
+    cpus: str = Form(""),
+    memory_gb: str = Form(""),
+    session: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(require_admin),
+):
+    if not password.strip() and not ssh_key.strip():
+        return _credential_error()
+    try:
+        await _static_vm_repo.update(
+            session, static_vm_id,
+            {
+                "name": name,
+                "host": host,
+                "username": username,
+                "password": password.strip() or None,
+                "ssh_key": ssh_key.strip() or None,
+                "cpus": int(cpus.strip()) if cpus.strip() else None,
+                "memory_mb": _gb_to_mb(memory_gb),
+            },
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except IntegrityError:
+        await session.rollback()
+        error_html = f'<span class="text-red-400 text-xs">Static VM "{name}" already exists.</span>'
+        return HTMLResponse(
+            content=error_html,
+            headers={"HX-Retarget": "#static-vm-create-error", "HX-Reswap": "innerHTML"},
+        )
+    return await _static_vm_table(request, session, current_user)
+
+
+@router.post("/admin/catalog/static-vms/{static_vm_id}/activate", response_class=HTMLResponse)
+async def admin_activate_static_vm(
+    request: Request,
+    static_vm_id: UUID,
+    session: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(require_admin),
+):
+    try:
+        await _static_vm_repo.activate(session, static_vm_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    return await _static_vm_table(request, session, current_user)
+
+
+@router.delete("/admin/catalog/static-vms/{static_vm_id}/permanent", response_class=HTMLResponse)
+async def admin_delete_static_vm(
+    request: Request,
+    static_vm_id: UUID,
+    session: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(require_admin),
+):
+    try:
+        await _static_vm_repo.delete(session, static_vm_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except IntegrityError:
+        await session.rollback()
+        return HTMLResponse(
+            content='<span class="text-red-400 text-xs">Cannot delete: bookings reference this static VM.</span>',
+            headers={"HX-Retarget": f"#static-vm-delete-error-{static_vm_id}", "HX-Reswap": "innerHTML"},
+        )
+    return await _static_vm_table(request, session, current_user)
+
+
+@router.delete("/admin/catalog/static-vms/{static_vm_id}", response_class=HTMLResponse)
+async def admin_deactivate_static_vm(
+    request: Request,
+    static_vm_id: UUID,
+    session: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(require_admin),
+):
+    try:
+        await _static_vm_repo.deactivate(session, static_vm_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    return await _static_vm_table(request, session, current_user)

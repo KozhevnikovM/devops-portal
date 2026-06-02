@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, func
+from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Integer, String, Text, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -43,6 +43,27 @@ class NamespaceModel(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
+class StaticVMModel(Base):
+    __tablename__ = "static_vms"
+    __table_args__ = (
+        CheckConstraint(
+            "password IS NOT NULL OR ssh_key IS NOT NULL",
+            name="ck_static_vms_credential_present",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    host: Mapped[str] = mapped_column(String(256), nullable=False)
+    username: Mapped[str] = mapped_column(String(64), nullable=False)
+    password: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    ssh_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    cpus: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    memory_mb: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
 class BookingModel(Base):
     __tablename__ = "bookings"
 
@@ -57,6 +78,7 @@ class BookingModel(Base):
     hw_config_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("hw_configs.id"), nullable=True)
     hw_config_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
     namespace_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("namespaces.id"), nullable=True)
+    static_vm_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("static_vms.id"), nullable=True)
     cpus: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     memory_mb: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     hdd_mb: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

@@ -202,5 +202,115 @@
             {% include "partials/namespace_table.html" %}
         </div>
     </div>
+
+    {# ── Static VMs ───────────────────────────────────────────────────────── #}
+    <div class="mt-8">
+        <h3 class="text-xs text-gray-500 uppercase tracking-widest mb-4">Static VMs</h3>
+
+        <div class="bg-gray-900 border border-gray-800 rounded-lg p-6 mb-4">
+            <p class="text-xs text-gray-500 uppercase tracking-widest mb-4">Add Static VM</p>
+            <form
+                hx-post="/admin/catalog/static-vms"
+                hx-target="#static-vm-table"
+                hx-swap="outerHTML"
+                hx-on::after-request="if(event.detail.successful) this.reset()"
+                class="flex items-end gap-3 flex-wrap"
+            >
+                <div class="flex flex-col gap-1.5">
+                    <label class="text-xs text-gray-500" for="new-svm-name">Name</label>
+                    <input
+                        id="new-svm-name"
+                        name="name"
+                        type="text"
+                        required
+                        autocomplete="off"
+                        class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-36"
+                        placeholder="build-agent-1"
+                    >
+                </div>
+                <div class="flex flex-col gap-1.5">
+                    <label class="text-xs text-gray-500" for="new-svm-host">Host</label>
+                    <input
+                        id="new-svm-host"
+                        name="host"
+                        type="text"
+                        required
+                        autocomplete="off"
+                        class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-44 font-mono"
+                        placeholder="10.0.0.12"
+                    >
+                </div>
+                <div class="flex flex-col gap-1.5">
+                    <label class="text-xs text-gray-500" for="new-svm-user">Username</label>
+                    <input
+                        id="new-svm-user"
+                        name="username"
+                        type="text"
+                        required
+                        autocomplete="off"
+                        class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-32"
+                        placeholder="ubuntu"
+                    >
+                </div>
+                <div class="flex flex-col gap-1.5">
+                    <label class="text-xs text-gray-500" for="new-svm-pass">Password</label>
+                    <input
+                        id="new-svm-pass"
+                        name="password"
+                        type="text"
+                        autocomplete="off"
+                        class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-36 font-mono"
+                        placeholder="secret"
+                    >
+                </div>
+                <div class="flex flex-col gap-1.5">
+                    <label class="text-xs text-gray-500" for="new-svm-key">SSH Key</label>
+                    <input
+                        id="new-svm-key"
+                        name="ssh_key"
+                        type="text"
+                        autocomplete="off"
+                        class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-56 font-mono"
+                        placeholder="ssh-ed25519 AAAA…"
+                    >
+                </div>
+                <div class="flex flex-col gap-1.5">
+                    <label class="text-xs text-gray-500" for="new-svm-cpus">CPUs</label>
+                    <input
+                        id="new-svm-cpus"
+                        name="cpus"
+                        type="number"
+                        min="1"
+                        class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-20"
+                        placeholder="2"
+                    >
+                </div>
+                <div class="flex flex-col gap-1.5">
+                    <label class="text-xs text-gray-500" for="new-svm-ram">RAM (GB)</label>
+                    <input
+                        id="new-svm-ram"
+                        name="memory_gb"
+                        type="number"
+                        min="1"
+                        class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-24"
+                        placeholder="4"
+                    >
+                </div>
+                <div class="flex flex-col gap-1.5">
+                    <div id="static-vm-create-error" class="text-xs h-4"></div>
+                    <button
+                        type="submit"
+                        class="px-4 py-2 bg-green-700 hover:bg-green-600 text-green-100 text-sm rounded transition-colors"
+                    >
+                        Add
+                    </button>
+                </div>
+            </form>
+        </div>
+
+        <div class="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden">
+            {% include "partials/static_vm_table.html" %}
+        </div>
+    </div>
 </div>
 {% endblock %}
