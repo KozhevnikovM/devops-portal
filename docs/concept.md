@@ -17,7 +17,7 @@ The main goal is to replace manual resource requests with an automated "booking"
 ### 🛠 DevOps (Administrator)
 * **Resource Catalog:** Creates and edits VM and DB templates so users can choose from approved configurations.
 * **Limit Management:** Sets quotas at the team and project levels.
-* **K8s Management:** Manages the list of available Namespaces for booking.
+* **K8s Management:** Manages the list of available Namespaces for booking. *(Delivered in v0.5.0 — see Implementation Status.)*
 * **Control:** See the overall resource map and can forcibly release resources when necessary.
 
 ### 🤖 Jenkins Service Account (Automation)
@@ -67,3 +67,21 @@ For resources marked as "Permanent," a mandatory confirmation mechanism is intro
 * **Reliability:**
     * Queue-based resource creation (if external systems are temporarily unavailable).
     * Full audit log of all actions (who, when, and what created/changed/deleted).
+
+---
+
+## Implementation Status
+
+A snapshot of what the concept above is **actually delivered** vs. still roadmap (as of v0.5.0).
+
+**Delivered**
+* **VM booking** end-to-end via Terraform/VMware: image + hardware catalog, TTL, per-user resource quota (CPU/RAM/disk), live status, audit log, admin force-delete.
+* **Kubernetes namespaces (v0.5.0):** DevOps registers pre-created namespaces in an admin-managed **pool**; a user **reserves** an available one for a TTL from the *Namespaces* page; release or TTL expiry returns it to the pool. Namespaces are **reserved, not provisioned** — the portal does not create namespaces, run Terraform for them, or issue credentials.
+* **Per-resource-type navigation** (Virtual Machines / Namespaces) with type-scoped booking lists.
+
+**Roadmap (not yet built)**
+* **Environments** — grouping several resources (e.g. 1 namespace + 2 VMs) into one order/stack.
+* **Databases** as a resource type.
+* **Namespace provisioning & credentials** — dynamic creation and a scoped kubeconfig (today namespaces are reserve-from-pool only).
+* **Sharing**, and **team/project-level quotas** — quota is currently per-user.
+* **Keep-alive** confirmation for permanent resources.
