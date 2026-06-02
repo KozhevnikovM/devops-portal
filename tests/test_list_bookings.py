@@ -68,10 +68,12 @@ def test_list_bookings_response_shape(client):
 
     row = resp.json()[0]
     assert set(row.keys()) == {
-        "id", "user_id", "status", "ttl_minutes",
+        "id", "user_id", "status", "resource_type", "ttl_minutes",
         "expires_at", "created_at", "image_id", "image_name",
         "hw_config_id", "hw_config_name", "vm_ip", "vm_password",
+        "namespace", "cluster", "api_url",
     }
     assert row["id"] == str(booking.id)
     assert row["status"] == "READY"
+    assert row["resource_type"] == "VM"
     assert row["vm_ip"] == "10.0.0.1"

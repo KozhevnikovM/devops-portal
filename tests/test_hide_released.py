@@ -27,10 +27,12 @@ def test_default_excludes_released(setup):
 
     with patch("app.presentation.routes.bookings._repo") as mock_repo, \
          patch("app.presentation.routes.bookings._image_repo") as mock_img, \
-         patch("app.presentation.routes.bookings._hw_config_repo") as mock_hw:
+         patch("app.presentation.routes.bookings._hw_config_repo") as mock_hw, \
+         patch("app.presentation.routes.bookings._namespace_repo") as mock_ns:
         mock_repo.list_by_user = AsyncMock(return_value=[])
         mock_img.list_active = AsyncMock(return_value=[])
         mock_hw.list_active = AsyncMock(return_value=[])
+        mock_ns.list_available = AsyncMock(return_value=[])
 
         resp = client.get("/")
 
@@ -44,10 +46,12 @@ def test_show_released_includes_them(setup):
 
     with patch("app.presentation.routes.bookings._repo") as mock_repo, \
          patch("app.presentation.routes.bookings._image_repo") as mock_img, \
-         patch("app.presentation.routes.bookings._hw_config_repo") as mock_hw:
+         patch("app.presentation.routes.bookings._hw_config_repo") as mock_hw, \
+         patch("app.presentation.routes.bookings._namespace_repo") as mock_ns:
         mock_repo.list_by_user = AsyncMock(return_value=[])
         mock_img.list_active = AsyncMock(return_value=[])
         mock_hw.list_active = AsyncMock(return_value=[])
+        mock_ns.list_available = AsyncMock(return_value=[])
 
         resp = client.get("/?show_released=1")
 
@@ -61,10 +65,12 @@ def test_filter_all_default_excludes_released(setup):
 
     with patch("app.presentation.routes.bookings._repo") as mock_repo, \
          patch("app.presentation.routes.bookings._image_repo") as mock_img, \
-         patch("app.presentation.routes.bookings._hw_config_repo") as mock_hw:
+         patch("app.presentation.routes.bookings._hw_config_repo") as mock_hw, \
+         patch("app.presentation.routes.bookings._namespace_repo") as mock_ns:
         mock_repo.list_all = AsyncMock(return_value=[])
         mock_img.list_active = AsyncMock(return_value=[])
         mock_hw.list_active = AsyncMock(return_value=[])
+        mock_ns.list_available = AsyncMock(return_value=[])
 
         resp = client.get("/?filter=all")
 
@@ -78,10 +84,12 @@ def test_filter_all_show_released_includes_them(setup):
 
     with patch("app.presentation.routes.bookings._repo") as mock_repo, \
          patch("app.presentation.routes.bookings._image_repo") as mock_img, \
-         patch("app.presentation.routes.bookings._hw_config_repo") as mock_hw:
+         patch("app.presentation.routes.bookings._hw_config_repo") as mock_hw, \
+         patch("app.presentation.routes.bookings._namespace_repo") as mock_ns:
         mock_repo.list_all = AsyncMock(return_value=[])
         mock_img.list_active = AsyncMock(return_value=[])
         mock_hw.list_active = AsyncMock(return_value=[])
+        mock_ns.list_available = AsyncMock(return_value=[])
 
         resp = client.get("/?filter=all&show_released=1")
 
@@ -95,10 +103,12 @@ def test_toggle_button_preserves_owner_filter(setup):
 
     with patch("app.presentation.routes.bookings._repo") as mock_repo, \
          patch("app.presentation.routes.bookings._image_repo") as mock_img, \
-         patch("app.presentation.routes.bookings._hw_config_repo") as mock_hw:
+         patch("app.presentation.routes.bookings._hw_config_repo") as mock_hw, \
+         patch("app.presentation.routes.bookings._namespace_repo") as mock_ns:
         mock_repo.list_all = AsyncMock(return_value=[])
         mock_img.list_active = AsyncMock(return_value=[])
         mock_hw.list_active = AsyncMock(return_value=[])
+        mock_ns.list_available = AsyncMock(return_value=[])
 
         resp = client.get("/?filter=all")
 

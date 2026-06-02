@@ -10,6 +10,10 @@ class QuotaExceededError(BookingError):
     pass
 
 
+class NamespaceUnavailableError(BookingError):
+    pass
+
+
 class AuthenticationError(Exception):
     pass
 

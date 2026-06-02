@@ -6,14 +6,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.use_cases.create_booking import CreateBookingUseCase
 from app.application.use_cases.extend_booking import ExtendBookingUseCase
+from app.application.use_cases.book_namespace import BookNamespaceUseCase
 from app.domain.entities import User
-from app.domain.enums import BookingStatus
-from app.domain.exceptions import BookingError, BookingNotFoundError, PermissionError, QuotaExceededError
+from app.domain.enums import BookingStatus, ResourceType
+from app.domain.exceptions import (
+    BookingError, BookingNotFoundError, NamespaceUnavailableError, PermissionError, QuotaExceededError,
+)
 from app.infrastructure.auth import require_user
 from app.infrastructure.database.session import get_async_session
 from app.infrastructure.repositories.booking_repo import BookingRepository
 from app.infrastructure.repositories.image_repo import ImageRepository
 from app.infrastructure.repositories.hw_config_repo import HWConfigRepository
+from app.infrastructure.repositories.namespace_repo import NamespaceRepository
 from app.presentation.templating import templates
 
 router = APIRouter()
@@ -21,8 +25,10 @@ router = APIRouter()
 _repo = BookingRepository()
 _image_repo = ImageRepository()
 _hw_config_repo = HWConfigRepository()
+_namespace_repo = NamespaceRepository()
 _use_case = CreateBookingUseCase(_repo, _image_repo, _hw_config_repo)
 _extend_use_case = ExtendBookingUseCase(_repo)
+_book_namespace_use_case = BookNamespaceUseCase(_repo, _namespace_repo)
 
 
 @router.get("/", response_class=HTMLResponse)
@@ -41,12 +47,14 @@ async def index(
         )
     vm_images = await _image_repo.list_active(session)
     hw_configs = await _hw_config_repo.list_active(session)
+    available_namespaces = await _namespace_repo.list_available(session)
     return templates.TemplateResponse(
         request, "index.html",
         {
             "bookings": bookings,
             "vm_images": vm_images,
             "hw_configs": hw_configs,
+            "available_namespaces": available_namespaces,
             "current_user": current_user,
             "active_filter": filter,
             "show_released": show_released,
@@ -65,52 +73,111 @@ async def list_bookings(
             "id": str(b.id),
             "user_id": b.user_id,
             "status": b.status.value,
+            "resource_type": b.resource_type.value,
             "ttl_minutes": b.ttl_minutes,
             "expires_at": b.expires_at.isoformat(),
             "created_at": b.created_at.isoformat(),
-            "image_id": str(b.image_id),
+            "image_id": str(b.image_id) if b.image_id else None,
             "image_name": b.image_name,
-            "hw_config_id": str(b.hw_config_id),
+            "hw_config_id": str(b.hw_config_id) if b.hw_config_id else None,
             "hw_config_name": b.hw_config_name,
             "vm_ip": b.vm_ip,
             "vm_password": b.vm_password,
+            "namespace": b.namespace_name,
+            "cluster": b.cluster_name,
+            "api_url": b.api_url,
         }
         for b in bookings
     ])
+
+
+async def _render_form_error(request, session, current_user, **errors):
+    """Re-render the booking form with an error banner (HTMX swaps the form area)."""
+    ctx = {
+        "vm_images": await _image_repo.list_active(session),
+        "hw_configs": await _hw_config_repo.list_active(session),
+        "available_namespaces": await _namespace_repo.list_available(session),
+        "current_user": current_user,
+    }
+    ctx.update(errors)
+    return templates.TemplateResponse(
+        request, "partials/booking_form.html", ctx,
+        headers={"HX-Retarget": "#booking-form-area", "HX-Reswap": "outerHTML"},
+    )
 
 
 @router.post("/bookings")
 async def create_booking(
     request: Request,
     ttl_minutes: int = Form(...),
-    image_id: UUID = Form(...),
-    hw_config_id: UUID = Form(...),
+    resource_type: str = Form("VM"),
+    image_id: UUID | None = Form(None),
+    hw_config_id: UUID | None = Form(None),
+    namespace_id: UUID | None = Form(None),
     session: AsyncSession = Depends(get_async_session),
     current_user: User = Depends(require_user),
 ):
+    wants_json = "application/json" in request.headers.get("accept", "")
+
+    # ── Namespace booking — allocate from the pool, no provisioning ──
+    if resource_type == ResourceType.NAMESPACE.value:
+        if namespace_id is None:
+            if wants_json:
+                raise HTTPException(status_code=400, detail="namespace_id is required")
+            return await _render_form_error(
+                request, session, current_user, namespace_error="Select a namespace to book."
+            )
+        try:
+            booking = await _book_namespace_use_case.execute(
+                session, namespace_id, ttl_minutes, user_id=str(current_user.id)
+            )
+        except NamespaceUnavailableError as exc:
+            if wants_json:
+                raise HTTPException(status_code=409, detail=str(exc))
+            return await _render_form_error(request, session, current_user, namespace_error=str(exc))
+
+        booking.owner_username = current_user.username
+        if wants_json:
+            return JSONResponse(
+                {
+                    "id": str(booking.id),
+                    "status": booking.status.value,
+                    "resource_type": booking.resource_type.value,
+                    "ttl_minutes": booking.ttl_minutes,
+                    "expires_at": booking.expires_at.isoformat(),
+                    "created_at": booking.created_at.isoformat(),
+                    "namespace": booking.namespace_name,
+                    "cluster": booking.cluster_name,
+                    "api_url": booking.api_url,
+                },
+                status_code=201,
+            )
+        return templates.TemplateResponse(
+            request, "partials/booking_row.html",
+            {"booking": booking, "current_user": current_user}, status_code=201,
+        )
+
+    # ── VM booking — existing provisioning flow ──
+    if image_id is None or hw_config_id is None:
+        if wants_json:
+            raise HTTPException(status_code=400, detail="image_id and hw_config_id are required")
+        return await _render_form_error(
+            request, session, current_user, quota_error="Select an image and hardware config",
+        )
+
     try:
         booking = await _use_case.execute(session, ttl_minutes, image_id, hw_config_id, user_id=str(current_user.id))
     except QuotaExceededError as exc:
-        if "application/json" in request.headers.get("accept", ""):
+        if wants_json:
             raise HTTPException(status_code=409, detail=str(exc))
-        vm_images = await _image_repo.list_active(session)
-        hw_configs = await _hw_config_repo.list_active(session)
-        return templates.TemplateResponse(
-            request, "partials/booking_form.html",
-            {
-                "vm_images": vm_images,
-                "hw_configs": hw_configs,
-                "current_user": current_user,
-                "quota_error": str(exc),
-            },
-            headers={"HX-Retarget": "#booking-form-area", "HX-Reswap": "outerHTML"},
-        )
+        return await _render_form_error(request, session, current_user, quota_error=str(exc))
 
-    if "application/json" in request.headers.get("accept", ""):
+    if wants_json:
         return JSONResponse(
             {
                 "id": str(booking.id),
                 "status": booking.status.value,
+                "resource_type": booking.resource_type.value,
                 "ttl_minutes": booking.ttl_minutes,
                 "expires_at": booking.expires_at.isoformat(),
                 "created_at": booking.created_at.isoformat(),
@@ -170,8 +237,12 @@ async def release_booking(
         if booking.status not in _RELEASABLE_STATUSES:
             raise HTTPException(status_code=409, detail=f"Cannot release booking with status {booking.status.value}")
 
-    await _repo.update_status(session, booking_id, BookingStatus.RELEASING, actor_id=str(current_user.id))
-    teardown_vm_task.delay(str(booking_id))
+    if booking.resource_type == ResourceType.NAMESPACE:
+        # Pooled namespace — nothing to tear down; just return it to the pool.
+        await _repo.update_status(session, booking_id, BookingStatus.RELEASED, actor_id=str(current_user.id))
+    else:
+        await _repo.update_status(session, booking_id, BookingStatus.RELEASING, actor_id=str(current_user.id))
+        teardown_vm_task.delay(str(booking_id))
 
     booking = await _repo.get(session, booking_id)
 

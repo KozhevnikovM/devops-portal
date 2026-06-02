@@ -11,9 +11,15 @@
     <td class="px-4 py-3 text-gray-400 text-xs">{{ booking.id | string | truncate(8, True, '') }}…</td>
     <td class="px-4 py-3 text-gray-400 text-xs">{{ booking.owner_username or '—' }}</td>
     <td class="px-4 py-3 text-gray-300 text-sm">
+        {% if booking.resource_type.value == 'NAMESPACE' %}
+        <span class="text-gray-500">ns</span> {{ booking.namespace_name }}
+        <span class="text-gray-500">/</span>
+        {{ booking.cluster_name }}
+        {% else %}
         {{ booking.image_name }}
         <span class="text-gray-500">/</span>
         {{ booking.hw_config_name }}
+        {% endif %}
     </td>
     <td class="px-4 py-3">
         <span class="text-xs px-2 py-1 rounded font-semibold status-{{ booking.status.value }}">
@@ -37,7 +43,13 @@
         {% else %}{{ booking.expires_at | as_tz(current_user.timezone) }}{% endif %}
     </td>
     <td class="px-4 py-3 text-gray-300">
-        {% if booking.vm_ip %}
+        {% if booking.resource_type.value == 'NAMESPACE' %}
+            {% if booking.api_url %}
+                <span class="text-green-400 text-xs font-mono break-all">{{ booking.api_url }}</span>
+            {% else %}
+                <span class="text-gray-600">—</span>
+            {% endif %}
+        {% elif booking.vm_ip %}
             <span class="text-green-400">{{ booking.vm_ip }}</span>
         {% else %}
             <span class="text-gray-600">—</span>
@@ -89,7 +101,7 @@
                             hx-delete="/bookings/{{ booking.id }}"
                             hx-target="#booking-{{ booking.id }}"
                             hx-swap="outerHTML"
-                            hx-confirm="Release this VM? The machine will be destroyed."
+                            hx-confirm="{% if booking.resource_type.value == 'NAMESPACE' %}Release this namespace? It returns to the pool.{% else %}Release this VM? The machine will be destroyed.{% endif %}"
                         >
                             Release
                         </button>

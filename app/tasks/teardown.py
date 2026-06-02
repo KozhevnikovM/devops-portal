@@ -3,7 +3,7 @@ import logging
 from uuid import UUID
 
 from app.config import settings
-from app.domain.enums import BookingStatus
+from app.domain.enums import BookingStatus, ResourceType
 from app.infrastructure.celery_app import celery_app
 from app.infrastructure.database.session import SyncSessionLocal
 from app.infrastructure.repositories.booking_repo import BookingRepository
@@ -38,6 +38,13 @@ def teardown_vm_task(self, booking_id: str) -> None:
     with SyncSessionLocal() as session:
         try:
             booking = repo.sync_get(session, booking_uuid)
+
+            # Pooled namespaces aren't provisioned — releasing just frees them.
+            if booking.resource_type == ResourceType.NAMESPACE:
+                repo.sync_update_status(session, booking_uuid, BookingStatus.RELEASED)
+                logger.info("Released namespace booking %s", booking_id)
+                return
+
             image = image_repo.sync_get(session, booking.image_id)
             hw = hw_config_repo.sync_get(session, booking.hw_config_id)
             config = {
