@@ -60,6 +60,19 @@ class Namespace:
 
 
 @dataclass
+class StaticVM:
+    id: UUID
+    name: str
+    host: str
+    username: str
+    password: str
+    cpus: int | None
+    memory_mb: int | None
+    is_active: bool
+    created_at: datetime
+
+
+@dataclass
 class Booking:
     id: UUID
     user_id: str
@@ -83,6 +96,7 @@ class Booking:
     namespace_name: str | None = None
     cluster_name: str | None = None
     api_url: str | None = None
+    static_vm_id: UUID | None = None
 
 
 @dataclass

@@ -13,4 +13,5 @@ class BookingStatus(str, Enum):
 
 class ResourceType(str, Enum):
     VM        = "VM"
+    STATIC_VM = "STATIC_VM"
     NAMESPACE = "NAMESPACE"

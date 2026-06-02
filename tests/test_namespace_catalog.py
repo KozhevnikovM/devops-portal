@@ -44,11 +44,14 @@ def test_catalog_page_renders_namespace_availability(client):
         patch("app.presentation.routes.admin._image_repo") as mock_img,
         patch("app.presentation.routes.admin._hw_config_repo") as mock_hw,
         patch("app.presentation.routes.admin._namespace_repo") as mock_ns,
+        patch("app.presentation.routes.admin._static_vm_repo") as mock_svm,
     ):
         mock_img.list_all = AsyncMock(return_value=[])
         mock_hw.list_all = AsyncMock(return_value=[])
         mock_ns.list_all = AsyncMock(return_value=[ns_free, ns_booked])
         mock_ns.held_by = AsyncMock(return_value={ns_booked.id: "alice"})
+        mock_svm.list_all = AsyncMock(return_value=[])
+        mock_svm.held_by = AsyncMock(return_value={})
         resp = client.get("/admin/catalog")
 
     assert resp.status_code == 200
