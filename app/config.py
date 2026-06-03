@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     PROVISION_RATE_LIMIT: str = "0.5/m"
 
     # Celery beat tasks
+    ENFORCE_TTL_INTERVAL_SECONDS: int = 60       # how often to release expired bookings
     STALE_PROVISIONING_THRESHOLD_MINUTES: int = 60
 
     # Terraform / VCD — only required when USE_STUB_TERRAFORM=False

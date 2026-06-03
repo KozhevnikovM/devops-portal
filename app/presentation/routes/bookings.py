@@ -39,6 +39,14 @@ _reserve_static_vm_use_case = ReserveStaticVMUseCase(_repo, _static_vm_repo)
 _VM_PAGE_TYPES = [ResourceType.VM.value, ResourceType.STATIC_VM.value]
 
 
+async def _attach_queue_position(session, booking) -> None:
+    """Populate FIFO rank for a QUEUED booking (display only)."""
+    if booking.status == BookingStatus.QUEUED:
+        booking.queue_position = await _repo.queue_position(
+            session, booking.resource_type.value, booking.created_at
+        )
+
+
 async def _render_bookings_page(
     request, session, current_user, *, booking_type, page_path, active_nav, filter, show_released,
 ):
@@ -53,6 +61,8 @@ async def _render_bookings_page(
         bookings = await _repo.list_by_user(
             session, str(current_user.id), include_released=show_released, resource_type=query_types
         )
+    for b in bookings:
+        await _attach_queue_position(session, b)
     vm_images = await _image_repo.list_active(session)
     hw_configs = await _hw_config_repo.list_active(session)
     available_namespaces = await _namespace_repo.list_available(session)
@@ -169,18 +179,11 @@ async def create_booking(
 ):
     wants_json = "application/json" in request.headers.get("accept", "")
 
-    # ── Namespace booking — allocate from the pool, no provisioning ──
+    # ── Namespace booking — reserve from the pool (pick-specific or any), else queue ──
     if resource_type == ResourceType.NAMESPACE.value:
-        if namespace_id is None:
-            if wants_json:
-                raise HTTPException(status_code=400, detail="namespace_id is required")
-            return await _render_form_error(
-                request, session, current_user,
-                booking_type="NAMESPACE", namespace_error="Select a namespace to book.",
-            )
         try:
             booking = await _book_namespace_use_case.execute(
-                session, namespace_id, ttl_minutes, user_id=str(current_user.id)
+                session, ttl_minutes, user_id=str(current_user.id), namespace_id=namespace_id
             )
         except NamespaceUnavailableError as exc:
             if wants_json:
@@ -190,6 +193,7 @@ async def create_booking(
             )
 
         booking.owner_username = current_user.username
+        await _attach_queue_position(session, booking)
         if wants_json:
             return JSONResponse(
                 {
@@ -202,6 +206,7 @@ async def create_booking(
                     "namespace": booking.namespace_name,
                     "cluster": booking.cluster_name,
                     "api_url": booking.api_url,
+                    "queue_position": booking.queue_position,
                 },
                 status_code=201,
             )
@@ -224,6 +229,7 @@ async def create_booking(
             )
 
         booking.owner_username = current_user.username
+        await _attach_queue_position(session, booking)
         if wants_json:
             return JSONResponse(
                 {
@@ -238,6 +244,7 @@ async def create_booking(
                     "username": booking.static_vm_username,
                     "password": booking.static_vm_password,
                     "ssh_key": booking.static_vm_ssh_key,
+                    "queue_position": booking.queue_position,
                 },
                 status_code=201,
             )
@@ -291,6 +298,7 @@ async def booking_row(
     current_user: User = Depends(require_user),
 ):
     booking = await _repo.get(session, booking_id)
+    await _attach_queue_position(session, booking)
     return templates.TemplateResponse(
         request, "partials/booking_row.html", {"booking": booking, "current_user": current_user}
     )
@@ -320,18 +328,23 @@ async def release_booking(
 
     is_admin_force_delete = current_user.role == "admin" and booking.status in _FORCE_DELETABLE_STATUSES
 
-    if not is_admin_force_delete:
-        if booking.status in _IN_FLIGHT_STATUSES:
-            raise HTTPException(status_code=409, detail="Cannot release an in-flight booking")
-        if booking.status not in _RELEASABLE_STATUSES:
-            raise HTTPException(status_code=409, detail=f"Cannot release booking with status {booking.status.value}")
-
-    if booking.resource_type in (ResourceType.NAMESPACE, ResourceType.STATIC_VM):
-        # Pooled resource — nothing to tear down; just return it to the pool.
+    if booking.status == BookingStatus.QUEUED:
+        # Cancel the queue slot — holds no resource, so nothing to tear down or promote.
         await _repo.update_status(session, booking_id, BookingStatus.RELEASED, actor_id=str(current_user.id))
     else:
-        await _repo.update_status(session, booking_id, BookingStatus.RELEASING, actor_id=str(current_user.id))
-        teardown_vm_task.delay(str(booking_id))
+        if not is_admin_force_delete:
+            if booking.status in _IN_FLIGHT_STATUSES:
+                raise HTTPException(status_code=409, detail="Cannot release an in-flight booking")
+            if booking.status not in _RELEASABLE_STATUSES:
+                raise HTTPException(status_code=409, detail=f"Cannot release booking with status {booking.status.value}")
+
+        if booking.resource_type in (ResourceType.NAMESPACE, ResourceType.STATIC_VM):
+            # Pooled resource — return it to the pool, then hand it to the next queued booking.
+            await _repo.update_status(session, booking_id, BookingStatus.RELEASED, actor_id=str(current_user.id))
+            await _repo.promote_next_queued(session, booking.resource_type.value)
+        else:
+            await _repo.update_status(session, booking_id, BookingStatus.RELEASING, actor_id=str(current_user.id))
+            teardown_vm_task.delay(str(booking_id))
 
     booking = await _repo.get(session, booking_id)
 

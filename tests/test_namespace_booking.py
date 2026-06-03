@@ -59,7 +59,7 @@ async def test_use_case_allocates_free_namespace():
     ns_repo.is_held = AsyncMock(return_value=False)
 
     use_case = BookNamespaceUseCase(repo, ns_repo)
-    booking = await use_case.execute(AsyncMock(), ns_id, 240, user_id="u1")
+    booking = await use_case.execute(AsyncMock(), 240, user_id="u1", namespace_id=ns_id)
 
     assert booking.status == BookingStatus.READY
     assert booking.resource_type == ResourceType.NAMESPACE
@@ -82,7 +82,7 @@ async def test_use_case_rejects_inactive_namespace():
 
     use_case = BookNamespaceUseCase(repo, ns_repo)
     with pytest.raises(NamespaceUnavailableError):
-        await use_case.execute(AsyncMock(), ns_model.id, 240, user_id="u1")
+        await use_case.execute(AsyncMock(), 240, user_id="u1", namespace_id=ns_model.id)
     repo.create.assert_not_called()
 
 
@@ -99,7 +99,7 @@ async def test_use_case_rejects_held_namespace():
 
     use_case = BookNamespaceUseCase(repo, ns_repo)
     with pytest.raises(NamespaceUnavailableError):
-        await use_case.execute(AsyncMock(), ns_model.id, 240, user_id="u1")
+        await use_case.execute(AsyncMock(), 240, user_id="u1", namespace_id=ns_model.id)
     repo.create.assert_not_called()
 
 
@@ -152,21 +152,17 @@ def test_post_booking_namespace_unavailable_409_json(client):
     assert resp.status_code == 409
 
 
-def test_post_booking_namespace_missing_id_html_shows_error(client):
+def test_post_booking_namespace_no_id_uses_any_available(client):
+    """No namespace_id → 'Any available' path; the use case is called with namespace_id=None."""
     cl, _ = client
-    with patch("app.presentation.routes.bookings._image_repo") as mock_img, \
-         patch("app.presentation.routes.bookings._hw_config_repo") as mock_hw, \
-         patch("app.presentation.routes.bookings._namespace_repo") as mock_ns, \
-         patch("app.presentation.routes.bookings._static_vm_repo") as mock_svm:
-        mock_img.list_active = AsyncMock(return_value=[])
-        mock_hw.list_active = AsyncMock(return_value=[])
-        mock_ns.list_available = AsyncMock(return_value=[])
-        mock_svm.list_available = AsyncMock(return_value=[])
+    booking = _make_ns_booking()
+    with patch("app.presentation.routes.bookings._book_namespace_use_case") as mock_uc, \
+         patch("app.presentation.routes.bookings._repo") as mock_repo:
+        mock_uc.execute = AsyncMock(return_value=booking)
         resp = cl.post("/bookings", data={"resource_type": "NAMESPACE", "ttl_minutes": "240"})
 
-    assert resp.status_code == 200
-    assert resp.headers.get("HX-Retarget") == "#booking-form-area"
-    assert "Select a namespace" in resp.text
+    assert resp.status_code == 201
+    assert mock_uc.execute.call_args.kwargs["namespace_id"] is None
 
 
 # ── Release (namespace) ───────────────────────────────────────────────────────
@@ -180,6 +176,7 @@ def test_release_namespace_sets_released_without_teardown(client):
          patch("app.tasks.teardown.teardown_vm_task") as mock_task:
         mock_repo.get = AsyncMock(side_effect=[booking, released])
         mock_repo.update_status = AsyncMock()
+        mock_repo.promote_next_queued = AsyncMock()
         resp = cl.delete(f"/bookings/{booking.id}", headers={"Accept": "application/json"})
 
     assert resp.status_code == 202
@@ -187,6 +184,8 @@ def test_release_namespace_sets_released_without_teardown(client):
     # status set directly to RELEASED; no teardown task queued for a namespace
     assert mock_repo.update_status.call_args.args[2] == BookingStatus.RELEASED
     mock_task.delay.assert_not_called()
+    # releasing a pooled resource hands it to the next queued booking
+    mock_repo.promote_next_queued.assert_awaited_once()
 
 
 # ── Teardown task (namespace) ─────────────────────────────────────────────────

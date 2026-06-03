@@ -17,19 +17,18 @@
     class="flex items-end gap-4 flex-wrap"
 >
     {% if booking_type == 'NAMESPACE' %}
-    {# ── Namespace ── #}
+    {# ── Namespace — pick a specific free namespace or "Any available" (queues when empty) ── #}
     <input type="hidden" name="resource_type" value="NAMESPACE">
     <div class="flex flex-col gap-1">
         <label for="namespace_id" class="text-xs text-gray-500">Namespace</label>
         <select
             id="namespace_id"
-            {% if available_namespaces %}name="namespace_id"{% endif %}
+            name="namespace_id"
             class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-gray-100 focus:outline-none focus:border-green-500 text-sm"
         >
+            <option value="">Any available ({{ available_namespaces | length }})</option>
             {% for ns in available_namespaces %}
             <option value="{{ ns.id }}">{{ ns.name }} ({{ ns.cluster_name }})</option>
-            {% else %}
-            <option value="">No namespaces available</option>
             {% endfor %}
         </select>
     </div>
