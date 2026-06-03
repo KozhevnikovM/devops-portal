@@ -1,0 +1,13 @@
+# Copy to inventory.ini and fill in your host.
+#
+#   ansible-playbook -i inventory.ini deploy.yml
+#
+# Put secrets (ADMIN_PASSWORD, VCD_*) in an ansible-vault file rather than here.
+
+[portal]
+my-server ansible_host=203.0.113.10 ansible_user=ubuntu
+
+[portal:vars]
+# deploy_source=git
+# deploy_git_repo=git@github.com:you/devops-portal.git
+# deploy_git_version=main

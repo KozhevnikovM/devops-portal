@@ -1,0 +1,124 @@
+---
+# Deploy the DevOps Portal (current working-tree code) to a custom server.
+#
+# The app ships as a Docker Compose stack:
+#   - `init`  builds the image, copies static assets, runs `alembic upgrade head`
+#   - `app` / `worker` / `beat` run the FastAPI app and Celery processes
+#
+# This playbook only has to: install Docker, push the current code, render a
+# production `.env`, then build + start the stack. Migrations and the frontend
+# build happen inside the containers, so no `shell`/`command` is needed here.
+#
+# Usage:
+#   ansible-playbook -i inventory.ini deploy.yml
+#
+# Override the release source by pushing your local checkout (default) or by
+# cloning a git ref — see `deploy_source` in the vars below.
+
+- name: Deploy DevOps Portal
+  hosts: portal
+  become: true
+
+  vars:
+    # Where the stack lives on the target host.
+    deploy_dir: /opt/devops-portal
+
+    # "synchronize" pushes the local working tree (the "current code");
+    # "git" clones deploy_git_repo @ deploy_git_version instead.
+    deploy_source: synchronize
+    deploy_git_repo: ""
+    deploy_git_version: HEAD
+
+    # Local checkout to push when deploy_source == "synchronize".
+    # Trailing slash matters: it copies the *contents* of the repo.
+    deploy_local_path: "{{ playbook_dir }}/../"
+
+    # Render these into the production .env on the target.
+    # Override per-host in inventory/group_vars and keep secrets in a vault.
+    portal_env:
+      DATABASE_URL: postgresql+asyncpg://portal:portal@postgres:5432/portal
+      DATABASE_URL_SYNC: postgresql+psycopg2://portal:portal@postgres:5432/portal
+      REDIS_URL: redis://redis:6379/0
+      USE_STUB_TERRAFORM: "true"
+      ADMIN_USERNAME: admin
+      ADMIN_PASSWORD: changeme  # override via vault — never ship this default
+
+  handlers:
+    - name: Restart portal stack
+      community.docker.docker_compose_v2:
+        project_src: "{{ deploy_dir }}"
+        build: always
+        state: restarted
+
+  tasks:
+    - name: Install Docker engine and compose plugin
+      ansible.builtin.package:
+        name:
+          - docker.io
+          - docker-compose-plugin
+        state: present
+
+    - name: Ensure Docker is running and enabled
+      ansible.builtin.service:
+        name: docker
+        state: started
+        enabled: true
+
+    - name: Ensure deploy directory exists
+      ansible.builtin.file:
+        path: "{{ deploy_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    # ── Get the code onto the host ────────────────────────────────────────────
+    - name: Push current working-tree code
+      ansible.posix.synchronize:
+        src: "{{ deploy_local_path }}"
+        dest: "{{ deploy_dir }}/"
+        delete: true
+        recursive: true
+        rsync_opts:
+          - "--exclude=.git"
+          - "--exclude=.env"
+          - "--exclude=node_modules"
+          - "--exclude=.venv"
+          - "--exclude=__pycache__"
+          - "--exclude=.pytest_cache"
+          - "--exclude=.playwright-mcp"
+          - "--exclude=celerybeat-schedule"
+      when: deploy_source == "synchronize"
+      notify: Restart portal stack
+
+    - name: Clone code from git
+      ansible.builtin.git:
+        repo: "{{ deploy_git_repo }}"
+        dest: "{{ deploy_dir }}"
+        version: "{{ deploy_git_version }}"
+        force: true
+      when: deploy_source == "git"
+      notify: Restart portal stack
+
+    # ── Configuration ─────────────────────────────────────────────────────────
+    - name: Render production .env
+      ansible.builtin.template:
+        src: env.j2
+        dest: "{{ deploy_dir }}/.env"
+        owner: root
+        group: root
+        mode: "0600"
+      notify: Restart portal stack
+
+    # ── Bring the stack up (build images, run init/migrations, start services) ─
+    - name: Build and start the portal stack
+      community.docker.docker_compose_v2:
+        project_src: "{{ deploy_dir }}"
+        build: always
+        state: present
+        wait: true
+      register: compose_up
+
+    - name: Show running services
+      ansible.builtin.debug:
+        var: compose_up.containers
