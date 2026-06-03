@@ -339,13 +339,22 @@ List all bookings.
     "hw_config_id": "uuid",
     "hw_config_name": "medium",
     "vm_ip": "10.0.0.1",
-    "vm_password": "Abc123XyZ456qwER"
+    "vm_password": "Abc123XyZ456qwER",
+    "namespace": null,
+    "cluster": null,
+    "api_url": null,
+    "static_vm": null,
+    "host": null,
+    "username": null
   }
 ]
 ```
 
-`vm_password` is set when the booking reaches `READY`. It contains a 16-character alphanumeric
-password generated at provisioning time.
+Each row carries the fields for every resource type; the ones that don't apply are `null`.
+`vm_password` (provisioned VMs) is set when the booking reaches `READY` — a 16-character
+alphanumeric password generated at provisioning time. `namespace`/`cluster`/`api_url` are
+populated for namespace bookings; `static_vm`/`host`/`username` for static-VM bookings.
+`QUEUED` bookings have no resource fields set.
 
 **Example:**
 ```bash
@@ -357,8 +366,14 @@ curl -s http://localhost:8000/bookings \
 
 ### `POST /bookings`
 
-Create a new booking. A booking is either a **VM** (provisioned via Terraform) or a
-**namespace** (allocated from the pre-created pool), selected with `resource_type`.
+Create a new booking. A booking is one of:
+- **VM** (`VM`) — provisioned via Terraform.
+- **Static VM** (`STATIC_VM`) — reserved from the pre-existing pool.
+- **Namespace** (`NAMESPACE`) — reserved from the pre-created pool.
+
+`STATIC_VM` and `NAMESPACE` are **pooled**: omit the specific id to take the next free one
+("Any available"), or pass it to reserve a specific one. When the pool is empty, an
+"Any available" request is **queued** (see the queued response below) rather than rejected.
 
 **Auth:** any authenticated user. The booking is created under the caller's identity.
 
@@ -368,11 +383,12 @@ Create a new booking. A booking is either a **VM** (provisioned via Terraform) o
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `resource_type` | string | No | `VM` (default) or `NAMESPACE` |
+| `resource_type` | string | No | `VM` (default), `STATIC_VM`, or `NAMESPACE` |
 | `ttl_minutes` | integer | Yes | Booking duration in minutes; `0` = no expiry |
 | `image_id` | UUID | VM only | VM image to deploy |
 | `hw_config_id` | UUID | VM only | Hardware configuration |
-| `namespace_id` | UUID | Namespace only | A currently-available namespace from the pool |
+| `namespace_id` | UUID | No | A specific namespace; omit for "Any available" |
+| `static_vm_id` | UUID | No | A specific static VM; omit for "Any available" |
 
 **VM response:**
 
@@ -421,7 +437,59 @@ no credentials issued). With `Accept: application/json` → `201`:
 - `409 Conflict` — the chosen namespace is inactive or already booked (e.g. lost a race).
 - Releasing a namespace booking (or its TTL expiring) returns it to the pool.
 
-Without `Accept: application/json`, both return a `201` HTMX HTML fragment (booking row), and
+**Static VM response:**
+
+Reserved synchronously and `READY` immediately, returning the VM's host + credentials
+(password and/or SSH key — whichever the admin registered). With `Accept: application/json` → `201`:
+
+```json
+{
+  "id": "uuid",
+  "status": "READY",
+  "resource_type": "STATIC_VM",
+  "ttl_minutes": 240,
+  "expires_at": "2026-06-03T12:00:00+00:00",
+  "created_at": "2026-06-03T08:00:00+00:00",
+  "static_vm": "build-agent-1",
+  "host": "10.0.0.12",
+  "username": "ubuntu",
+  "password": "s3cret",
+  "ssh_key": null,
+  "queue_position": null
+}
+```
+
+- `409 Conflict` — a **specific** static VM that's inactive or already booked. (Picking
+  "Any available" never 409s — it queues instead.)
+
+**Queued response (pooled, pool empty):**
+
+When no resource of the requested pooled type is free, an "Any available" request is created
+as `QUEUED` with no resource assigned and a FIFO `queue_position`. Its TTL starts only when it
+is promoted to `READY` (the moment one frees). Poll `GET /bookings/{id}/row` (browser) or
+`GET /bookings` (JSON) to observe the promotion. Example `201`:
+
+```json
+{
+  "id": "uuid",
+  "status": "QUEUED",
+  "resource_type": "STATIC_VM",
+  "ttl_minutes": 240,
+  "expires_at": "2026-06-03T08:00:00+00:00",
+  "created_at": "2026-06-03T08:00:00+00:00",
+  "static_vm": null,
+  "host": null,
+  "username": null,
+  "password": null,
+  "ssh_key": null,
+  "queue_position": 1
+}
+```
+
+Cancel a queued booking with `DELETE /bookings/{id}` (it holds no resource, so it just leaves
+the queue).
+
+Without `Accept: application/json`, all return a `201` HTMX HTML fragment (booking row), and
 errors re-render the booking form with a banner.
 
 **Example (Jenkins/CI):**
@@ -431,10 +499,15 @@ curl -s -X POST http://localhost:8000/bookings \
      -H "Accept: application/json" -H "Authorization: Bearer dp_<api_key>" \
      -d "ttl_minutes=240&image_id=<image-uuid>&hw_config_id=<hw-config-uuid>" | python3 -m json.tool
 
-# Namespace
+# Namespace (specific, or omit namespace_id for "Any available")
 curl -s -X POST http://localhost:8000/bookings \
      -H "Accept: application/json" -H "Authorization: Bearer dp_<api_key>" \
      -d "resource_type=NAMESPACE&ttl_minutes=240&namespace_id=<namespace-uuid>" | python3 -m json.tool
+
+# Static VM — "Any available" (queues if the pool is empty)
+curl -s -X POST http://localhost:8000/bookings \
+     -H "Accept: application/json" -H "Authorization: Bearer dp_<api_key>" \
+     -d "resource_type=STATIC_VM&ttl_minutes=240" | python3 -m json.tool
 ```
 
 ---
@@ -770,6 +843,66 @@ Re-activate a previously deactivated namespace.
 Permanently delete a namespace from the catalog.
 
 **Responses:** `200` updated namespace table; `404` if not found; `200` with `HX-Retarget: #namespace-delete-error-{id}` if bookings reference this namespace.
+
+---
+
+### `POST /admin/catalog/static-vms`
+
+Register a pre-existing VM (created outside the portal) in the bookable static pool.
+
+**Content-Type:** `application/x-www-form-urlencoded`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | string | Unique label |
+| `host` | string | IP or hostname handed to the reserver |
+| `username` | string | Login handed to the reserver |
+| `password` | string | Password credential (optional) |
+| `ssh_key` | string | SSH key credential (optional) |
+| `cpus` | integer | Optional, display only |
+| `memory_gb` | integer | Optional; entered in GB, stored as MB |
+
+At least one of `password` / `ssh_key` is required (DB `CHECK` + inline validation).
+
+**Responses:** `200` updated static-VM table fragment; `200` with `HX-Retarget: #static-vm-create-error` on duplicate name or when neither credential is provided.
+
+---
+
+### `GET /admin/catalog/static-vms/{static_vm_id}/edit`
+
+Returns the static-VM table with the specified row in inline edit mode.
+
+---
+
+### `PATCH /admin/catalog/static-vms/{static_vm_id}`
+
+Update a static VM (`name`, `host`, `username`, `password`, `ssh_key`, `cpus`, `memory_gb`) from the inline edit form.
+
+**Responses:** `200` updated static-VM table; `404` if not found; `200` with `HX-Retarget: #static-vm-create-error` on duplicate name / missing credential.
+
+---
+
+### `DELETE /admin/catalog/static-vms/{static_vm_id}`
+
+Deactivate a static VM. It will no longer be offered for new reservations; any existing booking that holds it is unaffected.
+
+**Responses:** `200` updated static-VM table; `404` if not found.
+
+---
+
+### `POST /admin/catalog/static-vms/{static_vm_id}/activate`
+
+Re-activate a previously deactivated static VM.
+
+**Responses:** `200` updated static-VM table; `404` if not found.
+
+---
+
+### `DELETE /admin/catalog/static-vms/{static_vm_id}/permanent`
+
+Permanently delete a static VM from the catalog.
+
+**Responses:** `200` updated static-VM table; `404` if not found; `200` with `HX-Retarget: #static-vm-delete-error-{id}` if bookings reference this static VM.
 
 ---
 

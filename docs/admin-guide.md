@@ -332,12 +332,30 @@ API URL.
 - The **Availability** column shows `Available` or `Booked by {user}` — a namespace is
   considered held while a non-terminal booking references it, and returns to the pool on
   release / TTL expiry.
-- **Deactivate** removes a namespace from the booking dropdown without affecting an existing
+- **Deactivate** removes a namespace from the bookable pool without affecting an existing
   booking that holds it; **Activate** restores it; **Delete** removes it permanently
   (blocked if any booking references it).
 
-> Booking a namespace (the user-facing flow) arrives in a later v0.5.0 feature; this panel
-> establishes the pool admins manage.
+Users reserve a namespace from the *Namespaces* page — picking a specific one or **"Any
+available"** — and the pool returns it on release / TTL expiry.
+
+**Static VMs panel:**
+
+Static VMs are **pre-existing machines created outside the portal** (the portal never
+provisions or destroys them) and registered here as a bookable pool. Each entry records a
+`name`, `host` (IP/hostname), `username`, a **password and/or SSH key** (at least one
+required), and optional CPUs / RAM.
+
+- Click **Add** to register a VM; **Edit** to update it inline. Credentials are masked in the
+  list (`••••••`).
+- The **Availability** column shows `Available` or `Booked by {user}`.
+- **Deactivate** / **Activate** / **Delete** behave as for the other panels (delete blocked
+  while a booking references it).
+- The action buttons live behind the **⋮** menu, and the table scrolls horizontally if narrow.
+
+Users reserve a static VM from the *Virtual Machines* page (a **Provisioned | Static** toggle)
+— a specific VM or **"Any available"** — and receive its host + credentials. Release / TTL
+returns it to the pool. See **Booking Queue** below for what happens when the pool is empty.
 
 The JSON API (`/api/images`, `/api/hardware`) remains available for scripted workflows.
 See [docs/api-reference.md](api-reference.md) for the full API reference.
@@ -439,12 +457,16 @@ is recorded in the booking's audit trail.
 
 A `READY` (or `FAILED`) booking can be released manually via the UI or the API.
 Only the booking owner or an admin may release a booking.
-Releasing queues a `teardown_vm_task` Celery task that runs `terraform destroy`
-for the booking's workspace and transitions the status from `RELEASING` to
-`RELEASED` once complete.
 
-**Via the UI:** click the **Release** button in the booking row. A confirmation
-dialog appears before teardown is queued.
+- **Provisioned VM** — releasing queues a `teardown_vm_task` that runs `terraform destroy`
+  for the booking's workspace and transitions `RELEASING → RELEASED` once complete.
+- **Pooled (static VM / namespace)** — releasing returns the resource to the pool immediately
+  (`→ RELEASED`, no Terraform) and **auto-assigns it to the next queued booking** if any.
+- **Queued** — releasing simply **cancels** the queue slot (`→ RELEASED`); it holds no
+  resource, so nothing is torn down or promoted.
+
+**Via the UI:** open the **⋮** menu in the booking row and click **Release** (or **Cancel** on
+a queued booking). A confirmation dialog appears first.
 
 **Via the API:**
 
@@ -475,13 +497,18 @@ Two Celery Beat tasks run on a schedule to enforce booking lifecycle rules
 automatically. They require the `beat` service to be running (included in
 `docker-compose.yml`).
 
-### `enforce_ttl` — every 5 minutes
+### `enforce_ttl` — every `ENFORCE_TTL_INTERVAL_SECONDS` (default 60s)
 
 Finds all `READY` bookings whose `expires_at` is in the past, transitions each
-to `RELEASING`, and queues `teardown_vm_task`. The booking will reach `RELEASED`
-once the worker finishes `terraform destroy`.
+to `RELEASING`, and queues `teardown_vm_task`. Provisioned VMs reach `RELEASED`
+once the worker finishes `terraform destroy`; pooled resources (static VMs,
+namespaces) are returned to the pool immediately and the next queued booking is
+auto-promoted. The interval is configurable via `ENFORCE_TTL_INTERVAL_SECONDS`
+in `.env` (restart `beat` after changing it).
 
-Bookings already in `RELEASING`, `RELEASED`, or `FAILED` are ignored.
+Bookings in `RELEASING`, `RELEASED`, `FAILED`, or `QUEUED` are ignored — a
+`QUEUED` booking holds no resource and its `expires_at` is just a placeholder
+until it's promoted.
 
 ### `reap_stale_provisioning` — every 15 minutes
 
@@ -505,6 +532,28 @@ docker compose up -d beat
 # Follow beat logs
 docker compose logs -f beat
 ```
+
+---
+
+## Booking Queue (pooled resources)
+
+Pooled resources — **static VMs** and **namespaces** — are bounded by **pool size**, not by
+the CPU/RAM quota. When every resource of a type is taken and a user requests **"Any
+available"**, the booking is created as **`QUEUED`** instead of being rejected.
+
+- **FIFO auto-assignment.** The instant a pooled resource frees (manual release or TTL
+  expiry), the **oldest** `QUEUED` booking of that type is assigned it, flips to `READY`, and
+  its TTL starts then. Promotion runs both on the release route and in the TTL teardown task,
+  under row locks (`FOR UPDATE SKIP LOCKED`) so two simultaneous frees never double-assign.
+- **Live update.** A queued row shows **"Queued — position N"** and refreshes every 3 s, so it
+  turns into a ready booking (with host/credentials or API URL) on its own once promoted.
+- **Cancel.** The owner (or an admin) can cancel a queued booking from the **⋮** menu; it
+  leaves the queue with no side effects.
+- **Specific picks don't queue.** Reserving a *specific* static VM or namespace that's already
+  taken returns `409` rather than queuing — choose "Any available" to be queued.
+
+No configuration is required; the queue is always on for pooled types. There is no external
+notification (Telegram/email) yet — promotion is surfaced in-app only.
 
 ---
 

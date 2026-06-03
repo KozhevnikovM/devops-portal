@@ -84,17 +84,28 @@ This keeps the routing layer unified. The `CreateBookingUseCase` is shared; only
 ### 4.1 Request Flow
 `FastAPI` → `Redis` → `Celery Worker` → `TerraformAdapter` → `VMware`
 
-> **Namespaces are the exception (v0.5.0).** A Kubernetes namespace booking is *reserved from
-> an admin-managed pool*, not provisioned. The namespace allocation use case picks a free,
-> active namespace synchronously under a `SELECT … FOR UPDATE` row lock and the booking goes
-> straight to `READY` — **no Celery task, no Terraform, no credentials issued**. Release / TTL
-> expiry returns the namespace to the pool. The Terraform request flow above applies to VMs
-> only; namespaces never touch Redis / the worker / `TerraformAdapter`.
+> **Pooled resources are the exception (v0.5.0–0.6.0).** Static VMs (`STATIC_VM`) and
+> Kubernetes namespaces (`NAMESPACE`) are *reserved from an admin-managed pool*, not
+> provisioned. The reserve use case takes either a specific resource or the next free one
+> (`SELECT … FOR UPDATE SKIP LOCKED`, so concurrent reservations never collide) synchronously,
+> and the booking goes straight to `READY` — **no Celery task, no Terraform**. Static VMs hand
+> the owner stored host + credentials; namespaces issue none. Release / TTL expiry returns the
+> resource to the pool. The Terraform request flow above applies to provisioned VMs only;
+> pooled resources never touch Redis / the worker / `TerraformAdapter`.
+>
+> **Booking queue.** When a pooled type's pool is empty, an "Any available" request is created
+> as **`QUEUED`** instead of failing. A shared `promote_next_queued(resource_type)` runs
+> wherever a pooled resource frees (the release route and the TTL teardown task): it locks the
+> oldest `QUEUED` booking of that type and a free resource (both `FOR UPDATE SKIP LOCKED`),
+> assigns it, and flips it to `READY` with its TTL starting then. The 3 s row poll surfaces the
+> promotion live.
 
 ### 4.2 State Management
 State management and progress tracking are handled entirely at the **PostgreSQL** level.
 
-- **DB Statuses:** `PENDING` → `PROVISIONING` → `READY` / `FAILED`
+- **DB Statuses:** `PENDING` → `PROVISIONING` → `READY` / `FAILED` (provisioned); pooled
+  bookings start at `READY`, or at **`QUEUED`** when the pool is empty (auto-promoted to
+  `READY` on the next free resource). Release moves any booking to `RELEASED`.
 - **Updates:** The Celery worker writes a DB status transition at each stage of task execution.
 - **Audit:** Every status transition is appended to the `booking_audit` table (see Section 6).
 
@@ -116,7 +127,7 @@ Celery Beat handles time-driven lifecycle events:
 
 | Task | Schedule | Action |
 | :--- | :--- | :--- |
-| `enforce_ttl` | Every 5 min | Finds expired bookings, queues teardown tasks |
+| `enforce_ttl` | Every `ENFORCE_TTL_INTERVAL_SECONDS` (default 60s) | Finds expired bookings, queues teardown; pooled releases then auto-promote the next queued booking |
 | `send_keepalive_reminders` | Daily | Notifies owners of permanent resources requiring confirmation |
 | `reap_stale_provisioning` | Every 15 min | Marks bookings stuck in `PROVISIONING` for over 1h as `FAILED` |
 
@@ -171,10 +182,12 @@ Writes happen in the Application Layer (Use Cases), ensuring audit entries are a
 The code is divided into four layers with strict dependency direction (outer layers depend on inner, never the reverse):
 
 - **Domain Layer:** Entities (`Booking`, `Resource`, `Quota`, `Environment`), Value Objects, domain services. Pure Python, no framework dependencies.
-  > *Status (v0.5.0):* `Booking`, `Quota`, and a `Namespace` catalog entity exist today. A
-  > `Booking` distinguishes resource kinds via a `resource_type` discriminator (`VM` |
-  > `NAMESPACE`) rather than a polymorphic `Resource`; the dedicated `Resource` / `Environment`
-  > entities remain planned (see `docs/0.5.0/plan.md` → "Future Direction: Environments").
+  > *Status (v0.6.0):* `Booking`, `Quota`, and `Namespace` + `StaticVM` catalog entities exist
+  > today. A `Booking` distinguishes resource kinds via a `resource_type` discriminator (`VM` |
+  > `STATIC_VM` | `NAMESPACE`) rather than a polymorphic `Resource`; pooled types
+  > (`STATIC_VM`, `NAMESPACE`) share the reserve + queue machinery. The dedicated `Resource` /
+  > `Environment` entities remain planned (see `docs/0.5.0/plan.md` → "Future Direction:
+  > Environments").
 - **Application Layer:** Use Cases (e.g., `CreateBookingUseCase`, `ExtendBookingUseCase`). Coordinates DB repositories, quota enforcement, Celery task dispatch, and audit writes.
 - **Infrastructure Layer:** Repository implementations (SQLAlchemy / PostgreSQL), Celery task definitions, `TerraformAdapter` (CLI wrapper with workspace and lock management).
 - **Presentation Layer:** FastAPI routes — content-negotiated responses returning either Jinja2 HTML templates or Pydantic JSON schemas.
