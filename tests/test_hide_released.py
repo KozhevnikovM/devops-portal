@@ -34,7 +34,7 @@ def test_default_excludes_released(setup):
         mock_img.list_active = AsyncMock(return_value=[])
         mock_hw.list_active = AsyncMock(return_value=[])
         mock_ns.list_available = AsyncMock(return_value=[])
-        mock_svm.count_available = AsyncMock(return_value=0)
+        mock_svm.list_available = AsyncMock(return_value=[])
 
         resp = client.get("/")
 
@@ -55,7 +55,7 @@ def test_show_released_includes_them(setup):
         mock_img.list_active = AsyncMock(return_value=[])
         mock_hw.list_active = AsyncMock(return_value=[])
         mock_ns.list_available = AsyncMock(return_value=[])
-        mock_svm.count_available = AsyncMock(return_value=0)
+        mock_svm.list_available = AsyncMock(return_value=[])
 
         resp = client.get("/?show_released=1")
 
@@ -76,7 +76,7 @@ def test_filter_all_default_excludes_released(setup):
         mock_img.list_active = AsyncMock(return_value=[])
         mock_hw.list_active = AsyncMock(return_value=[])
         mock_ns.list_available = AsyncMock(return_value=[])
-        mock_svm.count_available = AsyncMock(return_value=0)
+        mock_svm.list_available = AsyncMock(return_value=[])
 
         resp = client.get("/?filter=all")
 
@@ -97,7 +97,7 @@ def test_filter_all_show_released_includes_them(setup):
         mock_img.list_active = AsyncMock(return_value=[])
         mock_hw.list_active = AsyncMock(return_value=[])
         mock_ns.list_available = AsyncMock(return_value=[])
-        mock_svm.count_available = AsyncMock(return_value=0)
+        mock_svm.list_available = AsyncMock(return_value=[])
 
         resp = client.get("/?filter=all&show_released=1")
 
@@ -118,7 +118,7 @@ def test_toggle_button_preserves_owner_filter(setup):
         mock_img.list_active = AsyncMock(return_value=[])
         mock_hw.list_active = AsyncMock(return_value=[])
         mock_ns.list_available = AsyncMock(return_value=[])
-        mock_svm.count_available = AsyncMock(return_value=0)
+        mock_svm.list_available = AsyncMock(return_value=[])
 
         resp = client.get("/?filter=all")
 

@@ -1,5 +1,5 @@
 from datetime import datetime, timedelta, timezone
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -12,7 +12,10 @@ from app.infrastructure.repositories.static_vm_repo import StaticVMRepository
 
 
 class ReserveStaticVMUseCase:
-    """Reserve the next free static VM from the pool — synchronous, no provisioning."""
+    """Reserve a static VM from the pool — synchronous, no provisioning.
+
+    Two modes: reserve a *specific* VM by id, or auto-assign *any* free one.
+    """
 
     def __init__(self, repo: BookingRepository, static_vm_repo: StaticVMRepository) -> None:
         self._repo = repo
@@ -23,13 +26,22 @@ class ReserveStaticVMUseCase:
         session: AsyncSession,
         ttl_minutes: int,
         user_id: str | None = None,
+        static_vm_id: UUID | None = None,
     ) -> Booking:
         uid = user_id or settings.DEV_USER_ID
 
-        # FOR UPDATE SKIP LOCKED — concurrent reservations each take a different free VM.
-        vm = await self._static_vm_repo.lock_next_available(session)
-        if vm is None:
-            raise StaticVMUnavailableError("No static VMs available")
+        if static_vm_id is not None:
+            # Pick-specific — lock the chosen row FOR UPDATE, reject if gone/inactive/taken.
+            vm = await self._static_vm_repo.lock_for_allocation(session, static_vm_id)
+            if vm is None or not vm.is_active:
+                raise StaticVMUnavailableError("Static VM is not available")
+            if await self._static_vm_repo.is_held(session, static_vm_id):
+                raise StaticVMUnavailableError(f"Static VM '{vm.name}' is already booked")
+        else:
+            # Any-available — FOR UPDATE SKIP LOCKED so concurrent bookers take different VMs.
+            vm = await self._static_vm_repo.lock_next_available(session)
+            if vm is None:
+                raise StaticVMUnavailableError("No static VMs available")
 
         now = datetime.now(timezone.utc)
         if ttl_minutes == 0:

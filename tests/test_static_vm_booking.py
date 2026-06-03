@@ -74,6 +74,48 @@ async def test_use_case_reserves_next_free_static_vm():
 
 
 @pytest.mark.asyncio
+async def test_use_case_reserves_specific_static_vm():
+    from app.application.use_cases.reserve_static_vm import ReserveStaticVMUseCase
+
+    vm_id = uuid4()
+    vm = SimpleNamespace(
+        id=vm_id, name="build-agent-2", host="10.0.0.13",
+        username="ubuntu", password="pw", ssh_key=None, is_active=True,
+    )
+    repo = MagicMock()
+    repo.create = AsyncMock(side_effect=lambda session, booking: booking)
+    svm_repo = MagicMock()
+    svm_repo.lock_for_allocation = AsyncMock(return_value=vm)
+    svm_repo.is_held = AsyncMock(return_value=False)
+    svm_repo.lock_next_available = AsyncMock()
+
+    use_case = ReserveStaticVMUseCase(repo, svm_repo)
+    booking = await use_case.execute(AsyncMock(), 240, user_id="u1", static_vm_id=vm_id)
+
+    assert booking.static_vm_id == vm_id
+    assert booking.static_vm_name == "build-agent-2"
+    svm_repo.lock_for_allocation.assert_awaited_once()
+    svm_repo.lock_next_available.assert_not_called()  # specific pick, not auto-assign
+
+
+@pytest.mark.asyncio
+async def test_use_case_rejects_held_specific_static_vm():
+    from app.application.use_cases.reserve_static_vm import ReserveStaticVMUseCase
+
+    vm = SimpleNamespace(id=uuid4(), name="busy", host="h", username="u", password="p", ssh_key=None, is_active=True)
+    repo = MagicMock()
+    repo.create = AsyncMock()
+    svm_repo = MagicMock()
+    svm_repo.lock_for_allocation = AsyncMock(return_value=vm)
+    svm_repo.is_held = AsyncMock(return_value=True)
+
+    use_case = ReserveStaticVMUseCase(repo, svm_repo)
+    with pytest.raises(StaticVMUnavailableError):
+        await use_case.execute(AsyncMock(), 240, user_id="u1", static_vm_id=vm.id)
+    repo.create.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_use_case_raises_when_pool_empty():
     from app.application.use_cases.reserve_static_vm import ReserveStaticVMUseCase
 
@@ -148,7 +190,7 @@ def test_post_booking_static_vm_unavailable_html_shows_error(client):
         mock_img.list_active = AsyncMock(return_value=[])
         mock_hw.list_active = AsyncMock(return_value=[])
         mock_ns.list_available = AsyncMock(return_value=[])
-        mock_svm.count_available = AsyncMock(return_value=0)
+        mock_svm.list_available = AsyncMock(return_value=[])
         resp = cl.post("/bookings", data={"resource_type": "STATIC_VM", "ttl_minutes": "240"})
 
     assert resp.status_code == 200
@@ -198,8 +240,12 @@ def test_teardown_task_static_vm_releases_without_adapter():
 
 # ── Form rendering (Provisioned | Static) ─────────────────────────────────────
 
-def test_vm_page_form_has_provisioned_static_toggle(client):
+def test_vm_page_form_has_provisioned_static_toggle_and_dropdown(client):
     cl, _ = client
+    vms = [
+        SimpleNamespace(id=uuid4(), name="build-agent-1", host="10.0.0.12"),
+        SimpleNamespace(id=uuid4(), name="build-agent-2", host="10.0.0.13"),
+    ]
     with patch("app.presentation.routes.bookings._repo") as mock_repo, \
          patch("app.presentation.routes.bookings._image_repo") as mock_img, \
          patch("app.presentation.routes.bookings._hw_config_repo") as mock_hw, \
@@ -209,13 +255,35 @@ def test_vm_page_form_has_provisioned_static_toggle(client):
         mock_img.list_active = AsyncMock(return_value=[])
         mock_hw.list_active = AsyncMock(return_value=[])
         mock_ns.list_available = AsyncMock(return_value=[])
-        mock_svm.count_available = AsyncMock(return_value=3)
+        mock_svm.list_available = AsyncMock(return_value=vms)
         resp = cl.get("/")
 
     assert resp.status_code == 200
     assert 'name="resource_type" value="VM"' in resp.text
     assert 'name="resource_type" value="STATIC_VM"' in resp.text
-    assert "3 available" in resp.text
+    # "Any available" plus each specific VM in the dropdown.
+    assert 'name="static_vm_id"' in resp.text
+    assert "Any available (2)" in resp.text
+    assert "build-agent-1 — 10.0.0.12" in resp.text
+
+
+def test_post_booking_specific_static_vm_passes_id(client):
+    cl, _ = client
+    booking = _make_static_booking()
+    with patch("app.presentation.routes.bookings._reserve_static_vm_use_case") as mock_uc:
+        mock_uc.execute = AsyncMock(return_value=booking)
+        resp = cl.post(
+            "/bookings",
+            data={
+                "resource_type": "STATIC_VM",
+                "static_vm_id": str(booking.static_vm_id),
+                "ttl_minutes": "240",
+            },
+        )
+
+    assert resp.status_code == 201
+    # the chosen id is forwarded to the use case
+    assert mock_uc.execute.call_args.kwargs["static_vm_id"] == booking.static_vm_id
 
 
 # ── Repository query semantics ────────────────────────────────────────────────

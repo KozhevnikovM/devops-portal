@@ -79,14 +79,24 @@
     </div>
 
     <div id="static-fields" class="flex flex-col gap-1 {% if sel != 'STATIC_VM' %}hidden{% endif %}">
-        <span class="text-xs text-gray-500">Pool</span>
+        <label for="static_vm_id" class="text-xs text-gray-500">Static VM</label>
+        {% if available_static_vms %}
+        <select
+            id="static_vm_id"
+            name="static_vm_id"
+            {% if sel != 'STATIC_VM' %}disabled{% endif %}
+            class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-gray-100 focus:outline-none focus:border-green-500 text-sm"
+        >
+            <option value="">Any available ({{ available_static_vms | length }})</option>
+            {% for vm in available_static_vms %}
+            <option value="{{ vm.id }}">{{ vm.name }} — {{ vm.host }}</option>
+            {% endfor %}
+        </select>
+        {% else %}
         <div class="h-[42px] flex items-center text-sm">
-            {% if static_vm_count and static_vm_count > 0 %}
-            <span class="text-green-400">{{ static_vm_count }} available</span>
-            {% else %}
             <span class="text-gray-500">No static VMs available</span>
-            {% endif %}
         </div>
+        {% endif %}
     </div>
     {% endif %}
 
@@ -125,6 +135,7 @@
     var stat = area.querySelector('#static-fields');
     var imageSel = area.querySelector('#image_id');
     var hwSel = area.querySelector('#hw_config_id');
+    var staticSel = area.querySelector('#static_vm_id');
     function sync() {
         var checked = area.querySelector('input[name="resource_type"]:checked');
         var isStatic = checked && checked.value === 'STATIC_VM';
@@ -132,6 +143,7 @@
         if (stat) stat.classList.toggle('hidden', !isStatic);
         if (imageSel) imageSel.disabled = isStatic;  // disabled inputs aren't submitted
         if (hwSel) hwSel.disabled = isStatic;
+        if (staticSel) staticSel.disabled = !isStatic;
     }
     radios.forEach(function (r) { r.addEventListener('change', sync); });
     sync();

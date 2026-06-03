@@ -9,9 +9,10 @@ static VMs available" (409).**
 ## Goal
 
 On the Virtual Machines page, a user picks **Provisioned** (today's Terraform flow) or
-**Static** (reserve a pre-existing VM). A static reservation needs only a TTL; the portal
-assigns the next free static VM and hands the owner its host + credentials (password and/or
-SSH key). Provisioned VMs and static VMs share the one Virtual Machines list.
+**Static** (reserve a pre-existing VM). In Static mode the user either **picks a specific VM
+from the available list** or chooses **"Any available"** to have the portal auto-assign the
+next free one; the owner receives the VM's host + credentials (password and/or SSH key).
+Provisioned VMs and static VMs share the one Virtual Machines list.
 
 ## Domain
 
@@ -48,19 +49,25 @@ SSH key). Provisioned VMs and static VMs share the one Virtual Machines list.
 
 `app/application/use_cases/reserve_static_vm.py`, analogous to `BookNamespaceUseCase`:
 
-`execute(session, ttl_minutes, user_id)`:
-1. `vm = static_vm_repo.lock_next_available(session)`; if `None` → `StaticVMUnavailableError`.
-2. Create `Booking(status=READY, resource_type=STATIC_VM, static_vm_id=vm.id, ttl, expires_at)`
+`execute(session, ttl_minutes, user_id, static_vm_id=None)`:
+1. **Pick-specific** (`static_vm_id` given): `lock_for_allocation(id)` FOR UPDATE; reject if
+   gone/inactive (`StaticVMUnavailableError`) or already held ("…is already booked"). Mirrors
+   `BookNamespaceUseCase`.
+2. **Any-available** (`static_vm_id` is `None`): `lock_next_available(session)`
+   (FOR UPDATE SKIP LOCKED); if `None` → `StaticVMUnavailableError("No static VMs available")`.
+3. Create `Booking(status=READY, resource_type=STATIC_VM, static_vm_id=vm.id, ttl, expires_at)`
    (`ttl_minutes == 0` → "forever" sentinel, same as namespace/VM).
-3. Attach display fields from `vm` (name/host/username/password/ssh_key) and return.
+4. Attach display fields from `vm` (name/host/username/password/ssh_key) and return.
 
 ## Presentation
 
 ### Routes (`bookings.py`)
 
 - `_render_bookings_page` for the VM page passes `resource_type=['VM','STATIC_VM']` and also
-  loads `static_vm_count = await _static_vm_repo.count_available(session)` (for the form).
-- `POST /bookings`: new branch `resource_type == STATIC_VM` → `ReserveStaticVMUseCase`;
+  loads `available_static_vms = await _static_vm_repo.list_available(session)` (for the form
+  dropdown).
+- `POST /bookings`: new branch `resource_type == STATIC_VM` → `ReserveStaticVMUseCase`, passing
+  the optional `static_vm_id` form field (empty = "Any available");
   `StaticVMUnavailableError` → 409 (JSON) or inline form error (HTMX). Returns the booking row
   / JSON (`host`, `username`, `password`, `ssh_key`, …) with `201`.
 - `DELETE /bookings/{id}`: treat `STATIC_VM` like `NAMESPACE` — set `RELEASED` directly (no
@@ -76,10 +83,11 @@ SSH key). Provisioned VMs and static VMs share the one Virtual Machines list.
 ### Templates
 
 - `booking_form.html` (VM page): a **Provisioned | Static** segmented control (radio) that
-  sets the hidden `resource_type` and shows/hides the image+hardware selects (disabled when
-  hidden so they aren't submitted/required). Static mode shows "{{ static_vm_count }}
-  available" and the Book button; empty pool disables Book. Small inline JS toggles it
-  (consistent with the existing base.html click-outside handler).
+  sets the `resource_type` and shows/hides the image+hardware vs static fields (the hidden
+  side's selects are `disabled` so they aren't submitted). Static mode shows a
+  `<select name="static_vm_id">` whose first option is **"Any available (N)"** followed by each
+  free VM (`name — host`); empty pool shows "No static VMs available". Small inline JS toggles
+  it (consistent with the existing base.html click-outside handler).
 - `index.html`: the IP/Password column headers already exist for the VM page; no header
   change (static rows reuse them).
 - `booking_row.html`: a `STATIC_VM` branch — IP column shows `static_vm_host`; credentials
@@ -99,9 +107,10 @@ SSH key). Provisioned VMs and static VMs share the one Virtual Machines list.
 
 ## Tests (`tests/test_static_vm_booking.py`)
 
-- Reserve when a VM is free → `201`, `READY`, `resource_type=STATIC_VM`, host + credentials in
+- Reserve "any available" → `201`, `READY`, `resource_type=STATIC_VM`, host + credentials in
   the response; `lock_next_available` consumed.
-- Empty pool → 409 (JSON) / inline error (HTMX); no booking created.
+- Reserve a specific VM by id → that VM is locked (`lock_for_allocation`); a held one → 409.
+- Empty pool ("any") → 409 (JSON) / inline error (HTMX); no booking created.
 - `DELETE` a static-VM booking → `RELEASED` directly (no teardown task dispatched).
 - VM list query requests `IN ('VM','STATIC_VM')` (both kinds show on the VM page; namespaces
   excluded).

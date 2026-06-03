@@ -50,7 +50,7 @@ def test_default_filter_calls_list_by_user(setup):
          patch("app.presentation.routes.bookings._namespace_repo") as mock_ns, \
          patch("app.presentation.routes.bookings._static_vm_repo") as mock_svm:
         mock_ns.list_available = AsyncMock(return_value=[])
-        mock_svm.count_available = AsyncMock(return_value=0)
+        mock_svm.list_available = AsyncMock(return_value=[])
         mock_repo.list_by_user = AsyncMock(return_value=[])
         mock_img.list_active = AsyncMock(return_value=[])
         mock_hw.list_active = AsyncMock(return_value=[])
@@ -72,7 +72,7 @@ def test_filter_mine_calls_list_by_user(setup):
          patch("app.presentation.routes.bookings._namespace_repo") as mock_ns, \
          patch("app.presentation.routes.bookings._static_vm_repo") as mock_svm:
         mock_ns.list_available = AsyncMock(return_value=[])
-        mock_svm.count_available = AsyncMock(return_value=0)
+        mock_svm.list_available = AsyncMock(return_value=[])
         mock_repo.list_by_user = AsyncMock(return_value=[])
         mock_img.list_active = AsyncMock(return_value=[])
         mock_hw.list_active = AsyncMock(return_value=[])
@@ -94,7 +94,7 @@ def test_filter_all_calls_list_all(setup):
          patch("app.presentation.routes.bookings._namespace_repo") as mock_ns, \
          patch("app.presentation.routes.bookings._static_vm_repo") as mock_svm:
         mock_ns.list_available = AsyncMock(return_value=[])
-        mock_svm.count_available = AsyncMock(return_value=0)
+        mock_svm.list_available = AsyncMock(return_value=[])
         mock_repo.list_all = AsyncMock(return_value=[])
         mock_img.list_active = AsyncMock(return_value=[])
         mock_hw.list_active = AsyncMock(return_value=[])

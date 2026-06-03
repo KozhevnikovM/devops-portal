@@ -174,7 +174,7 @@ def test_booking_form_preselects_user_defaults(setup):
             mock_img.list_active = AsyncMock(return_value=[image])
             mock_hw.list_active = AsyncMock(return_value=[hw])
             mock_ns.list_available = AsyncMock(return_value=[])
-            mock_svm.count_available = AsyncMock(return_value=0)
+            mock_svm.list_available = AsyncMock(return_value=[])
 
             resp = TestClient(app).get("/")
     finally:
@@ -201,7 +201,7 @@ def test_booking_form_no_default_has_no_selected(setup):
         mock_img.list_active = AsyncMock(return_value=[image])
         mock_hw.list_active = AsyncMock(return_value=[hw])
         mock_ns.list_available = AsyncMock(return_value=[])
-        mock_svm.count_available = AsyncMock(return_value=0)
+        mock_svm.list_available = AsyncMock(return_value=[])
 
         resp = client.get("/")
 

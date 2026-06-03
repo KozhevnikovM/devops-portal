@@ -56,7 +56,7 @@ async def _render_bookings_page(
     vm_images = await _image_repo.list_active(session)
     hw_configs = await _hw_config_repo.list_active(session)
     available_namespaces = await _namespace_repo.list_available(session)
-    static_vm_count = await _static_vm_repo.count_available(session)
+    available_static_vms = await _static_vm_repo.list_available(session)
     return templates.TemplateResponse(
         request, "index.html",
         {
@@ -64,7 +64,7 @@ async def _render_bookings_page(
             "vm_images": vm_images,
             "hw_configs": hw_configs,
             "available_namespaces": available_namespaces,
-            "static_vm_count": static_vm_count,
+            "available_static_vms": available_static_vms,
             "current_user": current_user,
             "active_filter": filter,
             "show_released": show_released,
@@ -144,7 +144,7 @@ async def _render_form_error(request, session, current_user, booking_type="VM", 
         "vm_images": await _image_repo.list_active(session),
         "hw_configs": await _hw_config_repo.list_active(session),
         "available_namespaces": await _namespace_repo.list_available(session),
-        "static_vm_count": await _static_vm_repo.count_available(session),
+        "available_static_vms": await _static_vm_repo.list_available(session),
         "current_user": current_user,
         "booking_type": booking_type,
     }
@@ -163,6 +163,7 @@ async def create_booking(
     image_id: UUID | None = Form(None),
     hw_config_id: UUID | None = Form(None),
     namespace_id: UUID | None = Form(None),
+    static_vm_id: UUID | None = Form(None),
     session: AsyncSession = Depends(get_async_session),
     current_user: User = Depends(require_user),
 ):
@@ -213,7 +214,7 @@ async def create_booking(
     if resource_type == ResourceType.STATIC_VM.value:
         try:
             booking = await _reserve_static_vm_use_case.execute(
-                session, ttl_minutes, user_id=str(current_user.id)
+                session, ttl_minutes, user_id=str(current_user.id), static_vm_id=static_vm_id
             )
         except StaticVMUnavailableError as exc:
             if wants_json:
