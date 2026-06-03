@@ -654,7 +654,7 @@ curl -s http://localhost:8000/bookings/<booking-id>/audit \
 
 Returns an HTML fragment for a single booking row. Used by HTMX polling.
 
-**Auth:** any authenticated user.
+**Auth:** the booking **owner** or an **admin**. A non-owner gets `403`; an unknown id gets `404`.
 
 ---
 
