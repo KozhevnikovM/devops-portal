@@ -103,6 +103,7 @@ class Booking:
     static_vm_username: str | None = None
     static_vm_password: str | None = None
     static_vm_ssh_key: str | None = None
+    queue_position: int | None = None  # FIFO rank for QUEUED bookings (display only)
 
 
 @dataclass

@@ -125,6 +125,24 @@ class NamespaceRepository:
         """SELECT … FOR UPDATE the namespace row — serializes concurrent allocation."""
         return await session.get(NamespaceModel, namespace_id, with_for_update=True)
 
+    async def lock_next_available(self, session: AsyncSession) -> NamespaceModel | None:
+        """Reserve the next free namespace from the pool.
+
+        `FOR UPDATE SKIP LOCKED` lets concurrent reservations each grab a different
+        free row — no double-allocation. Returns None when the pool is exhausted.
+        """
+        result = await session.execute(
+            select(NamespaceModel)
+            .where(
+                NamespaceModel.is_active.is_(True),
+                NamespaceModel.id.not_in(_held_subquery()),
+            )
+            .order_by(NamespaceModel.name)
+            .limit(1)
+            .with_for_update(skip_locked=True)
+        )
+        return result.scalar_one_or_none()
+
     async def is_held(self, session: AsyncSession, namespace_id: UUID) -> bool:
         """True if a live (non-terminal) booking currently holds this namespace."""
         result = await session.execute(

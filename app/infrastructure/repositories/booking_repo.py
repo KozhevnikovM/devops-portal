@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
-from sqlalchemy import cast, select, String
+from sqlalchemy import cast, func, select, String
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
@@ -71,6 +71,72 @@ def _apply_resource_type_filter(stmt, resource_type: str | list[str] | None):
     if isinstance(resource_type, (list, tuple, set)):
         return stmt.where(BookingModel.resource_type.in_(list(resource_type)))
     return stmt.where(BookingModel.resource_type == resource_type)
+
+
+# Statuses in which a booking still holds its resource (everything but the terminal ones).
+_POOLED_LIVE_STATUSES = [
+    s.value for s in BookingStatus if s not in (BookingStatus.RELEASED, BookingStatus.FAILED)
+]
+
+# Pooled resource model + the booking FK that references it, keyed by resource_type.
+_POOLED_RESOURCE = {
+    ResourceType.STATIC_VM.value: (StaticVMModel, BookingModel.static_vm_id),
+    ResourceType.NAMESPACE.value: (NamespaceModel, BookingModel.namespace_id),
+}
+
+
+def _free_resource_stmt(resource_type: str):
+    """Next free resource of a pooled type, lockable (FOR UPDATE SKIP LOCKED)."""
+    model, fk = _POOLED_RESOURCE[resource_type]
+    held = select(fk).where(fk.is_not(None), BookingModel.status.in_(_POOLED_LIVE_STATUSES))
+    return (
+        select(model)
+        .where(model.is_active.is_(True), model.id.not_in(held))
+        .order_by(model.name)
+        .limit(1)
+        .with_for_update(skip_locked=True)
+    )
+
+
+def _oldest_queued_stmt(resource_type: str):
+    """Oldest QUEUED booking of a type, lockable so two frees can't promote the same one."""
+    return (
+        select(BookingModel)
+        .where(
+            BookingModel.resource_type == resource_type,
+            BookingModel.status == BookingStatus.QUEUED.value,
+        )
+        .order_by(BookingModel.created_at)
+        .limit(1)
+        .with_for_update(skip_locked=True)
+    )
+
+
+def _queue_rank_stmt(resource_type: str, created_at: datetime):
+    return select(func.count(BookingModel.id)).where(
+        BookingModel.resource_type == resource_type,
+        BookingModel.status == BookingStatus.QUEUED.value,
+        BookingModel.created_at < created_at,
+    )
+
+
+def _assign_resource_and_ready(session, booking_model, resource_type: str, resource) -> None:
+    """Attach a freed resource to a QUEUED booking, flip it READY, start its TTL, audit."""
+    _, fk = _POOLED_RESOURCE[resource_type]
+    setattr(booking_model, fk.key, resource.id)
+    old_status = booking_model.status
+    booking_model.status = BookingStatus.READY.value
+    if booking_model.ttl_minutes == 0:
+        booking_model.expires_at = datetime(9999, 12, 31, 23, 59, 59, tzinfo=timezone.utc)
+    else:
+        booking_model.expires_at = datetime.now(timezone.utc) + timedelta(minutes=booking_model.ttl_minutes)
+    session.add(BookingAuditModel(
+        booking_id=booking_model.id,
+        actor_id="system",
+        action="STATUS_CHANGED",
+        old_status=old_status,
+        new_status=BookingStatus.READY.value,
+    ))
 
 
 class BookingRepository:
@@ -219,6 +285,23 @@ class BookingRepository:
         ))
         await session.commit()
 
+    async def promote_next_queued(self, session: AsyncSession, resource_type: str) -> Booking | None:
+        """Assign the next free resource to the oldest QUEUED booking of this type → READY."""
+        booking = (await session.execute(_oldest_queued_stmt(resource_type))).scalar_one_or_none()
+        if booking is None:
+            return None
+        resource = (await session.execute(_free_resource_stmt(resource_type))).scalar_one_or_none()
+        if resource is None:
+            return None  # nothing free yet — stays queued
+        _assign_resource_and_ready(session, booking, resource_type, resource)
+        await session.commit()
+        await session.refresh(booking)
+        return _to_entity(booking)
+
+    async def queue_position(self, session: AsyncSession, resource_type: str, created_at: datetime) -> int:
+        result = await session.execute(_queue_rank_stmt(resource_type, created_at))
+        return result.scalar_one() + 1
+
     # Sync variants used by Celery workers
     def sync_get(self, session: Session, booking_id: UUID) -> Booking:
         model = session.get(BookingModel, booking_id)
@@ -302,3 +385,15 @@ class BookingRepository:
             select(BookingModel).where(BookingModel.status.in_(statuses))
         )
         return [_to_entity(m) for m in result.scalars().all()]
+
+    def sync_promote_next_queued(self, session: Session, resource_type: str) -> Booking | None:
+        """Sync twin of promote_next_queued — called from the Celery teardown/TTL path."""
+        booking = session.execute(_oldest_queued_stmt(resource_type)).scalar_one_or_none()
+        if booking is None:
+            return None
+        resource = session.execute(_free_resource_stmt(resource_type)).scalar_one_or_none()
+        if resource is None:
+            return None
+        _assign_resource_and_ready(session, booking, resource_type, resource)
+        session.commit()
+        return _to_entity(booking)

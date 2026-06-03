@@ -30,6 +30,8 @@ class ReserveStaticVMUseCase:
     ) -> Booking:
         uid = user_id or settings.DEV_USER_ID
 
+        now = datetime.now(timezone.utc)
+
         if static_vm_id is not None:
             # Pick-specific — lock the chosen row FOR UPDATE, reject if gone/inactive/taken.
             vm = await self._static_vm_repo.lock_for_allocation(session, static_vm_id)
@@ -41,9 +43,9 @@ class ReserveStaticVMUseCase:
             # Any-available — FOR UPDATE SKIP LOCKED so concurrent bookers take different VMs.
             vm = await self._static_vm_repo.lock_next_available(session)
             if vm is None:
-                raise StaticVMUnavailableError("No static VMs available")
+                # Pool exhausted — enqueue (FIFO). Promoted to READY when one frees.
+                return await self._enqueue(session, uid, ttl_minutes, now)
 
-        now = datetime.now(timezone.utc)
         if ttl_minutes == 0:
             expires_at = datetime(9999, 12, 31, 23, 59, 59, tzinfo=timezone.utc)
         else:
@@ -68,3 +70,16 @@ class ReserveStaticVMUseCase:
         created.static_vm_password = vm.password
         created.static_vm_ssh_key = vm.ssh_key
         return created
+
+    async def _enqueue(self, session, uid: str, ttl_minutes: int, now: datetime) -> Booking:
+        """No free static VM — create a QUEUED booking (no resource yet, TTL starts on promotion)."""
+        booking = Booking(
+            id=uuid4(),
+            user_id=uid,
+            status=BookingStatus.QUEUED,
+            resource_type=ResourceType.STATIC_VM,
+            ttl_minutes=ttl_minutes,
+            expires_at=now,  # placeholder until promotion; enforce_ttl ignores QUEUED
+            created_at=now,
+        )
+        return await self._repo.create(session, booking)

@@ -116,18 +116,22 @@ async def test_use_case_rejects_held_specific_static_vm():
 
 
 @pytest.mark.asyncio
-async def test_use_case_raises_when_pool_empty():
+async def test_use_case_queues_when_pool_empty():
     from app.application.use_cases.reserve_static_vm import ReserveStaticVMUseCase
 
     repo = MagicMock()
-    repo.create = AsyncMock()
+    repo.create = AsyncMock(side_effect=lambda session, booking: booking)
     svm_repo = MagicMock()
     svm_repo.lock_next_available = AsyncMock(return_value=None)
 
     use_case = ReserveStaticVMUseCase(repo, svm_repo)
-    with pytest.raises(StaticVMUnavailableError):
-        await use_case.execute(AsyncMock(), 240, user_id="u1")
-    repo.create.assert_not_called()
+    booking = await use_case.execute(AsyncMock(), 240, user_id="u1")
+
+    # No free VM → enqueued, no resource assigned.
+    assert booking.status == BookingStatus.QUEUED
+    assert booking.resource_type == ResourceType.STATIC_VM
+    assert booking.static_vm_id is None
+    repo.create.assert_awaited_once()
 
 
 # ── POST /bookings (static VM) ────────────────────────────────────────────────
@@ -209,6 +213,7 @@ def test_release_static_vm_sets_released_without_teardown(client):
          patch("app.tasks.teardown.teardown_vm_task") as mock_task:
         mock_repo.get = AsyncMock(side_effect=[booking, released])
         mock_repo.update_status = AsyncMock()
+        mock_repo.promote_next_queued = AsyncMock()
         resp = cl.delete(f"/bookings/{booking.id}", headers={"Accept": "application/json"})
 
     assert resp.status_code == 202
@@ -216,6 +221,7 @@ def test_release_static_vm_sets_released_without_teardown(client):
     # status set directly to RELEASED; no teardown task queued for a pooled resource
     assert mock_repo.update_status.call_args.args[2] == BookingStatus.RELEASED
     mock_task.delay.assert_not_called()
+    mock_repo.promote_next_queued.assert_awaited_once()
 
 
 # ── Teardown task (static VM) ─────────────────────────────────────────────────
