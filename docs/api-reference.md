@@ -319,9 +319,10 @@ The two filters are independent and compose, e.g. `/?filter=all&show_released=1`
 
 ### `GET /bookings`
 
-List all bookings.
+List bookings.
 
-**Auth:** any authenticated user.
+**Auth:** any authenticated user. **Owner-scoped:** a regular user sees **only their own**
+bookings; an **admin** sees **all** bookings.
 
 **Response:** `200` JSON array:
 
@@ -339,7 +340,6 @@ List all bookings.
     "hw_config_id": "uuid",
     "hw_config_name": "medium",
     "vm_ip": "10.0.0.1",
-    "vm_password": "Abc123XyZ456qwER",
     "namespace": null,
     "cluster": null,
     "api_url": null,
@@ -351,10 +351,12 @@ List all bookings.
 ```
 
 Each row carries the fields for every resource type; the ones that don't apply are `null`.
-`vm_password` (provisioned VMs) is set when the booking reaches `READY` — a 16-character
-alphanumeric password generated at provisioning time. `namespace`/`cluster`/`api_url` are
-populated for namespace bookings; `static_vm`/`host`/`username` for static-VM bookings.
-`QUEUED` bookings have no resource fields set.
+`namespace`/`cluster`/`api_url` are populated for namespace bookings;
+`static_vm`/`host`/`username` for static-VM bookings. `QUEUED` bookings have no resource fields set.
+
+> **No secrets in the list.** `vm_password` (and static-VM credentials) are **not** included in
+> `GET /bookings`. The VM password is returned only on the owner-scoped creation response
+> (`POST /bookings`) and the owner/admin-gated single-row view (`GET /bookings/{id}/row`).
 
 **Example:**
 ```bash

@@ -224,7 +224,12 @@ def test_booking_row_no_password_when_not_ready(client_as_owner):
 
 # --- JSON API test ---
 
-def test_list_bookings_json_includes_vm_password(client_as_admin):
+def test_list_bookings_json_omits_vm_password(client_as_admin):
+    """#137: the list endpoint must never vend secrets, even to an admin.
+
+    The password is delivered only via the creation response and the
+    owner/admin-gated single-row view.
+    """
     client, _ = client_as_admin
     booking = _make_booking()
     with patch("app.presentation.routes.bookings._repo") as mock_repo:
@@ -233,5 +238,5 @@ def test_list_bookings_json_includes_vm_password(client_as_admin):
 
     assert resp.status_code == 200
     row = resp.json()[0]
-    assert "vm_password" in row
-    assert row["vm_password"] == "Abc123XyZ456qwER"
+    assert "vm_password" not in row
+    assert "Abc123XyZ456qwER" not in resp.text

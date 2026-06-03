@@ -121,7 +121,13 @@ async def list_bookings(
     session: AsyncSession = Depends(get_async_session),
     current_user: User = Depends(require_user),
 ):
-    bookings = await _repo.list_all(session)
+    # Owner-scoped: non-admins see only their own bookings; admins see all.
+    # Secrets (vm_password / static-VM credentials) are never vended here — only on the
+    # owner-scoped creation response and the owner/admin-gated single-row view.
+    if current_user.role == "admin":
+        bookings = await _repo.list_all(session)
+    else:
+        bookings = await _repo.list_by_user(session, str(current_user.id))
     return JSONResponse([
         {
             "id": str(b.id),
@@ -136,7 +142,6 @@ async def list_bookings(
             "hw_config_id": str(b.hw_config_id) if b.hw_config_id else None,
             "hw_config_name": b.hw_config_name,
             "vm_ip": b.vm_ip,
-            "vm_password": b.vm_password,
             "namespace": b.namespace_name,
             "cluster": b.cluster_name,
             "api_url": b.api_url,

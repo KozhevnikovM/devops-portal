@@ -70,10 +70,12 @@ def test_list_bookings_response_shape(client):
     assert set(row.keys()) == {
         "id", "user_id", "status", "resource_type", "ttl_minutes",
         "expires_at", "created_at", "image_id", "image_name",
-        "hw_config_id", "hw_config_name", "vm_ip", "vm_password",
+        "hw_config_id", "hw_config_name", "vm_ip",
         "namespace", "cluster", "api_url",
         "static_vm", "host", "username",
     }
+    # Secrets must never appear in the list payload (#137).
+    assert "vm_password" not in row
     assert row["id"] == str(booking.id)
     assert row["status"] == "READY"
     assert row["resource_type"] == "VM"
