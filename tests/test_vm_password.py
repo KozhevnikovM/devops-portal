@@ -16,11 +16,12 @@ def _make_booking(
     vm_ip: str | None = "10.0.0.1",
     vm_password: str | None = "Abc123XyZ456qwER",
     owner_username: str | None = "alice",
+    user_id: str = "user-alice",
 ) -> Booking:
     now = datetime.now(timezone.utc)
     return Booking(
         id=uuid4(),
-        user_id="user-alice",
+        user_id=user_id,
         status=status,
         ttl_minutes=240,
         expires_at=now + timedelta(minutes=240),
@@ -175,7 +176,7 @@ def test_provision_task_password_is_16_alphanumeric():
 
 def test_booking_row_shows_password_to_owner(client_as_owner):
     client, owner = client_as_owner
-    booking = _make_booking(owner_username=owner.username)
+    booking = _make_booking(owner_username=owner.username, user_id=str(owner.id))
     with patch("app.presentation.routes.bookings._repo") as mock_repo:
         mock_repo.get = AsyncMock(return_value=booking)
         resp = client.get(f"/bookings/{booking.id}/row")
@@ -195,15 +196,17 @@ def test_booking_row_shows_password_to_admin(client_as_admin):
     assert "Abc123XyZ456qwER" in resp.text
 
 
-def test_booking_row_hides_password_from_other_user(client_as_other):
+def test_booking_row_denies_other_user(client_as_other):
+    """#138: a non-owner is rejected outright (403) — no row, no leaked detail."""
     client, other = client_as_other
     booking = _make_booking(owner_username="alice")
     with patch("app.presentation.routes.bookings._repo") as mock_repo:
         mock_repo.get = AsyncMock(return_value=booking)
         resp = client.get(f"/bookings/{booking.id}/row")
 
-    assert resp.status_code == 200
+    assert resp.status_code == 403
     assert "Abc123XyZ456qwER" not in resp.text
+    assert "10.0.0.1" not in resp.text
 
 
 def test_booking_row_no_password_when_not_ready(client_as_owner):
@@ -213,6 +216,7 @@ def test_booking_row_no_password_when_not_ready(client_as_owner):
         vm_ip=None,
         vm_password=None,
         owner_username=owner.username,
+        user_id=str(owner.id),
     )
     with patch("app.presentation.routes.bookings._repo") as mock_repo:
         mock_repo.get = AsyncMock(return_value=booking)
