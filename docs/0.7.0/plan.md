@@ -43,6 +43,8 @@ a regression test that fails before and passes after.
 | 17 | Vended credentials stored in plaintext at rest | Decision | — | 5 | decision doc only | SEC#8 = CQ#7 |
 | 18 | CLAUDE.md documents a non-existent SSE `status-stream` endpoint | Docs | — | 6 | `docs/correct-sse-architecture` | CQ#14 |
 
+> Tracked as GitHub issues **#137–#154**, in finding order (#1 → #137 … #18 → #154).
+
 ---
 
 ## Phase 1 — Access control & correctness (ship first)
