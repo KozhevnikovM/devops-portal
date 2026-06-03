@@ -7,10 +7,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.application.use_cases.create_booking import CreateBookingUseCase
 from app.application.use_cases.extend_booking import ExtendBookingUseCase
 from app.application.use_cases.book_namespace import BookNamespaceUseCase
+from app.application.use_cases.reserve_static_vm import ReserveStaticVMUseCase
 from app.domain.entities import User
 from app.domain.enums import BookingStatus, ResourceType
 from app.domain.exceptions import (
-    BookingError, BookingNotFoundError, NamespaceUnavailableError, PermissionError, QuotaExceededError,
+    BookingError, BookingNotFoundError, NamespaceUnavailableError, PermissionError,
+    QuotaExceededError, StaticVMUnavailableError,
 )
 from app.infrastructure.auth import require_user
 from app.infrastructure.database.session import get_async_session
@@ -18,6 +20,7 @@ from app.infrastructure.repositories.booking_repo import BookingRepository
 from app.infrastructure.repositories.image_repo import ImageRepository
 from app.infrastructure.repositories.hw_config_repo import HWConfigRepository
 from app.infrastructure.repositories.namespace_repo import NamespaceRepository
+from app.infrastructure.repositories.static_vm_repo import StaticVMRepository
 from app.presentation.templating import templates
 
 router = APIRouter()
@@ -26,25 +29,34 @@ _repo = BookingRepository()
 _image_repo = ImageRepository()
 _hw_config_repo = HWConfigRepository()
 _namespace_repo = NamespaceRepository()
+_static_vm_repo = StaticVMRepository()
 _use_case = CreateBookingUseCase(_repo, _image_repo, _hw_config_repo)
 _extend_use_case = ExtendBookingUseCase(_repo)
 _book_namespace_use_case = BookNamespaceUseCase(_repo, _namespace_repo)
+_reserve_static_vm_use_case = ReserveStaticVMUseCase(_repo, _static_vm_repo)
+
+# Resource types listed on each booking page.
+_VM_PAGE_TYPES = [ResourceType.VM.value, ResourceType.STATIC_VM.value]
 
 
 async def _render_bookings_page(
     request, session, current_user, *, booking_type, page_path, active_nav, filter, show_released,
 ):
+    # The VM page lists both provisioned and static VMs; other pages list their one type.
+    query_types = _VM_PAGE_TYPES if booking_type == "VM" else booking_type
+
     if filter == "all":
         bookings = await _repo.list_all(
-            session, include_released=show_released, resource_type=booking_type
+            session, include_released=show_released, resource_type=query_types
         )
     else:
         bookings = await _repo.list_by_user(
-            session, str(current_user.id), include_released=show_released, resource_type=booking_type
+            session, str(current_user.id), include_released=show_released, resource_type=query_types
         )
     vm_images = await _image_repo.list_active(session)
     hw_configs = await _hw_config_repo.list_active(session)
     available_namespaces = await _namespace_repo.list_available(session)
+    available_static_vms = await _static_vm_repo.list_available(session)
     return templates.TemplateResponse(
         request, "index.html",
         {
@@ -52,6 +64,7 @@ async def _render_bookings_page(
             "vm_images": vm_images,
             "hw_configs": hw_configs,
             "available_namespaces": available_namespaces,
+            "available_static_vms": available_static_vms,
             "current_user": current_user,
             "active_filter": filter,
             "show_released": show_released,
@@ -117,6 +130,9 @@ async def list_bookings(
             "namespace": b.namespace_name,
             "cluster": b.cluster_name,
             "api_url": b.api_url,
+            "static_vm": b.static_vm_name,
+            "host": b.static_vm_host,
+            "username": b.static_vm_username,
         }
         for b in bookings
     ])
@@ -128,6 +144,7 @@ async def _render_form_error(request, session, current_user, booking_type="VM", 
         "vm_images": await _image_repo.list_active(session),
         "hw_configs": await _hw_config_repo.list_active(session),
         "available_namespaces": await _namespace_repo.list_available(session),
+        "available_static_vms": await _static_vm_repo.list_available(session),
         "current_user": current_user,
         "booking_type": booking_type,
     }
@@ -146,6 +163,7 @@ async def create_booking(
     image_id: UUID | None = Form(None),
     hw_config_id: UUID | None = Form(None),
     namespace_id: UUID | None = Form(None),
+    static_vm_id: UUID | None = Form(None),
     session: AsyncSession = Depends(get_async_session),
     current_user: User = Depends(require_user),
 ):
@@ -184,6 +202,42 @@ async def create_booking(
                     "namespace": booking.namespace_name,
                     "cluster": booking.cluster_name,
                     "api_url": booking.api_url,
+                },
+                status_code=201,
+            )
+        return templates.TemplateResponse(
+            request, "partials/booking_row.html",
+            {"booking": booking, "current_user": current_user}, status_code=201,
+        )
+
+    # ── Static VM booking — reserve from the pool, no provisioning ──
+    if resource_type == ResourceType.STATIC_VM.value:
+        try:
+            booking = await _reserve_static_vm_use_case.execute(
+                session, ttl_minutes, user_id=str(current_user.id), static_vm_id=static_vm_id
+            )
+        except StaticVMUnavailableError as exc:
+            if wants_json:
+                raise HTTPException(status_code=409, detail=str(exc))
+            return await _render_form_error(
+                request, session, current_user, static_vm_error=str(exc)
+            )
+
+        booking.owner_username = current_user.username
+        if wants_json:
+            return JSONResponse(
+                {
+                    "id": str(booking.id),
+                    "status": booking.status.value,
+                    "resource_type": booking.resource_type.value,
+                    "ttl_minutes": booking.ttl_minutes,
+                    "expires_at": booking.expires_at.isoformat(),
+                    "created_at": booking.created_at.isoformat(),
+                    "static_vm": booking.static_vm_name,
+                    "host": booking.static_vm_host,
+                    "username": booking.static_vm_username,
+                    "password": booking.static_vm_password,
+                    "ssh_key": booking.static_vm_ssh_key,
                 },
                 status_code=201,
             )
@@ -272,8 +326,8 @@ async def release_booking(
         if booking.status not in _RELEASABLE_STATUSES:
             raise HTTPException(status_code=409, detail=f"Cannot release booking with status {booking.status.value}")
 
-    if booking.resource_type == ResourceType.NAMESPACE:
-        # Pooled namespace — nothing to tear down; just return it to the pool.
+    if booking.resource_type in (ResourceType.NAMESPACE, ResourceType.STATIC_VM):
+        # Pooled resource — nothing to tear down; just return it to the pool.
         await _repo.update_status(session, booking_id, BookingStatus.RELEASED, actor_id=str(current_user.id))
     else:
         await _repo.update_status(session, booking_id, BookingStatus.RELEASING, actor_id=str(current_user.id))

@@ -98,6 +98,11 @@ class Booking:
     cluster_name: str | None = None
     api_url: str | None = None
     static_vm_id: UUID | None = None
+    static_vm_name: str | None = None
+    static_vm_host: str | None = None
+    static_vm_username: str | None = None
+    static_vm_password: str | None = None
+    static_vm_ssh_key: str | None = None
 
 
 @dataclass

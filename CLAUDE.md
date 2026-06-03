@@ -75,6 +75,15 @@ domain → application → infrastructure → presentation
 
 **Alembic migrations** — `alembic/env.py` reads `DATABASE_URL_SYNC` from the environment, overriding `alembic.ini`. Always use the sync psycopg2 driver for Alembic, not asyncpg.
 
+## Coding
+
+Before writing code, think about the design first:
+
+- **Identify the domain model** — what core entities and concepts does this change touch, and where do they belong in the layers (`domain → application → infrastructure → presentation`)?
+- **State the invariants** — what must always hold true (e.g. a `Booking` status only moves `PENDING → PROVISIONING → READY / FAILED`)? Make the code enforce them rather than assume them.
+- **Choose the right abstraction** — model behaviour behind interfaces (e.g. the `TerraformAdapter` Protocol) so implementations can be swapped without touching callers.
+- **Apply design principles** — respect the one-way dependency rule, keep each use case to one business operation, separate async (FastAPI/domain) from sync (Celery) concerns.
+- **Minimize special-case handling** — prefer a single general path over branches for edge cases. If you find yourself adding an `if` for a specific input, ask whether the model can be reshaped so the case stops being special.
 
 ## Feature Planning
 

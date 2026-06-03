@@ -9,7 +9,7 @@
                 <th class="px-4 py-2 text-xs text-gray-500 font-normal uppercase tracking-widest">RAM (GB)</th>
                 <th class="px-4 py-2 text-xs text-gray-500 font-normal uppercase tracking-widest">HDD (GB)</th>
                 <th class="px-4 py-2 text-xs text-gray-500 font-normal uppercase tracking-widest">Status</th>
-                <th class="px-4 py-2 text-xs text-gray-500 font-normal uppercase tracking-widest"></th>
+                <th class="px-4 py-2 text-xs text-gray-500 font-normal uppercase tracking-widest">Actions</th>
             </tr>
         </thead>
         <tbody>
@@ -91,40 +91,41 @@
                     {% endif %}
                 </td>
                 <td class="px-4 py-3">
-                    {% if hw.is_active %}
-                    <div class="flex items-center gap-2">
-                        <button
-                            hx-get="/admin/catalog/hardware/{{ hw.id }}/edit"
-                            hx-target="#hw-table"
-                            hx-swap="outerHTML"
-                            class="text-xs px-2 py-1 rounded bg-gray-700 text-gray-300 border border-gray-600 hover:bg-gray-600 transition-colors"
-                        >Edit</button>
-                        <button
-                            hx-delete="/admin/catalog/hardware/{{ hw.id }}"
-                            hx-target="#hw-table"
-                            hx-swap="outerHTML"
-                            hx-confirm="Deactivate config '{{ hw.name }}'?"
-                            class="text-xs px-2 py-1 rounded bg-red-900 text-red-300 border border-red-700 hover:bg-red-800 transition-colors"
-                        >Deactivate</button>
-                    </div>
-                    {% else %}
-                    <div class="flex items-center gap-2">
-                        <button
-                            hx-post="/admin/catalog/hardware/{{ hw.id }}/activate"
-                            hx-target="#hw-table"
-                            hx-swap="outerHTML"
-                            class="text-xs px-2 py-1 rounded bg-green-900 text-green-300 border border-green-700 hover:bg-green-800 transition-colors"
-                        >Activate</button>
-                        <button
-                            hx-delete="/admin/catalog/hardware/{{ hw.id }}/permanent"
-                            hx-target="#hw-table"
-                            hx-swap="outerHTML"
-                            hx-confirm="Permanently delete config '{{ hw.name }}'? This cannot be undone."
-                            class="text-xs px-2 py-1 rounded bg-red-900 text-red-300 border border-red-700 hover:bg-red-800 transition-colors"
-                        >Delete</button>
-                        <span id="hw-delete-error-{{ hw.id }}" class="text-xs"></span>
-                    </div>
-                    {% endif %}
+                    <details class="relative">
+                        <summary class="list-none cursor-pointer w-7 h-7 flex items-center justify-center rounded text-gray-400 hover:text-gray-200 hover:bg-gray-700 transition-colors select-none text-lg leading-none">⋮</summary>
+                        <div class="absolute right-0 bottom-full mb-1 w-44 bg-gray-900 border border-gray-700 rounded shadow-lg z-50 py-1">
+                            {% if hw.is_active %}
+                            <button
+                                hx-get="/admin/catalog/hardware/{{ hw.id }}/edit"
+                                hx-target="#hw-table"
+                                hx-swap="outerHTML"
+                                class="w-full text-left px-3 py-2 text-sm text-gray-300 hover:bg-gray-800 transition-colors"
+                            >Edit</button>
+                            <button
+                                hx-delete="/admin/catalog/hardware/{{ hw.id }}"
+                                hx-target="#hw-table"
+                                hx-swap="outerHTML"
+                                hx-confirm="Deactivate config '{{ hw.name }}'?"
+                                class="w-full text-left px-3 py-2 text-sm text-red-400 hover:bg-gray-800 transition-colors"
+                            >Deactivate</button>
+                            {% else %}
+                            <button
+                                hx-post="/admin/catalog/hardware/{{ hw.id }}/activate"
+                                hx-target="#hw-table"
+                                hx-swap="outerHTML"
+                                class="w-full text-left px-3 py-2 text-sm text-green-400 hover:bg-gray-800 transition-colors"
+                            >Activate</button>
+                            <button
+                                hx-delete="/admin/catalog/hardware/{{ hw.id }}/permanent"
+                                hx-target="#hw-table"
+                                hx-swap="outerHTML"
+                                hx-confirm="Permanently delete config '{{ hw.name }}'? This cannot be undone."
+                                class="w-full text-left px-3 py-2 text-sm text-red-400 hover:bg-gray-800 transition-colors"
+                            >Delete</button>
+                            <span id="hw-delete-error-{{ hw.id }}" class="block px-3 text-xs"></span>
+                            {% endif %}
+                        </div>
+                    </details>
                 </td>
             </tr>
             {% endif %}
