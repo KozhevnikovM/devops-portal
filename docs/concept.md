@@ -72,11 +72,25 @@ For resources marked as "Permanent," a mandatory confirmation mechanism is intro
 
 ## Implementation Status
 
-A snapshot of what the concept above is **actually delivered** vs. still roadmap (as of v0.5.0).
+A snapshot of what the concept above is **actually delivered** vs. still roadmap (as of v0.6.0).
+
+### Provisioned vs. pooled resources
+
+The portal manages two kinds of resource, which behave differently:
+
+| | **Provisioned** | **Pooled (static)** |
+|---|---|---|
+| Examples | Terraform VM | Static VM, Kubernetes namespace |
+| Origin | Created on demand (Terraform/VMware) | Pre-created out-of-band; an admin registers them |
+| Booking | `PENDING → PROVISIONING → READY` via the worker | **Reserved** from the pool, synchronously → `READY` |
+| Scarcity limit | Per-user CPU/RAM quota | **Pool size** → a booking **queue** absorbs overflow |
+| Release | Teardown (Terraform destroy) | Returned to the pool |
 
 **Delivered**
-* **VM booking** end-to-end via Terraform/VMware: image + hardware catalog, TTL, per-user resource quota (CPU/RAM/disk), live status, audit log, admin force-delete.
-* **Kubernetes namespaces (v0.5.0):** DevOps registers pre-created namespaces in an admin-managed **pool**; a user **reserves** an available one for a TTL from the *Namespaces* page; release or TTL expiry returns it to the pool. Namespaces are **reserved, not provisioned** — the portal does not create namespaces, run Terraform for them, or issue credentials.
+* **VM booking (provisioned)** end-to-end via Terraform/VMware: image + hardware catalog, TTL, per-user resource quota (CPU/RAM/disk), live status, audit log, admin force-delete.
+* **Static VMs (pooled, v0.6.0):** DevOps registers pre-existing VMs (created outside the portal) in an admin pool; a user reserves one — **a specific VM or "Any available"** — for a TTL from the *Virtual Machines* page and receives its host + credentials (password and/or SSH key). Reserved, not provisioned; release or TTL expiry returns it to the pool.
+* **Kubernetes namespaces (pooled, v0.5.0):** DevOps registers pre-created namespaces in an admin pool; a user reserves one (specific or "Any available") for a TTL from the *Namespaces* page. Reserved, not provisioned — no namespace creation, Terraform, or credentials issued.
+* **Booking queue for pooled resources (v0.6.0):** when every resource of a pooled type is taken, an "Any available" request is **`QUEUED`** and **auto-assigned FIFO** the moment one frees (release or TTL expiry); the owner can cancel a queued slot. Pooled reservations are bounded by pool size + the queue, **not** the CPU/RAM quota.
 * **Per-resource-type navigation** (Virtual Machines / Namespaces) with type-scoped booking lists.
 
 **Roadmap (not yet built)**
