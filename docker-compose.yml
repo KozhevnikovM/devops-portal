@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: postgres:15
+    image: ${POSTGRES_IMAGE:-postgres:15}
     environment:
       POSTGRES_USER: portal
       POSTGRES_PASSWORD: portal
@@ -16,7 +16,7 @@ services:
       retries: 5
 
   redis:
-    image: redis:7
+    image: ${REDIS_IMAGE:-redis:7}
     ports:
       - "6379:6379"
     healthcheck:
@@ -32,6 +32,9 @@ services:
         PIP_INDEX_URL: ${PIP_INDEX_URL:-}
         PIP_TRUSTED_HOST: ${PIP_TRUSTED_HOST:-}
         NPM_CONFIG_REGISTRY: ${NPM_CONFIG_REGISTRY:-}
+        TERRAFORM_IMAGE: ${TERRAFORM_IMAGE:-hashicorp/terraform:1.9}
+        NODE_IMAGE: ${NODE_IMAGE:-node:20-slim}
+        PYTHON_IMAGE: ${PYTHON_IMAGE:-python:3.11-slim}
     command: sh -c "cp -r /app/app/static/. /static/ && alembic upgrade head"
     user: root
     env_file: .env
@@ -49,6 +52,9 @@ services:
         PIP_INDEX_URL: ${PIP_INDEX_URL:-}
         PIP_TRUSTED_HOST: ${PIP_TRUSTED_HOST:-}
         NPM_CONFIG_REGISTRY: ${NPM_CONFIG_REGISTRY:-}
+        TERRAFORM_IMAGE: ${TERRAFORM_IMAGE:-hashicorp/terraform:1.9}
+        NODE_IMAGE: ${NODE_IMAGE:-node:20-slim}
+        PYTHON_IMAGE: ${PYTHON_IMAGE:-python:3.11-slim}
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
     ports:
       - "8000:8000"
@@ -69,6 +75,9 @@ services:
         PIP_INDEX_URL: ${PIP_INDEX_URL:-}
         PIP_TRUSTED_HOST: ${PIP_TRUSTED_HOST:-}
         NPM_CONFIG_REGISTRY: ${NPM_CONFIG_REGISTRY:-}
+        TERRAFORM_IMAGE: ${TERRAFORM_IMAGE:-hashicorp/terraform:1.9}
+        NODE_IMAGE: ${NODE_IMAGE:-node:20-slim}
+        PYTHON_IMAGE: ${PYTHON_IMAGE:-python:3.11-slim}
     command: celery -A app.infrastructure.celery_app worker -l info -c 4
     env_file: .env
     volumes:
@@ -87,6 +96,9 @@ services:
         PIP_INDEX_URL: ${PIP_INDEX_URL:-}
         PIP_TRUSTED_HOST: ${PIP_TRUSTED_HOST:-}
         NPM_CONFIG_REGISTRY: ${NPM_CONFIG_REGISTRY:-}
+        TERRAFORM_IMAGE: ${TERRAFORM_IMAGE:-hashicorp/terraform:1.9}
+        NODE_IMAGE: ${NODE_IMAGE:-node:20-slim}
+        PYTHON_IMAGE: ${PYTHON_IMAGE:-python:3.11-slim}
     command: celery -A app.infrastructure.celery_app beat -l info
     env_file: .env
     volumes:

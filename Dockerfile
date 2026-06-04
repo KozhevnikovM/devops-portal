@@ -1,8 +1,15 @@
+# Base images are parametrized (full reference, defaulting to the pinned values) so the stack
+# can build from an internal registry mirror in an isolated/air-gapped environment.
+# Override via build args, e.g. --build-arg PYTHON_IMAGE=registry.internal/python:3.11-slim
+ARG TERRAFORM_IMAGE=hashicorp/terraform:1.9
+ARG NODE_IMAGE=node:20-slim
+ARG PYTHON_IMAGE=python:3.11-slim
+
 # ── Terraform binary stage ────────────────────────────────────────────────────
-FROM hashicorp/terraform:1.9 AS terraform-bin
+FROM ${TERRAFORM_IMAGE} AS terraform-bin
 
 # ── Frontend build stage ──────────────────────────────────────────────────────
-FROM node:20-slim AS frontend
+FROM ${NODE_IMAGE} AS frontend
 
 ARG NPM_CONFIG_REGISTRY
 
@@ -20,7 +27,7 @@ RUN mkdir -p dist/css dist/js && \
     cp node_modules/htmx.org/dist/ext/sse.js dist/js/htmx-sse.js
 
 # ── Application stage ─────────────────────────────────────────────────────────
-FROM python:3.11-slim
+FROM ${PYTHON_IMAGE}
 
 WORKDIR /app
 ENV PYTHONPATH=/app
