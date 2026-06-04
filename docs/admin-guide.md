@@ -84,6 +84,7 @@ behaviour.
 | `PIP_TRUSTED_HOST` | Host to trust for the PyPI mirror (if no TLS) |
 | `NPM_REGISTRY` | Private npm registry URL for the frontend build |
 | `NPM_REGISTRY_TOKEN` | Auth token for `NPM_REGISTRY` (authenticated registries) |
+| `NPM_CA_CERT_FILE` | Path to a PEM CA bundle if the registry uses an internal/self-signed CA |
 
 **Private npm registry.** Set `NPM_REGISTRY` (and `NPM_REGISTRY_TOKEN` if it needs auth):
 
@@ -99,8 +100,19 @@ build arg or image layer. The frontend stage writes a throwaway project `.npmrc`
 `//<host>/:_authToken=base64("token:<token>")`, runs `npm install`, then removes it; this all happens
 in the discarded frontend stage, so nothing reaches the final image. Requires BuildKit (default in
 modern Docker / `docker compose build`). Still keep the token out of source control and inject it
-from CI / a secret store, preferring a short-lived/scoped token. In the Ansible deploy, set
-`npm_registry` and `npm_registry_token` (vaulted); the playbook renders them into `.env` automatically.
+from CI / a secret store, preferring a short-lived/scoped token.
+
+If the registry uses an **internal or self-signed CA**, point `NPM_CA_CERT_FILE` at the PEM CA
+bundle — Compose mounts it (the `npm_ca` secret) and the build sets npm's `cafile` so TLS verifies
+without disabling `strict-ssl`:
+
+```bash
+# .env
+NPM_CA_CERT_FILE=./npm-ca.crt
+```
+
+In the Ansible deploy, set `npm_registry`, `npm_registry_token` (vaulted), and `npm_ca_cert` (the PEM
+contents); the playbook renders `.env`, writes the CA file, and wires `NPM_CA_CERT_FILE` automatically.
 
 **Base container images** (full image reference — registry + repo + tag; you may also pin a digest):
 

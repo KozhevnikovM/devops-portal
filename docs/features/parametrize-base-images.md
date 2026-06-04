@@ -88,6 +88,8 @@ The frontend build takes `NPM_REGISTRY` (a build arg — the URL isn't sensitive
   project` to write a throwaway project `.npmrc`: `registry`, plus
   `//<host>/:_authToken=base64("token:<token>")` when the secret is non-empty. It then runs
   `npm install` and removes the `.npmrc`.
+- For a registry behind an internal/self-signed CA, `NPM_CA_CERT_FILE` is mounted as the `npm_ca`
+  secret and wired via npm's `cafile`, so TLS verifies without disabling `strict-ssl`.
 - This happens in the **throwaway frontend stage** (only `dist/` is copied into the final image), so
   the token reaches neither the final image nor any build arg / `docker history` / `docker compose
   config` output.
