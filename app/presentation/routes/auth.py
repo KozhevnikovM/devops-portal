@@ -37,6 +37,11 @@ def _get_redis() -> aioredis.Redis:
     return aioredis.from_url(settings.REDIS_URL, decode_responses=True)
 
 
+# A fixed dummy hash (same cost factor as real hashes) compared on the username-miss path so
+# login spends the same bcrypt time whether or not the user exists — closes the timing oracle (#146).
+_DUMMY_PASSWORD_HASH = bcrypt.hashpw(b"timing-equalizer", bcrypt.gensalt()).decode()
+
+
 # ── Login / Logout ────────────────────────────────────────────────────────────
 
 @router.get("/auth/login", response_class=HTMLResponse)
@@ -52,7 +57,11 @@ async def login(
     session: AsyncSession = Depends(get_async_session),
 ):
     user = await _user_repo.get_by_username(session, username)
-    if not user or not bcrypt.checkpw(password.encode(), user.password_hash.encode()):
+    # Always run one bcrypt comparison (against a dummy hash when the user is missing) so the
+    # response time doesn't reveal whether the username exists.
+    password_hash = user.password_hash if user else _DUMMY_PASSWORD_HASH
+    password_ok = bcrypt.checkpw(password.encode(), password_hash.encode())
+    if not user or not password_ok:
         return templates.TemplateResponse(
             request, "login.html",
             {"error": "Invalid username or password"},
