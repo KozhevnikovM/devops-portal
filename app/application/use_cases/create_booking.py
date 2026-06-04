@@ -40,9 +40,11 @@ class CreateBookingUseCase:
 
         uid = user_id or settings.DEV_USER_ID
 
-        # Quota check — inside the same transaction as the booking insert
-        used   = await self._quota_repo.count_active_resources(session, uid)
+        # Quota check — inside the same transaction as the booking insert.
+        # Take the quota-row lock *before* counting usage, so a concurrent booking for the
+        # same user blocks here until we commit and then counts our booking (#142).
         limits = await self._quota_repo.get_limits_for_update(session, uid)
+        used   = await self._quota_repo.count_active_resources(session, uid)
 
         new_cpus      = hw.cpus
         new_memory_gb = hw.memory_mb // 1024  # floor: matches ceiling on the used-side at the boundary

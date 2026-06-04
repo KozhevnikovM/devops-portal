@@ -77,13 +77,20 @@ class QuotaRepository:
         return _model_to_limits(model) if model else _default_limits()
 
     async def get_limits_for_update(self, session: AsyncSession, user_id: str) -> dict:
+        # Lazy-seed the quota row from defaults so it always exists. Otherwise a
+        # default-quota user (no row) would lock nothing and the FOR UPDATE below would
+        # be a no-op, letting concurrent bookings race past the limit (#142).
+        await session.execute(
+            pg_insert(QuotaModel)
+            .values(id=uuid4(), user_id=UUID(user_id), **_default_limits())
+            .on_conflict_do_nothing(index_elements=["user_id"])
+        )
         result = await session.execute(
             select(QuotaModel)
             .where(QuotaModel.user_id == UUID(user_id))
             .with_for_update()
         )
-        model = result.scalar_one_or_none()
-        return _model_to_limits(model) if model else _default_limits()
+        return _model_to_limits(result.scalar_one())
 
     async def set(
         self,
