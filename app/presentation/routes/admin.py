@@ -2,6 +2,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse
+from markupsafe import escape
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -77,7 +78,7 @@ async def admin_create_image(
         await _image_repo.create(session, name, vapp_template_id)
     except IntegrityError:
         await session.rollback()
-        error_html = f'<span class="text-red-400 text-xs">Image "{name}" already exists.</span>'
+        error_html = f'<span class="text-red-400 text-xs">Image "{escape(name)}" already exists.</span>'
         return HTMLResponse(
             content=error_html,
             headers={"HX-Retarget": "#image-create-error", "HX-Reswap": "innerHTML"},
@@ -215,7 +216,7 @@ async def admin_create_hw_config(
         await _hw_config_repo.create(session, name, cpus, memory_gb * 1024, hdd_gb * 1024)
     except IntegrityError:
         await session.rollback()
-        error_html = f'<span class="text-red-400 text-xs">Config "{name}" already exists.</span>'
+        error_html = f'<span class="text-red-400 text-xs">Config "{escape(name)}" already exists.</span>'
         return HTMLResponse(
             content=error_html,
             headers={"HX-Retarget": "#hw-create-error", "HX-Reswap": "innerHTML"},
@@ -362,7 +363,7 @@ async def admin_create_namespace(
         await _namespace_repo.create(session, name, cluster_name, api_url.strip() or None)
     except IntegrityError:
         await session.rollback()
-        error_html = f'<span class="text-red-400 text-xs">Namespace "{name}" already exists.</span>'
+        error_html = f'<span class="text-red-400 text-xs">Namespace "{escape(name)}" already exists.</span>'
         return HTMLResponse(
             content=error_html,
             headers={"HX-Retarget": "#namespace-create-error", "HX-Reswap": "innerHTML"},
@@ -412,7 +413,7 @@ async def admin_update_namespace(
         raise HTTPException(status_code=404, detail=str(exc))
     except IntegrityError:
         await session.rollback()
-        error_html = f'<span class="text-red-400 text-xs">Namespace "{name}" already exists.</span>'
+        error_html = f'<span class="text-red-400 text-xs">Namespace "{escape(name)}" already exists.</span>'
         return HTMLResponse(
             content=error_html,
             headers={"HX-Retarget": "#namespace-create-error", "HX-Reswap": "innerHTML"},
@@ -525,7 +526,7 @@ async def admin_create_static_vm(
         )
     except IntegrityError:
         await session.rollback()
-        error_html = f'<span class="text-red-400 text-xs">Static VM "{name}" already exists.</span>'
+        error_html = f'<span class="text-red-400 text-xs">Static VM "{escape(name)}" already exists.</span>'
         return HTMLResponse(
             content=error_html,
             headers={"HX-Retarget": "#static-vm-create-error", "HX-Reswap": "innerHTML"},
@@ -589,7 +590,7 @@ async def admin_update_static_vm(
         raise HTTPException(status_code=404, detail=str(exc))
     except IntegrityError:
         await session.rollback()
-        error_html = f'<span class="text-red-400 text-xs">Static VM "{name}" already exists.</span>'
+        error_html = f'<span class="text-red-400 text-xs">Static VM "{escape(name)}" already exists.</span>'
         return HTMLResponse(
             content=error_html,
             headers={"HX-Retarget": "#static-vm-create-error", "HX-Reswap": "innerHTML"},

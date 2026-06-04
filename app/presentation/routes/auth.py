@@ -7,6 +7,7 @@ import bcrypt
 import redis.asyncio as aioredis
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from markupsafe import escape
 from sqlalchemy.exc import IntegrityError
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -226,7 +227,7 @@ async def admin_create_user(
         await _user_repo.create(session, username, pw_hash, role)
     except IntegrityError:
         await session.rollback()
-        error_html = f'<span class="text-red-400 text-xs">Username "{username}" is already taken.</span>'
+        error_html = f'<span class="text-red-400 text-xs">Username "{escape(username)}" is already taken.</span>'
         return HTMLResponse(
             content=error_html,
             headers={"HX-Retarget": "#user-create-error", "HX-Reswap": "innerHTML"},
