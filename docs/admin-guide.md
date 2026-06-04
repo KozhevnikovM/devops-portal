@@ -229,6 +229,11 @@ see an error banner above the booking form; API clients receive:
 
 The error message names each violated dimension with the projected usage and the limit.
 
+**Drive-type quotas.** Each hardware config has a **drive type** (`SSD` or `HDD`, set on the
+admin catalog hardware form). A booking's disk counts toward the matching drive-type quota —
+`max_ssd_gb` for an SSD config, `max_hdd_gb` for an HDD config — so the violation reads e.g.
+`SSD disk (120/100 GB)`. Existing configs default to `HDD`.
+
 Release a `READY` or `FAILED` booking to free up its resources and retry.
 
 ---

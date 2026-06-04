@@ -7,7 +7,8 @@
                 <th class="px-4 py-2 text-xs text-gray-500 font-normal uppercase tracking-widest">Name</th>
                 <th class="px-4 py-2 text-xs text-gray-500 font-normal uppercase tracking-widest">CPUs</th>
                 <th class="px-4 py-2 text-xs text-gray-500 font-normal uppercase tracking-widest">RAM (GB)</th>
-                <th class="px-4 py-2 text-xs text-gray-500 font-normal uppercase tracking-widest">HDD (GB)</th>
+                <th class="px-4 py-2 text-xs text-gray-500 font-normal uppercase tracking-widest">Disk (GB)</th>
+                <th class="px-4 py-2 text-xs text-gray-500 font-normal uppercase tracking-widest">Type</th>
                 <th class="px-4 py-2 text-xs text-gray-500 font-normal uppercase tracking-widest">Status</th>
                 <th class="px-4 py-2 text-xs text-gray-500 font-normal uppercase tracking-widest">Actions</th>
             </tr>
@@ -16,7 +17,7 @@
             {% for hw in hw_configs %}
             {% if editing_hw and hw.id == editing_hw.id %}
             <tr class="border-b border-gray-800 last:border-0 bg-gray-800/60">
-                <td colspan="6" class="px-4 py-3">
+                <td colspan="7" class="px-4 py-3">
                     <form
                         hx-patch="/admin/catalog/hardware/{{ hw.id }}"
                         hx-target="#hw-table"
@@ -55,15 +56,25 @@
                             >
                         </div>
                         <div class="flex flex-col gap-1">
-                            <label class="text-xs text-gray-500">HDD (GB)</label>
+                            <label class="text-xs text-gray-500">Disk (GB)</label>
                             <input
-                                name="hdd_gb"
+                                name="disk_gb"
                                 type="number"
                                 min="0"
-                                value="{{ hw.hdd_mb // 1024 }}"
+                                value="{{ hw.disk_mb // 1024 }}"
                                 required
                                 class="bg-gray-900 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-24"
                             >
+                        </div>
+                        <div class="flex flex-col gap-1">
+                            <label class="text-xs text-gray-500">Type</label>
+                            <select
+                                name="drive_type"
+                                class="bg-gray-900 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-24"
+                            >
+                                <option value="HDD" {% if hw.drive_type == "HDD" %}selected{% endif %}>HDD</option>
+                                <option value="SSD" {% if hw.drive_type == "SSD" %}selected{% endif %}>SSD</option>
+                            </select>
                         </div>
                         <div class="flex items-end gap-2 pb-0.5">
                             <button type="submit" class="text-xs px-3 py-1.5 rounded bg-green-700 text-green-100 hover:bg-green-600 transition-colors">Save</button>
@@ -82,7 +93,8 @@
                 <td class="px-4 py-3 text-gray-200">{{ hw.name }}</td>
                 <td class="px-4 py-3 text-gray-300">{{ hw.cpus }}</td>
                 <td class="px-4 py-3 text-gray-300">{{ (hw.memory_mb / 1024) | round(1) }}</td>
-                <td class="px-4 py-3 text-gray-300">{{ (hw.hdd_mb / 1024) | round(1) }}</td>
+                <td class="px-4 py-3 text-gray-300">{{ (hw.disk_mb / 1024) | round(1) }}</td>
+                <td class="px-4 py-3 text-gray-300">{{ hw.drive_type }}</td>
                 <td class="px-4 py-3">
                     {% if hw.is_active %}
                     <span class="text-xs text-green-400">active</span>

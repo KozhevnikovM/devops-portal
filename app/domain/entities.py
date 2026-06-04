@@ -2,7 +2,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from uuid import UUID
 
-from app.domain.enums import BookingStatus, ResourceType
+from app.domain.enums import BookingStatus, DriveType, ResourceType
 
 
 @dataclass
@@ -44,9 +44,10 @@ class HWConfig:
     name: str
     cpus: int
     memory_mb: int
-    hdd_mb: int
+    disk_mb: int
     is_active: bool
     created_at: datetime
+    drive_type: str = DriveType.HDD.value
 
 
 @dataclass
@@ -91,7 +92,8 @@ class Booking:
     owner_username: str | None = None
     cpus: int = 0
     memory_mb: int = 0
-    hdd_mb: int = 0
+    disk_mb: int = 0
+    drive_type: str = DriveType.HDD.value
     status_message: str | None = None
     namespace_id: UUID | None = None
     namespace_name: str | None = None

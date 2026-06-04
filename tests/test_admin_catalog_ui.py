@@ -25,7 +25,7 @@ def _make_hw(**kwargs) -> HWConfig:
         name=kwargs.get("name", "medium"),
         cpus=kwargs.get("cpus", 2),
         memory_mb=kwargs.get("memory_mb", 4096),
-        hdd_mb=kwargs.get("hdd_mb", 26624),
+        disk_mb=kwargs.get("disk_mb", 26624),
         is_active=kwargs.get("is_active", True),
         created_at=datetime.now(timezone.utc),
     )
@@ -205,7 +205,7 @@ def test_create_hw_config_returns_updated_table(client):
         mock_hw.list_all = AsyncMock(return_value=[hw])
         resp = client.post(
             "/admin/catalog/hardware",
-            data={"name": "xlarge", "cpus": "8", "memory_gb": "16", "hdd_gb": "100"},
+            data={"name": "xlarge", "cpus": "8", "memory_gb": "16", "disk_gb": "100"},
         )
 
     assert resp.status_code == 200
@@ -218,7 +218,7 @@ def test_create_hw_config_duplicate_returns_error_fragment(client):
         mock_hw.create = AsyncMock(side_effect=IntegrityError("dup", {}, None))
         resp = client.post(
             "/admin/catalog/hardware",
-            data={"name": "medium", "cpus": "2", "memory_gb": "4", "hdd_gb": "26"},
+            data={"name": "medium", "cpus": "2", "memory_gb": "4", "disk_gb": "26"},
         )
 
     assert resp.status_code == 200
@@ -256,7 +256,7 @@ def test_update_hw_config_returns_updated_table(client):
         mock_hw.list_all = AsyncMock(return_value=[updated])
         resp = client.patch(
             f"/admin/catalog/hardware/{hw.id}",
-            data={"name": hw.name, "cpus": "8", "memory_gb": "4", "hdd_gb": "26"},
+            data={"name": hw.name, "cpus": "8", "memory_gb": "4", "disk_gb": "26"},
         )
 
     assert resp.status_code == 200
@@ -268,7 +268,7 @@ def test_update_hw_config_404_for_missing(client):
         mock_hw.update = AsyncMock(side_effect=ValueError("not found"))
         resp = client.patch(
             f"/admin/catalog/hardware/{uuid4()}",
-            data={"name": "x", "cpus": "1", "memory_gb": "1", "hdd_gb": "1"},
+            data={"name": "x", "cpus": "1", "memory_gb": "1", "disk_gb": "1"},
         )
 
     assert resp.status_code == 404

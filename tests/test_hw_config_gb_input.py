@@ -14,7 +14,7 @@ def _make_hw(**kwargs) -> HWConfig:
         name=kwargs.get("name", "medium"),
         cpus=kwargs.get("cpus", 2),
         memory_mb=kwargs.get("memory_mb", 4096),
-        hdd_mb=kwargs.get("hdd_mb", 51200),
+        disk_mb=kwargs.get("disk_mb", 51200),
         is_active=True,
         created_at=datetime.now(timezone.utc),
     )
@@ -35,7 +35,7 @@ def client():
 
 
 def test_create_hw_config_converts_gb_to_mb(client):
-    """POST with memory_gb=4, hdd_gb=50 stores memory_mb=4096, hdd_mb=51200."""
+    """POST with memory_gb=4, disk_gb=50 stores memory_mb=4096, disk_mb=51200."""
     with patch("app.presentation.routes.admin._hw_config_repo") as mock_repo:
         mock_repo.create = AsyncMock()
         mock_repo.list_all = AsyncMock(return_value=[])
@@ -44,18 +44,18 @@ def test_create_hw_config_converts_gb_to_mb(client):
             "name": "medium",
             "cpus": "2",
             "memory_gb": "4",
-            "hdd_gb": "50",
+            "disk_gb": "50",
         })
 
     assert resp.status_code == 200
     mock_repo.create.assert_called_once()
-    _, _, _, memory_mb, hdd_mb = mock_repo.create.call_args.args
+    _, _, _, memory_mb, disk_mb = mock_repo.create.call_args.args
     assert memory_mb == 4096
-    assert hdd_mb == 51200
+    assert disk_mb == 51200
 
 
 def test_update_hw_config_converts_gb_to_mb(client):
-    """PATCH with memory_gb=8, hdd_gb=100 stores memory_mb=8192, hdd_mb=102400."""
+    """PATCH with memory_gb=8, disk_gb=100 stores memory_mb=8192, disk_mb=102400."""
     hw_id = uuid4()
     with patch("app.presentation.routes.admin._hw_config_repo") as mock_repo:
         mock_repo.update = AsyncMock()
@@ -65,11 +65,11 @@ def test_update_hw_config_converts_gb_to_mb(client):
             "name": "large",
             "cpus": "4",
             "memory_gb": "8",
-            "hdd_gb": "100",
+            "disk_gb": "100",
         })
 
     assert resp.status_code == 200
     mock_repo.update.assert_called_once()
     update_dict = mock_repo.update.call_args.args[2]
     assert update_dict["memory_mb"] == 8192
-    assert update_dict["hdd_mb"] == 102400
+    assert update_dict["disk_mb"] == 102400

@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.entities import User
+from app.domain.enums import DriveType
 from app.infrastructure.auth import require_admin
 from app.infrastructure.database.session import get_async_session
 from app.infrastructure.repositories.image_repo import ImageRepository
@@ -45,14 +46,16 @@ class HWConfigCreate(BaseModel):
     name: str
     cpus: int
     memory_mb: int
-    hdd_mb: int
+    disk_mb: int
+    drive_type: DriveType = DriveType.HDD
 
 
 class HWConfigUpdate(BaseModel):
     name: Optional[str] = None
     cpus: Optional[int] = None
     memory_mb: Optional[int] = None
-    hdd_mb: Optional[int] = None
+    disk_mb: Optional[int] = None
+    drive_type: Optional[DriveType] = None
     is_active: Optional[bool] = None
 
 
@@ -63,7 +66,8 @@ class HWConfigResponse(BaseModel):
     name: str
     cpus: int
     memory_mb: int
-    hdd_mb: int
+    disk_mb: int
+    drive_type: DriveType
     is_active: bool
     created_at: datetime
 
@@ -132,7 +136,8 @@ async def create_hardware(
     _: User = Depends(require_admin),
 ):
     return await _hw_config_repo.create(
-        session, body.name, body.cpus, body.memory_mb, body.hdd_mb
+        session, body.name, body.cpus, body.memory_mb, body.disk_mb,
+        drive_type=body.drive_type.value,
     )
 
 

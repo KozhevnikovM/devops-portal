@@ -110,16 +110,27 @@
                     >
                 </div>
                 <div class="flex flex-col gap-1.5">
-                    <label class="text-xs text-gray-500" for="new-hw-hdd">HDD (GB)</label>
+                    <label class="text-xs text-gray-500" for="new-hw-disk">Disk (GB)</label>
                     <input
-                        id="new-hw-hdd"
-                        name="hdd_gb"
+                        id="new-hw-disk"
+                        name="disk_gb"
                         type="number"
                         min="0"
                         required
                         class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-24"
                         placeholder="50"
                     >
+                </div>
+                <div class="flex flex-col gap-1.5">
+                    <label class="text-xs text-gray-500" for="new-hw-drive-type">Drive type</label>
+                    <select
+                        id="new-hw-drive-type"
+                        name="drive_type"
+                        class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-24"
+                    >
+                        <option value="HDD">HDD</option>
+                        <option value="SSD">SSD</option>
+                    </select>
                 </div>
                 <div class="flex flex-col gap-1.5">
                     <div id="hw-create-error" class="text-xs h-4"></div>

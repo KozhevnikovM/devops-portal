@@ -43,7 +43,7 @@ class _SessionFactory:
 def test_no_session_held_across_apply():
     now = datetime.now(timezone.utc)
     image = VMImage(id=uuid4(), name="Ubuntu", vapp_template_id="tpl-1", is_active=True, created_at=now)
-    hw = HWConfig(id=uuid4(), name="medium", cpus=2, memory_mb=4096, hdd_mb=26624, is_active=True, created_at=now)
+    hw = HWConfig(id=uuid4(), name="medium", cpus=2, memory_mb=4096, disk_mb=26624, is_active=True, created_at=now)
 
     factory = _SessionFactory()
     open_during_apply = []

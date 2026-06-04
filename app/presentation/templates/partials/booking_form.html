@@ -71,7 +71,7 @@
                 class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-gray-100 focus:outline-none focus:border-green-500 text-sm"
             >
                 {% for hw in hw_configs %}
-                <option value="{{ hw.id }}" {% if current_user is defined and hw.id == current_user.default_hw_config_id %}selected{% endif %}>{{ hw.name }} ({{ hw.cpus }} CPU / {{ hw.memory_mb // 1024 }} GB RAM / {{ hw.hdd_mb // 1024 }} GB HDD)</option>
+                <option value="{{ hw.id }}" {% if current_user is defined and hw.id == current_user.default_hw_config_id %}selected{% endif %}>{{ hw.name }} ({{ hw.cpus }} CPU / {{ hw.memory_mb // 1024 }} GB RAM / {{ hw.disk_mb // 1024 }} GB {{ hw.drive_type }})</option>
                 {% endfor %}
             </select>
         </div>
