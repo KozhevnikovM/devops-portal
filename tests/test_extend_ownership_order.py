@@ -13,7 +13,7 @@ import pytest
 from app.application.use_cases.extend_booking import ExtendBookingUseCase
 from app.domain.entities import Booking, User
 from app.domain.enums import BookingStatus
-from app.domain.exceptions import PermissionError
+from app.domain.exceptions import BookingPermissionError
 from app.infrastructure.repositories.booking_repo import BookingRepository
 
 
@@ -62,7 +62,7 @@ async def test_non_owner_gets_403_regardless_of_state(status, ttl):
     repo = _repo(booking)
     use_case = ExtendBookingUseCase(repo)
 
-    with pytest.raises(PermissionError):
+    with pytest.raises(BookingPermissionError):
         await use_case.execute(AsyncMock(), booking.id, extend_minutes=60, current_user=other)
 
     repo.extend.assert_not_called()

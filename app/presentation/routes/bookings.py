@@ -11,7 +11,7 @@ from app.application.use_cases.reserve_static_vm import ReserveStaticVMUseCase
 from app.domain.entities import User
 from app.domain.enums import BookingStatus, ResourceType
 from app.domain.exceptions import (
-    BookingError, BookingNotFoundError, NamespaceUnavailableError, PermissionError,
+    BookingError, BookingNotFoundError, NamespaceUnavailableError, BookingPermissionError,
     QuotaExceededError, StaticVMUnavailableError,
 )
 from app.infrastructure.auth import require_user
@@ -380,7 +380,7 @@ async def extend_booking(
         booking = await _extend_use_case.execute(session, booking_id, extend_minutes, current_user)
     except BookingNotFoundError:
         raise HTTPException(status_code=404, detail="Booking not found")
-    except PermissionError as exc:
+    except BookingPermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc))
     except BookingError as exc:
         raise HTTPException(status_code=409, detail=str(exc))

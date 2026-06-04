@@ -5,7 +5,7 @@ from uuid import uuid4
 
 from app.domain.entities import Booking, User
 from app.domain.enums import BookingStatus
-from app.domain.exceptions import BookingError, BookingNotFoundError, PermissionError
+from app.domain.exceptions import BookingError, BookingNotFoundError, BookingPermissionError
 from app.application.use_cases.extend_booking import ExtendBookingUseCase
 from app.infrastructure.repositories.booking_repo import BookingRepository
 
@@ -108,7 +108,7 @@ async def test_extend_wrong_owner_raises_403(other_user, mock_session):
     repo = _make_repo(booking)
     use_case = ExtendBookingUseCase(repo)
 
-    with pytest.raises(PermissionError):
+    with pytest.raises(BookingPermissionError):
         await use_case.execute(mock_session, booking.id, extend_minutes=60, current_user=other_user)
 
     repo.extend.assert_not_called()
