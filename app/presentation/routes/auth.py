@@ -73,6 +73,7 @@ async def login(
         max_age=settings.SESSION_TTL,
         httponly=True,
         samesite="lax",
+        secure=settings.SESSION_COOKIE_SECURE,
     )
     return response
 
@@ -86,7 +87,13 @@ async def logout(request: Request):
         await r.aclose()
 
     response = RedirectResponse(url="/auth/login", status_code=302)
-    response.delete_cookie("session_id")
+    # Match the attributes used at login so browsers reliably clear the cookie.
+    response.delete_cookie(
+        "session_id",
+        httponly=True,
+        samesite="lax",
+        secure=settings.SESSION_COOKIE_SECURE,
+    )
     return response
 
 

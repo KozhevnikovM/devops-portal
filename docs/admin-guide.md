@@ -28,6 +28,12 @@ to the login page.
 
 **Change the default password immediately** — see [Auth Setup](#auth-setup) below.
 
+> **Serve over HTTPS in production.** The session cookie is issued with `Secure` by default
+> (`SESSION_COOKIE_SECURE=true`), so browsers will only send it over TLS. Terminate TLS at a
+> reverse proxy in front of the app. If you are running locally over plain `http://localhost`,
+> set `SESSION_COOKIE_SECURE=false` so the session cookie still sticks — never do this in
+> production.
+
 ---
 
 ### Environment Variables
@@ -41,6 +47,7 @@ to the login page.
 | `ADMIN_USERNAME` | No | Username for the seeded admin account. Default: `admin` |
 | `ADMIN_PASSWORD` | No | Password for the seeded admin account. Default: `changeme` — **always override in production** |
 | `SESSION_TTL` | No | Browser session lifetime in seconds. Default: `86400` (24 h) |
+| `SESSION_COOKIE_SECURE` | No | Send the `session_id` cookie only over HTTPS. Default: `true`. Set `false` only for local development over plain `http://localhost`. |
 | `DEFAULT_QUOTA_CPUS` | No | Default CPU core quota per user. Default: `16` |
 | `DEFAULT_QUOTA_MEMORY_GB` | No | Default memory quota per user in GB. Default: `32` |
 | `DEFAULT_QUOTA_HDD_GB` | No | Default HDD storage quota per user in GB. Default: `500` |

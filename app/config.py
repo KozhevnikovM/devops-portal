@@ -14,6 +14,9 @@ class Settings(BaseSettings):
     ADMIN_USERNAME: str = "admin"
     ADMIN_PASSWORD: str = "changeme"
     SESSION_TTL: int = 86400
+    # Send the session cookie only over HTTPS. Default True (production runs behind TLS);
+    # set False for local development over plain http://localhost.
+    SESSION_COOKIE_SECURE: bool = True
 
     # Per-user resource quotas (defaults applied when no per-user row exists)
     DEFAULT_QUOTA_CPUS: int = 16
