@@ -71,5 +71,10 @@ COPY --from=frontend /build/dist/js/htmx-sse.js  app/static/js/htmx-sse.js
 
 ENV TF_CLI_CONFIG_FILE=/app/terraform/terraformrc
 
-RUN useradd -m portal
+# UID/GID of the unprivileged runtime user. Build args so the container user can match the host
+# user that owns bind-mounted volumes (set PORTAL_UID/PORTAL_GID to the host portal user's ids).
+ARG PORTAL_UID=1000
+ARG PORTAL_GID=1000
+RUN groupadd -g "${PORTAL_GID}" portal && \
+    useradd -m -u "${PORTAL_UID}" -g "${PORTAL_GID}" portal
 USER portal

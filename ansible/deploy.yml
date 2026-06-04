@@ -59,6 +59,11 @@
     # Added to the `docker` group so it can talk to the Docker socket without root.
     deploy_user: portal
     deploy_group: portal
+    # Optional fixed UID/GID for that user. When set, the same values are passed to the image
+    # build (PORTAL_UID/PORTAL_GID) so the container's runtime user matches the host user that
+    # owns the bind-mounted code/volumes. Empty = let the system assign / image default (1000).
+    deploy_uid: ""
+    deploy_gid: ""
 
     # Private Docker registry login. Leave registry_url empty to skip the step
     # (e.g. when every image comes from Docker Hub). Keep the password in a vault.
@@ -104,12 +109,14 @@
     - name: Ensure deploy group exists
       ansible.builtin.group:
         name: "{{ deploy_group }}"
+        gid: "{{ deploy_gid | default(omit, true) }}"
         state: present
 
     - name: Create deploy user
       ansible.builtin.user:
         name: "{{ deploy_user }}"
         group: "{{ deploy_group }}"
+        uid: "{{ deploy_uid | default(omit, true) }}"
         groups: docker
         append: true
         shell: /bin/bash
