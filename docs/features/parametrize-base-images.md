@@ -79,6 +79,28 @@ value. This is the most flexible option — an operator can mirror each image wh
 - No application code, API, or DB changes. No test changes (infra only); validated by building the
   image with defaults and with an overridden `PYTHON_IMAGE`.
 
+## Private npm registry (build arg URL + BuildKit secret token)
+
+The frontend build takes `NPM_REGISTRY` (a build arg — the URL isn't sensitive) and `NPM_REGISTRY_TOKEN`
+(passed as a **BuildKit secret**, never a build arg):
+
+- The frontend stage mounts the token at `/run/secrets/npm_token` and runs `npm config set --location
+  project` to write a throwaway project `.npmrc`: `registry`, plus
+  `//<host>/:_authToken=base64("token:<token>")` when the secret is non-empty. It then runs
+  `npm install` and removes the `.npmrc`.
+- For a registry behind an internal/self-signed CA, `NPM_CA_CERT_FILE` is mounted as the `npm_ca`
+  secret and wired via npm's `cafile`, so TLS verifies without disabling `strict-ssl`.
+- This happens in the **throwaway frontend stage** (only `dist/` is copied into the final image), so
+  the token reaches neither the final image nor any build arg / `docker history` / `docker compose
+  config` output.
+- Compose forwards `NPM_REGISTRY` as a build arg and defines a `npm_token` build secret sourced from
+  the `NPM_REGISTRY_TOKEN` env var (so the token stays out of args). The Ansible deploy renders
+  `npm_registry` / `npm_registry_token` (vaulted) into `.env`.
+
+> The `base64("token:<token>")` form under `_authToken` matches registries that expect the token
+> encoded that way (e.g. Nexus/Artifactory). Still keep the token out of source control and inject
+> it from CI / a secret store, preferring a short-lived/scoped token.
+
 ## Out of scope
 
 - Vendoring/mirroring the images themselves (an ops task).

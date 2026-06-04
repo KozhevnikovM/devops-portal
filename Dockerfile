@@ -11,12 +11,32 @@ FROM ${TERRAFORM_IMAGE} AS terraform-bin
 # ── Frontend build stage ──────────────────────────────────────────────────────
 FROM ${NODE_IMAGE} AS frontend
 
-ARG NPM_CONFIG_REGISTRY
+
+# Optional private npm registry. NPM_REGISTRY (build arg) sets the registry URL. The token is
+# passed as a BuildKit secret (id=npm_token) — never a build arg/layer — and written into a
+# project-level .npmrc as base64("token:<token>") under _authToken. An optional CA cert
+# (id=npm_ca) is wired via `cafile` so npm trusts a registry behind an internal/self-signed CA.
+# The .npmrc is removed after install. Public npm when none are supplied.
+ARG NPM_REGISTRY
 
 WORKDIR /build
 
 COPY package.json .
-RUN npm install
+RUN --mount=type=secret,id=npm_token \
+    --mount=type=secret,id=npm_ca \
+    if [ -n "$NPM_REGISTRY" ]; then \
+        host="$(echo "$NPM_REGISTRY" | sed -E 's#^https?://##')"; \
+        npm config set --location project registry "$NPM_REGISTRY"; \
+        if [ -s /run/secrets/npm_ca ]; then \
+            npm config set --location project cafile /run/secrets/npm_ca; \
+        fi; \
+        if [ -s /run/secrets/npm_token ]; then \
+            npm config set --location project "//${host}:_authToken" \
+                "$(printf 'token:%s' "$(cat /run/secrets/npm_token)" | base64 | tr -d '\n')"; \
+        fi; \
+    fi && \
+    npm install && \
+    rm -f .npmrc
 
 COPY tailwind.config.js tailwind.input.css ./
 COPY app/presentation/templates ./app/presentation/templates

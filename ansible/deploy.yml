@@ -66,6 +66,18 @@
     registry_username: ""
     registry_password: ""
 
+    # Private npm registry for the frontend build. npm_registry is the URL (a build arg);
+    # npm_registry_token (vaulted) is passed to the build as a BuildKit secret via Compose, and
+    # the image writes _authToken=base64("token:<token>") into a throwaway .npmrc. Both are
+    # rendered into .env; empty = public npm.
+    npm_registry: ""
+    npm_registry_token: ""
+
+    # Optional CA certificate (PEM) for a registry behind an internal/self-signed CA. When set,
+    # it's written to the deploy dir and wired via NPM_CA_CERT_FILE so the build trusts the
+    # registry's TLS. Not secret, but typically kept with the deploy config.
+    npm_ca_cert: ""
+
   handlers:
     - name: Restart portal stack
       community.docker.docker_compose_v2:
@@ -130,6 +142,7 @@
         rsync_opts:
           - "--exclude=.git"
           - "--exclude=.env"
+          - "--exclude=npm-ca.crt"
           - "--exclude=node_modules"
           - "--exclude=.venv"
           - "--exclude=__pycache__"
@@ -158,6 +171,16 @@
         owner: "{{ deploy_user }}"
         group: "{{ deploy_group }}"
         mode: "0600"
+      notify: Restart portal stack
+
+    - name: Write npm registry CA certificate
+      ansible.builtin.copy:
+        content: "{{ npm_ca_cert }}"
+        dest: "{{ deploy_dir }}/npm-ca.crt"
+        owner: "{{ deploy_user }}"
+        group: "{{ deploy_group }}"
+        mode: "0644"
+      when: npm_ca_cert | length > 0
       notify: Restart portal stack
 
     # ── Bring the stack up (build images, run init/migrations, start services) ─
