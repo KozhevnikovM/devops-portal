@@ -52,7 +52,7 @@ class HWConfigUpdate(BaseModel):
     name: Optional[str] = None
     cpus: Optional[int] = None
     memory_mb: Optional[int] = None
-    disk_mb: Optional[int] = None
+    hdd_mb: Optional[int] = None
     is_active: Optional[bool] = None
 
 
