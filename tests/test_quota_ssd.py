@@ -56,15 +56,19 @@ async def test_get_limits_defaults_when_no_row():
 
 @pytest.mark.asyncio
 async def test_get_limits_for_update_includes_max_ssd_gb():
+    # #142: get_limits_for_update lazy-seeds the row (ON CONFLICT DO NOTHING) and then
+    # SELECT ... FOR UPDATE, so the row always exists and we read it with scalar_one().
     repo = QuotaRepository()
     model = _make_quota_model(max_ssd_gb=300)
     mock_session = AsyncMock()
     mock_result = MagicMock()
-    mock_result.scalar_one_or_none.return_value = model
+    mock_result.scalar_one.return_value = model
     mock_session.execute = AsyncMock(return_value=mock_result)
 
     limits = await repo.get_limits_for_update(mock_session, str(model.user_id))
     assert limits["max_ssd_gb"] == 300
+    # Two statements: the lazy-seed insert and the locking select.
+    assert mock_session.execute.await_count == 2
 
 
 @pytest.mark.asyncio
