@@ -55,12 +55,24 @@
     #     REDIS_IMAGE: registry.internal/redis:7
     portal_images: {}
 
+    # Dedicated unprivileged user that owns the deploy and runs the stack.
+    # Added to the `docker` group so it can talk to the Docker socket without root.
+    deploy_user: portal
+    deploy_group: portal
+
+    # Private Docker registry login. Leave registry_url empty to skip the step
+    # (e.g. when every image comes from Docker Hub). Keep the password in a vault.
+    registry_url: ""
+    registry_username: ""
+    registry_password: ""
+
   handlers:
     - name: Restart portal stack
       community.docker.docker_compose_v2:
         project_src: "{{ deploy_dir }}"
         build: always
         state: restarted
+      become_user: "{{ deploy_user }}"
 
   tasks:
     - name: Install Docker engine and compose plugin
@@ -76,13 +88,37 @@
         state: started
         enabled: true
 
+    # ── Deploy user ───────────────────────────────────────────────────────────
+    - name: Ensure deploy group exists
+      ansible.builtin.group:
+        name: "{{ deploy_group }}"
+        state: present
+
+    - name: Create deploy user
+      ansible.builtin.user:
+        name: "{{ deploy_user }}"
+        group: "{{ deploy_group }}"
+        groups: docker
+        append: true
+        shell: /bin/bash
+        create_home: true
+
     - name: Ensure deploy directory exists
       ansible.builtin.file:
         path: "{{ deploy_dir }}"
         state: directory
-        owner: root
-        group: root
+        owner: "{{ deploy_user }}"
+        group: "{{ deploy_group }}"
         mode: "0755"
+
+    # ── Private registry ──────────────────────────────────────────────────────
+    - name: Log in to private Docker registry
+      community.docker.docker_login:
+        registry_url: "{{ registry_url }}"
+        username: "{{ registry_username }}"
+        password: "{{ registry_password }}"
+      become_user: "{{ deploy_user }}"
+      when: registry_url | length > 0
 
     # ── Get the code onto the host ────────────────────────────────────────────
     - name: Push current working-tree code
@@ -100,6 +136,7 @@
           - "--exclude=.pytest_cache"
           - "--exclude=.playwright-mcp"
           - "--exclude=celerybeat-schedule"
+          - "--chown={{ deploy_user }}:{{ deploy_group }}"
       when: deploy_source == "synchronize"
       notify: Restart portal stack
 
@@ -109,6 +146,7 @@
         dest: "{{ deploy_dir }}"
         version: "{{ deploy_git_version }}"
         force: true
+      become_user: "{{ deploy_user }}"
       when: deploy_source == "git"
       notify: Restart portal stack
 
@@ -117,8 +155,8 @@
       ansible.builtin.template:
         src: env.j2
         dest: "{{ deploy_dir }}/.env"
-        owner: root
-        group: root
+        owner: "{{ deploy_user }}"
+        group: "{{ deploy_group }}"
         mode: "0600"
       notify: Restart portal stack
 
@@ -129,6 +167,7 @@
         build: always
         state: present
         wait: true
+      become_user: "{{ deploy_user }}"
       register: compose_up
 
     - name: Show running services
