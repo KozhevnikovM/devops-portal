@@ -28,10 +28,12 @@ services:
   init:
     build:
       context: .
+      secrets:
+        - npm_token
       args:
         PIP_INDEX_URL: ${PIP_INDEX_URL:-}
         PIP_TRUSTED_HOST: ${PIP_TRUSTED_HOST:-}
-        NPM_CONFIG_REGISTRY: ${NPM_CONFIG_REGISTRY:-}
+        NPM_REGISTRY: ${NPM_REGISTRY:-}
         TERRAFORM_IMAGE: ${TERRAFORM_IMAGE:-hashicorp/terraform:1.9}
         NODE_IMAGE: ${NODE_IMAGE:-node:20-slim}
         PYTHON_IMAGE: ${PYTHON_IMAGE:-python:3.11-slim}
@@ -48,10 +50,12 @@ services:
   app:
     build:
       context: .
+      secrets:
+        - npm_token
       args:
         PIP_INDEX_URL: ${PIP_INDEX_URL:-}
         PIP_TRUSTED_HOST: ${PIP_TRUSTED_HOST:-}
-        NPM_CONFIG_REGISTRY: ${NPM_CONFIG_REGISTRY:-}
+        NPM_REGISTRY: ${NPM_REGISTRY:-}
         TERRAFORM_IMAGE: ${TERRAFORM_IMAGE:-hashicorp/terraform:1.9}
         NODE_IMAGE: ${NODE_IMAGE:-node:20-slim}
         PYTHON_IMAGE: ${PYTHON_IMAGE:-python:3.11-slim}
@@ -71,10 +75,12 @@ services:
   worker:
     build:
       context: .
+      secrets:
+        - npm_token
       args:
         PIP_INDEX_URL: ${PIP_INDEX_URL:-}
         PIP_TRUSTED_HOST: ${PIP_TRUSTED_HOST:-}
-        NPM_CONFIG_REGISTRY: ${NPM_CONFIG_REGISTRY:-}
+        NPM_REGISTRY: ${NPM_REGISTRY:-}
         TERRAFORM_IMAGE: ${TERRAFORM_IMAGE:-hashicorp/terraform:1.9}
         NODE_IMAGE: ${NODE_IMAGE:-node:20-slim}
         PYTHON_IMAGE: ${PYTHON_IMAGE:-python:3.11-slim}
@@ -92,10 +98,12 @@ services:
   beat:
     build:
       context: .
+      secrets:
+        - npm_token
       args:
         PIP_INDEX_URL: ${PIP_INDEX_URL:-}
         PIP_TRUSTED_HOST: ${PIP_TRUSTED_HOST:-}
-        NPM_CONFIG_REGISTRY: ${NPM_CONFIG_REGISTRY:-}
+        NPM_REGISTRY: ${NPM_REGISTRY:-}
         TERRAFORM_IMAGE: ${TERRAFORM_IMAGE:-hashicorp/terraform:1.9}
         NODE_IMAGE: ${NODE_IMAGE:-node:20-slim}
         PYTHON_IMAGE: ${PYTHON_IMAGE:-python:3.11-slim}
@@ -108,6 +116,12 @@ services:
         condition: service_completed_successfully
       redis:
         condition: service_healthy
+
+secrets:
+  # npm auth token for the frontend build, passed as a BuildKit secret (never a build arg/layer).
+  # Sourced from the NPM_REGISTRY_TOKEN env var; empty/unset → public npm.
+  npm_token:
+    environment: NPM_REGISTRY_TOKEN
 
 volumes:
   postgres_data:

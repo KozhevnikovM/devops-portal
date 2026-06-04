@@ -82,7 +82,25 @@ behaviour.
 | :--- | :--- |
 | `PIP_INDEX_URL` | Private PyPI mirror for `pip install` |
 | `PIP_TRUSTED_HOST` | Host to trust for the PyPI mirror (if no TLS) |
-| `NPM_CONFIG_REGISTRY` | Private npm registry for the frontend build |
+| `NPM_REGISTRY` | Private npm registry URL for the frontend build |
+| `NPM_REGISTRY_TOKEN` | Auth token for `NPM_REGISTRY` (authenticated registries) |
+
+**Private npm registry.** Set `NPM_REGISTRY` (and `NPM_REGISTRY_TOKEN` if it needs auth):
+
+```bash
+# .env
+NPM_REGISTRY=https://nexus.internal/repository/npm/
+NPM_REGISTRY_TOKEN=YOUR_TOKEN
+```
+
+`NPM_REGISTRY` is a build arg (the URL isn't sensitive). `NPM_REGISTRY_TOKEN` is passed to the build
+as a **BuildKit secret** (Compose's `npm_token` secret, sourced from the env var) — so it is never a
+build arg or image layer. The frontend stage writes a throwaway project `.npmrc` with
+`//<host>/:_authToken=base64("token:<token>")`, runs `npm install`, then removes it; this all happens
+in the discarded frontend stage, so nothing reaches the final image. Requires BuildKit (default in
+modern Docker / `docker compose build`). Still keep the token out of source control and inject it
+from CI / a secret store, preferring a short-lived/scoped token. In the Ansible deploy, set
+`npm_registry` and `npm_registry_token` (vaulted); the playbook renders them into `.env` automatically.
 
 **Base container images** (full image reference — registry + repo + tag; you may also pin a digest):
 
