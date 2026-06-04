@@ -81,7 +81,7 @@ def mock_session():
 async def test_create_booking_returns_pending(mock_repo, mock_image_repo, mock_hw_repo, mock_quota_repo, mock_image, mock_hw, mock_session):
     use_case = CreateBookingUseCase(mock_repo, mock_image_repo, mock_hw_repo, mock_quota_repo)
 
-    with patch("app.application.use_cases.create_booking.provision_vm_task") as mock_task:
+    with patch("app.tasks.provision.provision_vm_task") as mock_task:
         mock_task.delay = MagicMock()
         booking = await use_case.execute(mock_session, ttl_minutes=240, image_id=mock_image.id, hw_config_id=mock_hw.id)
 
@@ -94,7 +94,7 @@ async def test_create_booking_returns_pending(mock_repo, mock_image_repo, mock_h
 async def test_create_booking_sets_image_and_hw_fields(mock_repo, mock_image_repo, mock_hw_repo, mock_quota_repo, mock_image, mock_hw, mock_session):
     use_case = CreateBookingUseCase(mock_repo, mock_image_repo, mock_hw_repo, mock_quota_repo)
 
-    with patch("app.application.use_cases.create_booking.provision_vm_task") as mock_task:
+    with patch("app.tasks.provision.provision_vm_task") as mock_task:
         mock_task.delay = MagicMock()
         booking = await use_case.execute(mock_session, ttl_minutes=240, image_id=mock_image.id, hw_config_id=mock_hw.id)
 
@@ -108,7 +108,7 @@ async def test_create_booking_sets_image_and_hw_fields(mock_repo, mock_image_rep
 async def test_create_booking_dispatches_task(mock_repo, mock_image_repo, mock_hw_repo, mock_quota_repo, mock_image, mock_hw, mock_session):
     use_case = CreateBookingUseCase(mock_repo, mock_image_repo, mock_hw_repo, mock_quota_repo)
 
-    with patch("app.application.use_cases.create_booking.provision_vm_task") as mock_task:
+    with patch("app.tasks.provision.provision_vm_task") as mock_task:
         mock_task.delay = MagicMock()
         booking = await use_case.execute(mock_session, ttl_minutes=60, image_id=mock_image.id, hw_config_id=mock_hw.id)
         mock_task.delay.assert_called_once_with(str(booking.id), str(mock_image.id), str(mock_hw.id))
@@ -118,7 +118,7 @@ async def test_create_booking_dispatches_task(mock_repo, mock_image_repo, mock_h
 async def test_create_booking_sets_correct_expiry(mock_repo, mock_image_repo, mock_hw_repo, mock_quota_repo, mock_image, mock_hw, mock_session):
     use_case = CreateBookingUseCase(mock_repo, mock_image_repo, mock_hw_repo, mock_quota_repo)
 
-    with patch("app.application.use_cases.create_booking.provision_vm_task") as mock_task:
+    with patch("app.tasks.provision.provision_vm_task") as mock_task:
         mock_task.delay = MagicMock()
         booking = await use_case.execute(mock_session, ttl_minutes=480, image_id=mock_image.id, hw_config_id=mock_hw.id)
 
