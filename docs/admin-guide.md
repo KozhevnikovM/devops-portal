@@ -139,6 +139,20 @@ The `PYTHON_IMAGE` / `NODE_IMAGE` / `TERRAFORM_IMAGE` images are consumed as Doc
 (forwarded by compose to the `Dockerfile`); `POSTGRES_IMAGE` / `REDIS_IMAGE` are pulled at run time.
 (The Terraform *provider* is mirrored separately — see [Terraform Adapter Setup](#terraform-adapter-setup).)
 
+**Runtime user UID/GID** (build args). The image runs as an unprivileged `portal` user. Set
+`PORTAL_UID` / `PORTAL_GID` (default `1000`) so the container user matches the host user that owns
+the bind-mounted code/volumes — avoiding permission mismatches on mounted files:
+
+```bash
+# .env
+PORTAL_UID=1500
+PORTAL_GID=1500
+```
+
+In the Ansible deploy, set `deploy_uid` / `deploy_gid`; the playbook creates the host `portal`
+user/group with those ids **and** renders matching `PORTAL_UID` / `PORTAL_GID` into `.env` so the
+image build lines up.
+
 ---
 
 ## Auth Setup

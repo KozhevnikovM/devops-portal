@@ -38,6 +38,8 @@ services:
         TERRAFORM_IMAGE: ${TERRAFORM_IMAGE:-hashicorp/terraform:1.9}
         NODE_IMAGE: ${NODE_IMAGE:-node:20-slim}
         PYTHON_IMAGE: ${PYTHON_IMAGE:-python:3.11-slim}
+        PORTAL_UID: ${PORTAL_UID:-1000}
+        PORTAL_GID: ${PORTAL_GID:-1000}
     command: sh -c "cp -r /app/app/static/. /static/ && alembic upgrade head"
     user: root
     env_file: .env
@@ -61,6 +63,8 @@ services:
         TERRAFORM_IMAGE: ${TERRAFORM_IMAGE:-hashicorp/terraform:1.9}
         NODE_IMAGE: ${NODE_IMAGE:-node:20-slim}
         PYTHON_IMAGE: ${PYTHON_IMAGE:-python:3.11-slim}
+        PORTAL_UID: ${PORTAL_UID:-1000}
+        PORTAL_GID: ${PORTAL_GID:-1000}
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
     ports:
       - "8000:8000"
@@ -87,6 +91,8 @@ services:
         TERRAFORM_IMAGE: ${TERRAFORM_IMAGE:-hashicorp/terraform:1.9}
         NODE_IMAGE: ${NODE_IMAGE:-node:20-slim}
         PYTHON_IMAGE: ${PYTHON_IMAGE:-python:3.11-slim}
+        PORTAL_UID: ${PORTAL_UID:-1000}
+        PORTAL_GID: ${PORTAL_GID:-1000}
     command: celery -A app.infrastructure.celery_app worker -l info -c 4
     env_file: .env
     volumes:
@@ -111,6 +117,8 @@ services:
         TERRAFORM_IMAGE: ${TERRAFORM_IMAGE:-hashicorp/terraform:1.9}
         NODE_IMAGE: ${NODE_IMAGE:-node:20-slim}
         PYTHON_IMAGE: ${PYTHON_IMAGE:-python:3.11-slim}
+        PORTAL_UID: ${PORTAL_UID:-1000}
+        PORTAL_GID: ${PORTAL_GID:-1000}
     command: celery -A app.infrastructure.celery_app beat -l info
     env_file: .env
     volumes:
