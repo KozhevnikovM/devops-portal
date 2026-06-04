@@ -11,3 +11,13 @@ my-server ansible_host=203.0.113.10 ansible_user=ubuntu
 # deploy_source=git
 # deploy_git_repo=git@github.com:you/devops-portal.git
 # deploy_git_version=main
+
+# For isolated / air-gapped hosts, override the base container images with internal-registry
+# references. These are a YAML mapping, so set them in group_vars (not here), e.g.
+# group_vars/portal.yml:
+#   portal_images:
+#     PYTHON_IMAGE: registry.internal/python:3.11-slim
+#     NODE_IMAGE: registry.internal/node:20-slim
+#     TERRAFORM_IMAGE: registry.internal/hashicorp/terraform:1.9
+#     POSTGRES_IMAGE: registry.internal/postgres:15
+#     REDIS_IMAGE: registry.internal/redis:7

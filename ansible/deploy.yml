@@ -43,6 +43,18 @@
       ADMIN_USERNAME: admin
       ADMIN_PASSWORD: changeme  # override via vault — never ship this default
 
+    # Base container images for isolated / air-gapped deploys. Empty by default, so the
+    # Dockerfile + compose defaults (Docker Hub) apply. Override per host (group_vars) with
+    # internal-registry references — compose reads these from the rendered .env for both the
+    # build args (PYTHON/NODE/TERRAFORM) and the run-time images (POSTGRES/REDIS). e.g.:
+    #   portal_images:
+    #     PYTHON_IMAGE: registry.internal/python:3.11-slim
+    #     NODE_IMAGE: registry.internal/node:20-slim
+    #     TERRAFORM_IMAGE: registry.internal/hashicorp/terraform:1.9
+    #     POSTGRES_IMAGE: registry.internal/postgres:15
+    #     REDIS_IMAGE: registry.internal/redis:7
+    portal_images: {}
+
   handlers:
     - name: Restart portal stack
       community.docker.docker_compose_v2:
