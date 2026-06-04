@@ -108,23 +108,25 @@ class TerraformVcdAdapter:
         """)
         (workspace_dir / "main.tf").write_text(main_tf)
 
-        tfvars_lines = [
-            f'name             = "{config["name"]}"',
-            f'network_name     = "{settings.VCD_NETWORK_NAME}"',
-            f'vapp_template_id = "{config["vapp_template_id"]}"',
-            f'cpus             = {config["cpus"]}',
-            f'memory           = {config["memory"]}',
-            f'disk_size        = {config["disk_size"]}',
-            'customization = {',
-            '  force                      = false',
-            '  change_sid                 = true',
-            '  allow_local_admin_password = true',
-            '  auto_generate_password     = false',
-            f'  admin_password             = "{config["vm_password"]}"',
-            '  initscript                 = ""',
-            '}',
-        ]
-        (workspace_dir / "terraform.tfvars").write_text("\n".join(tfvars_lines) + "\n")
+        # Write variables as tfvars.json so json.dump quotes/escapes every value — no input
+        # (admin free-text vapp_template_id, name, password, …) can break out and inject HCL.
+        tfvars = {
+            "name":             config["name"],
+            "network_name":     settings.VCD_NETWORK_NAME,
+            "vapp_template_id": config["vapp_template_id"],
+            "cpus":             config["cpus"],
+            "memory":           config["memory"],
+            "disk_size":        config["disk_size"],
+            "customization": {
+                "force":                      False,
+                "change_sid":                 True,
+                "allow_local_admin_password": True,
+                "auto_generate_password":     False,
+                "admin_password":             config["vm_password"],
+                "initscript":                 "",
+            },
+        }
+        (workspace_dir / "terraform.tfvars.json").write_text(json.dumps(tfvars, indent=2) + "\n")
 
     async def _run(self, *args: str, cwd: Path, on_progress=None) -> str:
         proc = await asyncio.create_subprocess_exec(
