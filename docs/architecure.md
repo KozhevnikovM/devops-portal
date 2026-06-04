@@ -6,7 +6,7 @@
 | :--- | :--- | :--- |
 | **Backend Language** | Python 3.11+ (Type Hinting) | Fast development, rich library ecosystem, strict typing for reliable business logic. |
 | **Web Framework** | FastAPI | High performance (asyncio), automatic OpenAPI generation, ideal compatibility with HTMX for HTML fragment delivery. Content negotiation supports both browser (HTML) and API (JSON) clients from the same routes. |
-| **Frontend** | HTMX + Tailwind CSS | Avoiding SPA complexity (React) in favor of server-side rendering (SSR). Simplified frontend state, faster feature delivery, reduced client-side JS. Native SSE support for real-time status updates. |
+| **Frontend** | HTMX + Tailwind CSS | Avoiding SPA complexity (React) in favor of server-side rendering (SSR). Simplified frontend state, faster feature delivery, reduced client-side JS. Live status via short-interval HTMX polling of the row fragment. |
 | **Database** | PostgreSQL | Reliable relational data storage, complex query support for quota and resource management. `SELECT FOR UPDATE` used for quota enforcement. Serves as Terraform remote state backend. |
 | **Task Queue** | Celery + Redis | Simplified deployment in closed environments, lower resource requirements, sufficient reliability for current MVP tasks. |
 | **Task Scheduler** | Celery Beat | Periodic task execution for TTL enforcement, keep-alive reminder dispatch, and automated resource cleanup. |
@@ -22,7 +22,7 @@ C4Container
     Person(jenkins, "Jenkins", "CI/CD Service Account")
 
     System_Boundary(booking_system, "Resource Booking System") {
-        Container(app_server, "Application Server", "FastAPI / Python + Jinja2", "Business logic, SSR HTML fragments (HTMX), JSON API (content negotiation), SSE status stream")
+        Container(app_server, "Application Server", "FastAPI / Python + Jinja2", "Business logic, SSR HTML fragments (HTMX), JSON API (content negotiation), HTMX-polled status fragment")
         Container(db, "Database", "PostgreSQL", "Bookings, quotas, users, templates, audit log, Terraform remote state")
         Container(redis, "Message Broker", "Redis", "Celery task queue")
         Container(celery_worker, "Task Worker", "Celery", "Asynchronous resource provisioning and teardown")
@@ -33,7 +33,7 @@ C4Container
 
     Rel(user, app_server, "Interacts via browser", "HTTPS / HTMX")
     Rel(jenkins, app_server, "Books resources via API", "HTTPS / JSON")
-    Rel(app_server, user, "Pushes live status updates", "SSE")
+    Rel(app_server, user, "Serves live status updates", "HTMX poll of /bookings/{id}/row")
     Rel(app_server, db, "Reads/Writes", "SQL (SQLAlchemy)")
     Rel(app_server, redis, "Queues tasks", "Redis protocol")
     Rel(celery_worker, redis, "Consumes tasks", "Redis protocol")
@@ -58,16 +58,22 @@ Unlike a classic SPA where the client requests JSON and renders UI itself, this 
 
 All state rendering logic resides on the server, keeping the client thin.
 
-### 3.2 Live Status Updates (SSE)
-Once a booking row is rendered, its status indicator subscribes to a server-sent event stream:
+### 3.2 Live Status Updates (HTMX polling)
+Once a booking row is rendered, it polls itself for status changes:
 
 ```
-GET /bookings/{id}/status-stream   (text/event-stream)
+GET /bookings/{id}/row   (text/html — re-renders the row fragment)
 ```
 
-The Celery worker writes status transitions to PostgreSQL. The SSE endpoint polls the DB and pushes `data:` events to the browser. HTMX's `hx-ext="sse"` swaps the status fragment on each event. The connection closes when the resource reaches a terminal state (`READY` or `FAILED`).
+The Celery worker writes status transitions to PostgreSQL. The row template sets
+`hx-get="/bookings/{id}/row"` with `hx-trigger="every 3s …"` while the status is non-terminal;
+each poll swaps in the freshly rendered fragment. Once the booking reaches a terminal state
+(`READY` / `FAILED` / `RELEASED`) the row no longer emits the trigger, so polling stops — no
+client cleanup needed.
 
-SSE is preferred over polling (reduces unnecessary DB load) and WebSockets (one-directional push requires no bidirectional channel).
+> **Note:** an earlier design described a `GET /bookings/{id}/status-stream` SSE endpoint. That
+> endpoint was never built; the implementation uses short-interval HTMX polling as above. SSE
+> (`text/event-stream`) remains a possible future optimization to cut redundant polls.
 
 ### 3.3 Jenkins API (Content Negotiation)
 The same FastAPI routes serve both browsers and the Jenkins service account. The route inspects the `Accept` header:
