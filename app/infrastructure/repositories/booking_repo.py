@@ -5,6 +5,7 @@ from sqlalchemy import cast, func, select, String
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
+from app.domain.constants import PERMANENT_EXPIRES_AT
 from app.domain.entities import Booking, BookingAuditEntry
 from app.domain.enums import BookingStatus, ResourceType
 from app.domain.exceptions import BookingNotFoundError
@@ -128,7 +129,7 @@ def _assign_resource_and_ready(session, booking_model, resource_type: str, resou
     old_status = booking_model.status
     booking_model.status = BookingStatus.READY.value
     if booking_model.ttl_minutes == 0:
-        booking_model.expires_at = datetime(9999, 12, 31, 23, 59, 59, tzinfo=timezone.utc)
+        booking_model.expires_at = PERMANENT_EXPIRES_AT
     else:
         booking_model.expires_at = datetime.now(timezone.utc) + timedelta(minutes=booking_model.ttl_minutes)
     session.add(BookingAuditModel(
@@ -275,7 +276,7 @@ class BookingRepository:
             raise BookingNotFoundError(booking_id)
         if extend_minutes == 0:
             model.ttl_minutes = 0
-            model.expires_at = datetime(9999, 12, 31, 23, 59, 59, tzinfo=timezone.utc)
+            model.expires_at = PERMANENT_EXPIRES_AT
         else:
             model.expires_at = model.expires_at + timedelta(minutes=extend_minutes)
             model.ttl_minutes = model.ttl_minutes + extend_minutes

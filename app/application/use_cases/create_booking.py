@@ -4,6 +4,7 @@ from uuid import UUID, uuid4
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.domain.constants import PERMANENT_EXPIRES_AT
 from app.domain.entities import Booking
 from app.domain.enums import BookingStatus, DriveType
 from app.domain.exceptions import QuotaExceededError
@@ -69,7 +70,7 @@ class CreateBookingUseCase:
 
         now = datetime.now(timezone.utc)
         if ttl_minutes == 0:
-            expires_at = datetime(9999, 12, 31, 23, 59, 59, tzinfo=timezone.utc)
+            expires_at = PERMANENT_EXPIRES_AT
         else:
             expires_at = now + timedelta(minutes=ttl_minutes)
 
