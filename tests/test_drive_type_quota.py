@@ -46,7 +46,7 @@ _FULL_LIMITS = {"max_cpus": 100, "max_memory_gb": 1000, "max_ssd_gb": 50, "max_h
 async def test_ssd_config_counts_toward_ssd_quota_and_is_rejected():
     hw = _hw(DriveType.SSD.value, disk_gb=100)  # exceeds max_ssd_gb=50
     uc = _use_case(hw, _quota_repo(dict(_FULL_USED), dict(_FULL_LIMITS)))
-    with patch("app.application.use_cases.create_booking.provision_vm_task"):
+    with patch("app.tasks.provision.provision_vm_task"):
         with pytest.raises(QuotaExceededError, match="SSD disk"):
             await uc.execute(AsyncMock(), ttl_minutes=60, image_id=uuid4(), hw_config_id=hw.id)
 
@@ -57,7 +57,7 @@ async def test_hdd_config_unaffected_by_ssd_usage():
     hw = _hw(DriveType.HDD.value, disk_gb=40)  # within max_hdd_gb=50
     used = {"cpus": 0, "memory_gb": 0, "ssd_gb": 50, "hdd_gb": 0}
     uc = _use_case(hw, _quota_repo(used, dict(_FULL_LIMITS)))
-    with patch("app.application.use_cases.create_booking.provision_vm_task"):
+    with patch("app.tasks.provision.provision_vm_task"):
         booking = await uc.execute(AsyncMock(), ttl_minutes=60, image_id=uuid4(), hw_config_id=hw.id)
     assert booking.drive_type == DriveType.HDD.value
     assert booking.disk_mb == 40 * 1024
@@ -67,6 +67,6 @@ async def test_hdd_config_unaffected_by_ssd_usage():
 async def test_ssd_config_snapshots_drive_type_on_success():
     hw = _hw(DriveType.SSD.value, disk_gb=10)  # within max_ssd_gb=50
     uc = _use_case(hw, _quota_repo(dict(_FULL_USED), dict(_FULL_LIMITS)))
-    with patch("app.application.use_cases.create_booking.provision_vm_task"):
+    with patch("app.tasks.provision.provision_vm_task"):
         booking = await uc.execute(AsyncMock(), ttl_minutes=60, image_id=uuid4(), hw_config_id=hw.id)
     assert booking.drive_type == DriveType.SSD.value

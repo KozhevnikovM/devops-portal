@@ -82,7 +82,7 @@ async def test_create_booking_locks_before_counting():
 
     use_case = CreateBookingUseCase(booking_repo, image_repo, hw_repo, quota_repo)
     with pytest.MonkeyPatch().context() as mp:
-        mp.setattr("app.application.use_cases.create_booking.provision_vm_task", MagicMock())
+        mp.setattr("app.tasks.provision.provision_vm_task", MagicMock())
         await use_case.execute(AsyncMock(), ttl_minutes=60, image_id=image.id, hw_config_id=hw.id, user_id=str(uuid4()))
 
     assert order.mock_calls == [call.lock(), call.count()]

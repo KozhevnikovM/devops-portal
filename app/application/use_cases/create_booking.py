@@ -3,6 +3,7 @@ from uuid import UUID, uuid4
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.application.ports import TaskDispatcher
 from app.config import settings
 from app.domain.constants import PERMANENT_EXPIRES_AT
 from app.domain.entities import Booking
@@ -12,7 +13,6 @@ from app.infrastructure.repositories.booking_repo import BookingRepository
 from app.infrastructure.repositories.image_repo import ImageRepository
 from app.infrastructure.repositories.hw_config_repo import HWConfigRepository
 from app.infrastructure.repositories.quota_repo import QuotaRepository
-from app.tasks.provision import provision_vm_task
 
 
 class CreateBookingUseCase:
@@ -22,11 +22,20 @@ class CreateBookingUseCase:
         image_repo: ImageRepository,
         hw_config_repo: HWConfigRepository,
         quota_repo: QuotaRepository | None = None,
+        dispatcher: TaskDispatcher | None = None,
     ) -> None:
         self._repo = repo
         self._image_repo = image_repo
         self._hw_config_repo = hw_config_repo
         self._quota_repo = quota_repo or QuotaRepository()
+        self._dispatcher = dispatcher
+
+    def _dispatch(self) -> TaskDispatcher:
+        # Lazy default so the application layer never imports the Celery adapter at module load.
+        if self._dispatcher is None:
+            from app.infrastructure.celery_dispatcher import CeleryTaskDispatcher
+            self._dispatcher = CeleryTaskDispatcher()
+        return self._dispatcher
 
     async def execute(
         self,
@@ -91,5 +100,5 @@ class CreateBookingUseCase:
             drive_type=hw.drive_type,
         )
         booking = await self._repo.create(session, booking)
-        provision_vm_task.delay(str(booking.id), str(image.id), str(hw.id))
+        self._dispatch().dispatch_provision(str(booking.id), str(image.id), str(hw.id))
         return booking

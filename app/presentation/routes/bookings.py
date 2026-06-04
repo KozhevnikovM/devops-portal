@@ -15,6 +15,7 @@ from app.domain.exceptions import (
     QuotaExceededError, StaticVMUnavailableError,
 )
 from app.infrastructure.auth import require_user
+from app.infrastructure.celery_dispatcher import CeleryTaskDispatcher
 from app.infrastructure.database.session import get_async_session
 from app.infrastructure.repositories.booking_repo import BookingRepository
 from app.infrastructure.repositories.image_repo import ImageRepository
@@ -30,7 +31,8 @@ _image_repo = ImageRepository()
 _hw_config_repo = HWConfigRepository()
 _namespace_repo = NamespaceRepository()
 _static_vm_repo = StaticVMRepository()
-_use_case = CreateBookingUseCase(_repo, _image_repo, _hw_config_repo)
+_dispatcher = CeleryTaskDispatcher()
+_use_case = CreateBookingUseCase(_repo, _image_repo, _hw_config_repo, dispatcher=_dispatcher)
 _extend_use_case = ExtendBookingUseCase(_repo)
 _book_namespace_use_case = BookNamespaceUseCase(_repo, _namespace_repo)
 _reserve_static_vm_use_case = ReserveStaticVMUseCase(_repo, _static_vm_repo)
@@ -328,8 +330,6 @@ async def release_booking(
     session: AsyncSession = Depends(get_async_session),
     current_user: User = Depends(require_user),
 ):
-    from app.tasks.teardown import teardown_vm_task  # avoid circular import at module load
-
     try:
         booking = await _repo.get(session, booking_id)
     except BookingNotFoundError:
@@ -356,7 +356,7 @@ async def release_booking(
             await _repo.promote_next_queued(session, booking.resource_type.value)
         else:
             await _repo.update_status(session, booking_id, BookingStatus.RELEASING, actor_id=str(current_user.id))
-            teardown_vm_task.delay(str(booking_id))
+            _dispatcher.dispatch_teardown(str(booking_id))
 
     booking = await _repo.get(session, booking_id)
 
