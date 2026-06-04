@@ -1,0 +1,92 @@
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+from typing import Callable
+from uuid import UUID, uuid4
+
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.config import settings
+from app.domain.constants import PERMANENT_EXPIRES_AT
+from app.domain.entities import Booking
+from app.domain.enums import BookingStatus, ResourceType
+from app.infrastructure.repositories.booking_repo import BookingRepository
+
+
+@dataclass(frozen=True)
+class PooledResourceConfig:
+    """Everything that differs between the pooled resource types (static VM vs namespace)."""
+    resource_type: ResourceType
+    unavailable_exc: type[Exception]
+    label: str                                   # human label for error messages
+    fk_field: str                                # Booking FK column for this resource
+    attach_display: Callable[[Booking, object], None]  # copy display fields off the resource
+
+
+class ReservePooledResourceUseCase:
+    """Reserve a pooled resource from an admin-managed pool — synchronous, no provisioning.
+
+    Two modes: reserve a *specific* resource by id, or auto-assign *any* free one; when the pool
+    is empty, the any-available path enqueues (FIFO). Shared by static VMs and namespaces — the
+    per-type differences live in ``PooledResourceConfig``.
+    """
+
+    def __init__(self, repo: BookingRepository, pool_repo, config: PooledResourceConfig) -> None:
+        self._repo = repo
+        self._pool_repo = pool_repo
+        self._cfg = config
+
+    async def execute(
+        self,
+        session: AsyncSession,
+        ttl_minutes: int,
+        user_id: str | None = None,
+        resource_id: UUID | None = None,
+    ) -> Booking:
+        cfg = self._cfg
+        uid = user_id or settings.DEV_USER_ID
+        now = datetime.now(timezone.utc)
+
+        if resource_id is not None:
+            # Pick-specific — lock the chosen row FOR UPDATE, reject if gone/inactive/taken.
+            resource = await self._pool_repo.lock_for_allocation(session, resource_id)
+            if resource is None or not resource.is_active:
+                raise cfg.unavailable_exc(f"{cfg.label} is not available")
+            if await self._pool_repo.is_held(session, resource_id):
+                raise cfg.unavailable_exc(f"{cfg.label} '{resource.name}' is already booked")
+        else:
+            # Any-available — FOR UPDATE SKIP LOCKED so concurrent bookers take different ones.
+            resource = await self._pool_repo.lock_next_available(session)
+            if resource is None:
+                # Pool exhausted — enqueue (FIFO). Promoted to READY when one frees.
+                return await self._enqueue(session, uid, ttl_minutes, now)
+
+        expires_at = PERMANENT_EXPIRES_AT if ttl_minutes == 0 else now + timedelta(minutes=ttl_minutes)
+
+        booking = Booking(
+            id=uuid4(),
+            user_id=uid,
+            status=BookingStatus.READY,  # nothing to provision — ready immediately
+            resource_type=cfg.resource_type,
+            ttl_minutes=ttl_minutes,
+            expires_at=expires_at,
+            created_at=now,
+            **{cfg.fk_field: resource.id},
+        )
+        created = await self._repo.create(session, booking)  # commit releases the row lock
+
+        # The create() round-trip doesn't join the pooled resource; attach display fields directly.
+        cfg.attach_display(created, resource)
+        return created
+
+    async def _enqueue(self, session, uid: str, ttl_minutes: int, now: datetime) -> Booking:
+        """No free resource — create a QUEUED booking (no resource yet, TTL starts on promotion)."""
+        booking = Booking(
+            id=uuid4(),
+            user_id=uid,
+            status=BookingStatus.QUEUED,
+            resource_type=self._cfg.resource_type,
+            ttl_minutes=ttl_minutes,
+            expires_at=now,  # placeholder until promotion; enforce_ttl ignores QUEUED
+            created_at=now,
+        )
+        return await self._repo.create(session, booking)
