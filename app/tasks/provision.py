@@ -25,6 +25,16 @@ hw_config_repo = HWConfigRepository()
 terraform = StubTerraformAdapter() if settings.USE_STUB_TERRAFORM else TerraformVcdAdapter()
 
 
+def _run(work):
+    """Run one unit of DB work in a short-lived session, releasing the connection at once.
+
+    Keeps the worker from pinning a pool connection (and risking idle-in-transaction
+    timeouts) across the minutes-long terraform apply — each write commits on its own.
+    """
+    with SyncSessionLocal() as session:
+        return work(session)
+
+
 def _token_pool() -> list[str]:
     if settings.VCD_API_TOKENS:
         return [t.strip() for t in settings.VCD_API_TOKENS.split(",") if t.strip()]
@@ -74,49 +84,51 @@ def provision_vm_task(self, booking_id: str, image_id: str, hw_config_id: str) -
             raise self.retry(exc=exc)
 
     try:
-        with SyncSessionLocal() as session:
+        try:
+            # Read config in a short session; no session is held during the apply below.
+            image = _run(lambda s: image_repo.sync_get(s, UUID(image_id)))
+            hw = _run(lambda s: hw_config_repo.sync_get(s, UUID(hw_config_id)))
+            vm_password = "".join(
+                secrets.choice(string.ascii_letters + string.digits) for _ in range(16)
+            )
+            config = {
+                "name":             f"portal-{booking_id[:8]}",
+                "vapp_template_id": image.vapp_template_id,
+                "cpus":             hw.cpus,
+                "memory":           hw.memory_mb,
+                "disk_size":        hw.hdd_mb,
+                "vm_password":      vm_password,
+            }
+
+            _run(lambda s: repo.sync_update_status(s, booking_uuid, BookingStatus.PROVISIONING))
+            logger.info("Provisioning started for booking %s", booking_id)
+
+            def _on_progress(msg: str) -> None:
+                # Each progress write gets its own short-lived session/connection.
+                _run(lambda s: repo.sync_set_status_message(s, booking_uuid, msg))
+
+            # No DB connection is held across the (minutes-long) terraform apply.
+            result = asyncio.run(
+                terraform.apply(workspace_id, config, api_token=api_token, on_progress=_on_progress)
+            )
+            ip = result["ip"]
+
+            _run(lambda s: repo.sync_set_status_message(s, booking_uuid, None))
+            _run(lambda s: repo.sync_update_status(
+                s, booking_uuid, BookingStatus.READY, vm_ip=ip, vm_password=vm_password
+            ))
+            logger.info("Provisioning complete for booking %s — IP: %s", booking_id, ip)
+
+        except Exception as exc:
+            logger.error("Provisioning failed for booking %s: %s", booking_id, exc)
+            is_last_attempt = self.request.retries >= self.max_retries
+            new_status = BookingStatus.FAILED if is_last_attempt else BookingStatus.RETRY
             try:
-                image = image_repo.sync_get(session, UUID(image_id))
-                hw = hw_config_repo.sync_get(session, UUID(hw_config_id))
-                vm_password = "".join(
-                    secrets.choice(string.ascii_letters + string.digits) for _ in range(16)
-                )
-                config = {
-                    "name":             f"portal-{booking_id[:8]}",
-                    "vapp_template_id": image.vapp_template_id,
-                    "cpus":             hw.cpus,
-                    "memory":           hw.memory_mb,
-                    "disk_size":        hw.hdd_mb,
-                    "vm_password":      vm_password,
-                }
-
-                repo.sync_update_status(session, booking_uuid, BookingStatus.PROVISIONING)
-                logger.info("Provisioning started for booking %s", booking_id)
-
-                def _on_progress(msg: str) -> None:
-                    repo.sync_set_status_message(session, booking_uuid, msg)
-
-                result = asyncio.run(
-                    terraform.apply(workspace_id, config, api_token=api_token, on_progress=_on_progress)
-                )
-                ip = result["ip"]
-
-                repo.sync_set_status_message(session, booking_uuid, None)
-                repo.sync_update_status(
-                    session, booking_uuid, BookingStatus.READY, vm_ip=ip, vm_password=vm_password
-                )
-                logger.info("Provisioning complete for booking %s — IP: %s", booking_id, ip)
-
-            except Exception as exc:
-                logger.error("Provisioning failed for booking %s: %s", booking_id, exc)
-                is_last_attempt = self.request.retries >= self.max_retries
-                new_status = BookingStatus.FAILED if is_last_attempt else BookingStatus.RETRY
-                try:
-                    repo.sync_set_status_message(session, booking_uuid, "Failed — see audit log")
-                    repo.sync_update_status(session, booking_uuid, new_status)
-                except Exception:
-                    pass
-                raise self.retry(exc=exc)
+                _run(lambda s: repo.sync_set_status_message(s, booking_uuid, "Failed — see audit log"))
+                _run(lambda s: repo.sync_update_status(s, booking_uuid, new_status))
+            except Exception:
+                pass
+            raise self.retry(exc=exc)
     finally:
         if redis_client and lock_key:
             redis_client.delete(lock_key)
