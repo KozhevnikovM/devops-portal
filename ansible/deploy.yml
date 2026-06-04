@@ -66,6 +66,13 @@
     registry_username: ""
     registry_password: ""
 
+    # Private npm registry for the frontend build. npm_registry is the URL (a build arg);
+    # npm_registry_token (vaulted) is passed to the build as a BuildKit secret via Compose, and
+    # the image writes _authToken=base64("token:<token>") into a throwaway .npmrc. Both are
+    # rendered into .env; empty = public npm.
+    npm_registry: ""
+    npm_registry_token: ""
+
   handlers:
     - name: Restart portal stack
       community.docker.docker_compose_v2:
