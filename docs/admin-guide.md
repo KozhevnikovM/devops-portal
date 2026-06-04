@@ -70,6 +70,47 @@ to the login page.
 
 ---
 
+### Air-gapped / isolated deployment
+
+In an environment without access to public registries, point every external dependency at an
+internal mirror. All of these are **optional** and default to the public values, so unset = today's
+behaviour.
+
+**Package registries** (build-time):
+
+| Variable | Purpose |
+| :--- | :--- |
+| `PIP_INDEX_URL` | Private PyPI mirror for `pip install` |
+| `PIP_TRUSTED_HOST` | Host to trust for the PyPI mirror (if no TLS) |
+| `NPM_CONFIG_REGISTRY` | Private npm registry for the frontend build |
+
+**Base container images** (full image reference — registry + repo + tag; you may also pin a digest):
+
+| Variable | Default |
+| :--- | :--- |
+| `PYTHON_IMAGE` | `python:3.11-slim` |
+| `NODE_IMAGE` | `node:20-slim` |
+| `TERRAFORM_IMAGE` | `hashicorp/terraform:1.9` |
+| `POSTGRES_IMAGE` | `postgres:15` |
+| `REDIS_IMAGE` | `redis:7` |
+
+Set these in `.env` (or the build environment), then `docker compose build` / `docker compose up`.
+Example:
+
+```bash
+PYTHON_IMAGE=registry.internal/python:3.11-slim
+NODE_IMAGE=registry.internal/node:20-slim
+TERRAFORM_IMAGE=registry.internal/hashicorp/terraform:1.9
+POSTGRES_IMAGE=registry.internal/postgres:15
+REDIS_IMAGE=registry.internal/redis:7
+```
+
+The `PYTHON_IMAGE` / `NODE_IMAGE` / `TERRAFORM_IMAGE` images are consumed as Docker **build args**
+(forwarded by compose to the `Dockerfile`); `POSTGRES_IMAGE` / `REDIS_IMAGE` are pulled at run time.
+(The Terraform *provider* is mirrored separately — see [Terraform Adapter Setup](#terraform-adapter-setup).)
+
+---
+
 ## Auth Setup
 
 ### First login
