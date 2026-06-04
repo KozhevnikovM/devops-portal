@@ -988,12 +988,16 @@ List all hardware configurations (active and inactive).
     "name": "medium",
     "cpus": 2,
     "memory_mb": 4096,
-    "hdd_mb": 26624,
+    "disk_mb": 26624,
+    "drive_type": "HDD",
     "is_active": true,
     "created_at": "2026-05-14T00:00:00+00:00"
   }
 ]
 ```
+
+`drive_type` is `"SSD"` or `"HDD"` (default `"HDD"`). A config's disk counts toward the matching
+drive-type quota (`max_ssd_gb` / `max_hdd_gb`).
 
 ---
 
@@ -1001,9 +1005,9 @@ List all hardware configurations (active and inactive).
 
 Create a new hardware configuration.
 
-**Request body:**
+**Request body** (`drive_type` optional, defaults to `"HDD"`):
 ```json
-{ "name": "xlarge", "cpus": 8, "memory_mb": 16384, "hdd_mb": 102400 }
+{ "name": "xlarge", "cpus": 8, "memory_mb": 16384, "disk_mb": 102400, "drive_type": "SSD" }
 ```
 
 **Response:** `201` — created hardware config object.
@@ -1016,7 +1020,7 @@ Update an existing hardware configuration.
 
 **Request body** (all fields optional):
 ```json
-{ "cpus": 4, "memory_mb": 8192, "hdd_mb": 51200 }
+{ "cpus": 4, "memory_mb": 8192, "disk_mb": 51200, "drive_type": "SSD" }
 ```
 
 **Response:** `200` — updated hardware config object.

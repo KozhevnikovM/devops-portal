@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.domain.entities import Booking
-from app.domain.enums import BookingStatus
+from app.domain.enums import BookingStatus, DriveType
 from app.domain.exceptions import QuotaExceededError
 from app.infrastructure.repositories.booking_repo import BookingRepository
 from app.infrastructure.repositories.image_repo import ImageRepository
@@ -48,15 +48,21 @@ class CreateBookingUseCase:
 
         new_cpus      = hw.cpus
         new_memory_gb = hw.memory_mb // 1024  # floor: matches ceiling on the used-side at the boundary
-        new_hdd_gb    = hw.hdd_mb    // 1024
+        new_disk_gb   = hw.disk_mb   // 1024
+
+        # The config's disk counts toward the quota of its own drive type (SSD or HDD).
+        is_ssd     = hw.drive_type == DriveType.SSD.value
+        disk_label = "SSD" if is_ssd else "HDD"
+        used_key   = "ssd_gb"     if is_ssd else "hdd_gb"
+        limit_key  = "max_ssd_gb" if is_ssd else "max_hdd_gb"
 
         violations = []
         if used["cpus"]      + new_cpus      > limits["max_cpus"]:
             violations.append(f"CPU ({used['cpus'] + new_cpus}/{limits['max_cpus']} cores)")
         if used["memory_gb"] + new_memory_gb > limits["max_memory_gb"]:
             violations.append(f"memory ({used['memory_gb'] + new_memory_gb}/{limits['max_memory_gb']} GB)")
-        if used["hdd_gb"]    + new_hdd_gb    > limits["max_hdd_gb"]:
-            violations.append(f"HDD ({used['hdd_gb'] + new_hdd_gb}/{limits['max_hdd_gb']} GB)")
+        if used[used_key]    + new_disk_gb   > limits[limit_key]:
+            violations.append(f"{disk_label} disk ({used[used_key] + new_disk_gb}/{limits[limit_key]} GB)")
 
         if violations:
             raise QuotaExceededError("Quota exceeded: " + ", ".join(violations))
@@ -80,7 +86,8 @@ class CreateBookingUseCase:
             hw_config_name=hw.name,
             cpus=hw.cpus,
             memory_mb=hw.memory_mb,
-            hdd_mb=hw.hdd_mb,
+            disk_mb=hw.disk_mb,
+            drive_type=hw.drive_type,
         )
         booking = await self._repo.create(session, booking)
         provision_vm_task.delay(str(booking.id), str(image.id), str(hw.id))

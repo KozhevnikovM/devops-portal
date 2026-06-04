@@ -103,7 +103,7 @@ def test_provision_task_stores_password_on_ready():
     fake_image = VMImage(id=image_id, name="Ubuntu", vapp_template_id="tpl-1",
                          is_active=True, created_at=now)
     fake_hw = HWConfig(id=hw_config_id, name="medium", cpus=2, memory_mb=4096,
-                       hdd_mb=26624, is_active=True, created_at=now)
+                       disk_mb=26624, is_active=True, created_at=now)
 
     mock_session = MagicMock()
     mock_repo = MagicMock()
@@ -142,7 +142,7 @@ def test_provision_task_password_is_16_alphanumeric():
     fake_image = VMImage(id=image_id, name="Ubuntu", vapp_template_id="tpl-1",
                          is_active=True, created_at=now)
     fake_hw = HWConfig(id=hw_config_id, name="medium", cpus=2, memory_mb=4096,
-                       hdd_mb=26624, is_active=True, created_at=now)
+                       disk_mb=26624, is_active=True, created_at=now)
 
     mock_session = MagicMock()
     mock_repo = MagicMock()

@@ -16,3 +16,8 @@ class ResourceType(str, Enum):
     VM        = "VM"
     STATIC_VM = "STATIC_VM"
     NAMESPACE = "NAMESPACE"
+
+
+class DriveType(str, Enum):
+    SSD = "SSD"
+    HDD = "HDD"

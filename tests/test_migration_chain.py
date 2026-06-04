@@ -13,7 +13,7 @@ def _script() -> ScriptDirectory:
 
 
 def test_single_head():
-    assert _script().get_heads() == ["0014"]
+    assert _script().get_heads() == ["0016"]
 
 
 def test_static_vm_chain_is_linear():

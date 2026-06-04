@@ -24,7 +24,7 @@ def _make_hw(name="medium") -> HWConfig:
         name=name,
         cpus=2,
         memory_mb=4096,
-        hdd_mb=51200,
+        disk_mb=51200,
         is_active=True,
         created_at=datetime.now(timezone.utc),
     )

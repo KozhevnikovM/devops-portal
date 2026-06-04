@@ -18,7 +18,7 @@ def _make_image():
 
 def _make_hw():
     return HWConfig(
-        id=uuid4(), name="medium", cpus=2, memory_mb=4096, hdd_mb=26624,
+        id=uuid4(), name="medium", cpus=2, memory_mb=4096, disk_mb=26624,
         is_active=True, created_at=datetime.now(timezone.utc),
     )
 
@@ -132,7 +132,7 @@ def _run_teardown(booking_id, *, terraform_destroy_side_effect=None):
     mock_image_repo = MagicMock()
     mock_image_repo.sync_get = MagicMock(return_value=MagicMock(vapp_template_id="tpl"))
     mock_hw_repo = MagicMock()
-    mock_hw_repo.sync_get = MagicMock(return_value=MagicMock(cpus=2, memory_mb=4096, hdd_mb=26624))
+    mock_hw_repo.sync_get = MagicMock(return_value=MagicMock(cpus=2, memory_mb=4096, disk_mb=26624))
 
     async def fake_destroy(workspace_id, config, api_token=None, on_progress=None):
         if terraform_destroy_side_effect:

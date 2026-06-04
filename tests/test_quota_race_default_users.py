@@ -56,7 +56,7 @@ async def test_create_booking_locks_before_counting():
 
     now = datetime.now(timezone.utc)
     image = VMImage(id=uuid4(), name="Ubuntu", vapp_template_id="tpl", is_active=True, created_at=now)
-    hw = HWConfig(id=uuid4(), name="medium", cpus=2, memory_mb=4096, hdd_mb=26624, is_active=True, created_at=now)
+    hw = HWConfig(id=uuid4(), name="medium", cpus=2, memory_mb=4096, disk_mb=26624, is_active=True, created_at=now)
 
     image_repo = MagicMock()
     image_repo.get = AsyncMock(return_value=image)

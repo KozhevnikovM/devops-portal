@@ -88,18 +88,24 @@ async def test_set_includes_max_ssd_gb_in_upsert():
     assert quota.max_ssd_gb == 400
 
 
-def test_count_active_resources_returns_ssd_gb_zero():
-    """count_active_resources returns ssd_gb=0 until bookings track SSD."""
+def test_count_active_resources_splits_disk_by_drive_type():
+    """#147: disk is summed per drive type into ssd_gb / hdd_gb."""
     import asyncio
     repo = QuotaRepository()
-    mock_row = MagicMock()
-    mock_row.cpus = 4
-    mock_row.memory_mb = 4096
-    mock_row.hdd_mb = 26624
-    mock_result = MagicMock()
-    mock_result.one.return_value = mock_row
+
+    # First execute() -> cpus/memory totals; second -> disk grouped by drive_type.
+    cpu_mem_row = MagicMock()
+    cpu_mem_row.cpus = 4
+    cpu_mem_row.memory_mb = 4096
+    cpu_mem_result = MagicMock()
+    cpu_mem_result.one.return_value = cpu_mem_row
+
+    disk_result = MagicMock()
+    disk_result.all.return_value = [("SSD", 51200), ("HDD", 26624)]  # 50 GB SSD, 26 GB HDD
+
     mock_session = MagicMock()
-    mock_session.execute = AsyncMock(return_value=mock_result)
+    mock_session.execute = AsyncMock(side_effect=[cpu_mem_result, disk_result])
 
     result = asyncio.run(repo.count_active_resources(mock_session, str(uuid4())))
-    assert result["ssd_gb"] == 0
+    assert result["ssd_gb"] == 50
+    assert result["hdd_gb"] == 26

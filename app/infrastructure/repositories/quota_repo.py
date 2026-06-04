@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.domain.entities import Quota
-from app.domain.enums import BookingStatus
+from app.domain.enums import BookingStatus, DriveType
 from app.infrastructure.database.models import BookingModel, QuotaModel
 
 _ACTIVE_STATUSES = [
@@ -55,18 +55,30 @@ class QuotaRepository:
             select(
                 func.coalesce(func.sum(BookingModel.cpus),      0).label("cpus"),
                 func.coalesce(func.sum(BookingModel.memory_mb), 0).label("memory_mb"),
-                func.coalesce(func.sum(BookingModel.hdd_mb),    0).label("hdd_mb"),
             ).where(
                 BookingModel.user_id == user_id,
                 BookingModel.status.in_(_ACTIVE_STATUSES),
             )
         )
         row = result.one()
+
+        # Disk is summed per drive type so it counts toward the matching quota (SSD vs HDD).
+        disk_result = await session.execute(
+            select(
+                BookingModel.drive_type,
+                func.coalesce(func.sum(BookingModel.disk_mb), 0).label("disk_mb"),
+            ).where(
+                BookingModel.user_id == user_id,
+                BookingModel.status.in_(_ACTIVE_STATUSES),
+            ).group_by(BookingModel.drive_type)
+        )
+        disk_mb_by_type = {dt: int(disk_mb) for dt, disk_mb in disk_result.all()}
+
         return {
             "cpus":      int(row.cpus),
             "memory_gb": math.ceil(int(row.memory_mb) / 1024),
-            "ssd_gb":    0,
-            "hdd_gb":    math.ceil(int(row.hdd_mb)    / 1024),
+            "ssd_gb":    math.ceil(disk_mb_by_type.get(DriveType.SSD.value, 0) / 1024),
+            "hdd_gb":    math.ceil(disk_mb_by_type.get(DriveType.HDD.value, 0) / 1024),
         }
 
     async def get_limits(self, session: AsyncSession, user_id: str) -> dict:

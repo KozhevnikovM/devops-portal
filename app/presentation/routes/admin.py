@@ -208,12 +208,15 @@ async def admin_create_hw_config(
     name: str = Form(...),
     cpus: int = Form(...),
     memory_gb: int = Form(...),
-    hdd_gb: int = Form(...),
+    disk_gb: int = Form(...),
+    drive_type: str = Form("HDD"),
     session: AsyncSession = Depends(get_async_session),
     current_user: User = Depends(require_admin),
 ):
     try:
-        await _hw_config_repo.create(session, name, cpus, memory_gb * 1024, hdd_gb * 1024)
+        await _hw_config_repo.create(
+            session, name, cpus, memory_gb * 1024, disk_gb * 1024, drive_type=drive_type
+        )
     except IntegrityError:
         await session.rollback()
         error_html = f'<span class="text-red-400 text-xs">Config "{escape(name)}" already exists.</span>'
@@ -252,14 +255,16 @@ async def admin_update_hw_config(
     name: str = Form(...),
     cpus: int = Form(...),
     memory_gb: int = Form(...),
-    hdd_gb: int = Form(...),
+    disk_gb: int = Form(...),
+    drive_type: str = Form("HDD"),
     session: AsyncSession = Depends(get_async_session),
     current_user: User = Depends(require_admin),
 ):
     try:
         await _hw_config_repo.update(
             session, hw_config_id,
-            {"name": name, "cpus": cpus, "memory_mb": memory_gb * 1024, "hdd_mb": hdd_gb * 1024},
+            {"name": name, "cpus": cpus, "memory_mb": memory_gb * 1024,
+             "disk_mb": disk_gb * 1024, "drive_type": drive_type},
         )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
