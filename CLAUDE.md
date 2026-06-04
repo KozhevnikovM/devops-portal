@@ -63,13 +63,13 @@ domain → application → infrastructure → presentation
 
 **`app/tasks/provision.py`** — The single Celery task. Uses `asyncio.run()` to call the async `TerraformAdapter` from a sync Celery worker. Writes status transitions directly to the DB via `sync_update_status`. Retries up to 3× on unexpected exceptions.
 
-**`app/presentation/`** — FastAPI routes + Jinja2 templates. Routes use `Depends(get_async_session)` for DB access. `POST /bookings` does content negotiation: `Accept: application/json` returns JSON (for Jenkins/CI), otherwise returns an HTMX HTML fragment. `GET /bookings/{id}/status-stream` is an SSE endpoint that polls the DB every 2s and closes when the booking reaches a terminal state.
+**`app/presentation/`** — FastAPI routes + Jinja2 templates. Routes use `Depends(get_async_session)` for DB access. `POST /bookings` does content negotiation: `Accept: application/json` returns JSON (for Jenkins/CI), otherwise returns an HTMX HTML fragment. Live status is delivered by **HTMX polling** of `GET /bookings/{id}/row` (there is no SSE endpoint).
 
 ### Key patterns
 
 **Async vs sync split** — FastAPI and the domain layer are fully async. Celery workers are sync. The repository exposes both: `async def get(...)` for routes and `def sync_get(...)` for tasks. Do not use `asyncio.run()` inside routes.
 
-**SSE for live updates** — The booking row template (`partials/booking_row.html`) attaches `hx-ext="sse"` when status is non-terminal. The SSE stream closes itself once `READY` or `FAILED` is reached, so no cleanup is needed on the client.
+**Polling for live updates** — The booking row template (`partials/booking_row.html`) sets `hx-get="/bookings/{id}/row"` with `hx-trigger="every 3s ..."` while the status is non-terminal, so the row re-fetches itself until it reaches `READY` / `FAILED` / `RELEASED` and then stops emitting the trigger. (Polling, not SSE — there is no `status-stream` endpoint. SSE remains a possible future optimization.)
 
 **Terraform workspaces** — Each booking maps to workspace ID `booking-{uuid}`. The stub adapter ignores this; a real adapter should use it for per-booking state isolation.
 
