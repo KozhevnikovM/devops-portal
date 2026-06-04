@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.entities import Booking, User
 from app.domain.enums import BookingStatus
-from app.domain.exceptions import BookingError, BookingNotFoundError, PermissionError
+from app.domain.exceptions import BookingError, BookingNotFoundError, BookingPermissionError
 from app.infrastructure.repositories.booking_repo import BookingRepository
 
 
@@ -23,7 +23,7 @@ class ExtendBookingUseCase:
         # Authorization first — a non-owner must get 403 regardless of the booking's
         # status/TTL, so we never leak state about a booking they don't own.
         if booking.user_id != str(current_user.id):
-            raise PermissionError("only the owner can extend a booking")
+            raise BookingPermissionError("only the owner can extend a booking")
         if booking.status != BookingStatus.READY:
             raise BookingError("can only extend READY bookings")
         if booking.ttl_minutes == 0:
