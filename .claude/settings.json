@@ -30,7 +30,8 @@
       "Bash(git -c commit.gpgsign=false commit -q -m 'fix: honour ROOT_PATH so /docs works behind a reverse-proxy subpath \\(#183\\) *)",
       "Bash(python3 -c \"import starlette, fastapi; print\\('starlette', starlette.__version__\\); print\\('fastapi', fastapi.__version__\\)\")",
       "Bash(python3 -c ' *)",
-      "Bash(git -c commit.gpgsign=false commit -q -m 'fix: don'\\\\''t break /static — make ROOT_PATH opt-in for forwarding proxies only *)"
+      "Bash(git -c commit.gpgsign=false commit -q -m 'fix: don'\\\\''t break /static — make ROOT_PATH opt-in for forwarding proxies only *)",
+      "Bash(git -c commit.gpgsign=false commit -q -m 'feat: hide HTML/HTMX endpoints from the OpenAPI schema \\(#186\\) *)"
     ]
   }
 }
