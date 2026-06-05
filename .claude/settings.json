@@ -19,7 +19,12 @@
       "Read(//usr/lib/**)",
       "Bash(git -C /home/mike/devops-portal checkout -b feature/90/nav-home-link)",
       "Bash(git -C /home/mike/devops-portal add app/presentation/templates/base.html app/presentation/templates/admin/users.html app/presentation/templates/admin/catalog.html app/presentation/templates/profile.html docs/features/nav-home-link.md docs/admin-guide.md)",
-      "Bash(git -C /home/mike/devops-portal commit -m ' *)"
+      "Bash(git -C /home/mike/devops-portal commit -m ' *)",
+      "Bash(gh pr create --base main --head feature/npm-registry-ca-cert --title 'feat: npm registry CA cert \\(NPM_CA_CERT_FILE\\) for self-signed registries' --body ' *)",
+      "Bash(gh pr *)",
+      "Bash(git restore *)",
+      "Bash(python3 -m pytest *)",
+      "Bash(git -c commit.gpgsign=false commit -q -m 'fix: force-unlock stale Terraform state lock on VM release \\(#180\\) *)"
     ]
   }
 }

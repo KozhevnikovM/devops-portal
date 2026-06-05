@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import shutil
 import textwrap
 from pathlib import Path
@@ -9,6 +10,11 @@ from pathlib import Path
 from app.config import settings
 
 logger = logging.getLogger(__name__)
+
+# Terraform prints this on the "Error acquiring the state lock" message, followed by a
+# "Lock Info" block whose `ID:` line carries the lock id needed to force-unlock it.
+_LOCK_ERROR_MARKER = "Error acquiring the state lock"
+_LOCK_ID_RE = re.compile(r"^\s*ID:\s*(\S+)", re.MULTILINE)
 
 
 class TerraformError(Exception):
@@ -197,7 +203,38 @@ class TerraformVcdAdapter:
             shutil.rmtree(workspace_dir, ignore_errors=True)
             return
 
-        await self._run("destroy", "-auto-approve", "-no-color", cwd=workspace_dir, on_progress=on_progress)
+        await self._destroy_state(workspace_id, workspace_dir, on_progress=on_progress)
         await self._run("workspace", "select", "default", cwd=workspace_dir, on_progress=on_progress)
         await self._run("workspace", "delete", workspace_id, cwd=workspace_dir, on_progress=on_progress)
         shutil.rmtree(workspace_dir, ignore_errors=True)
+
+    async def _destroy_state(self, workspace_id: str, workspace_dir: Path, on_progress=None) -> None:
+        """Run `terraform destroy`, recovering once from a stale state lock.
+
+        A release is a terminal teardown of an isolated per-booking workspace, so a lock left
+        behind by an interrupted apply/destroy (worker killed/OOM, container restart) must not
+        block it. If destroy fails to acquire the lock, force-unlock that exact lock id and
+        retry the destroy once; any other failure — or a second lock failure — propagates to
+        the task's existing retry/FAILED handling.
+        """
+        try:
+            await self._run("destroy", "-auto-approve", "-no-color", cwd=workspace_dir, on_progress=on_progress)
+            return
+        except TerraformError as exc:
+            lock_id = self._stale_lock_id(str(exc))
+            if lock_id is None:
+                raise
+            logger.warning("Stale state lock %s on %s — force-unlocking", lock_id, workspace_id)
+            if on_progress:
+                on_progress(f"Stale state lock {lock_id} — force-unlocking")
+            await self._run("force-unlock", "-force", lock_id, cwd=workspace_dir, on_progress=on_progress)
+
+        await self._run("destroy", "-auto-approve", "-no-color", cwd=workspace_dir, on_progress=on_progress)
+
+    @staticmethod
+    def _stale_lock_id(message: str) -> str | None:
+        """Extract the lock id from a `terraform destroy` lock-acquisition error, else None."""
+        if _LOCK_ERROR_MARKER not in message:
+            return None
+        match = _LOCK_ID_RE.search(message)
+        return match.group(1) if match else None
