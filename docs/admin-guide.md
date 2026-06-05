@@ -205,10 +205,12 @@ headers (`proxy_redirect`) and the HTML bodies (`sub_filter`). This works but is
 top-level route added to the app needs a matching `sub_filter` rule. Prefer Option A unless a
 subpath is mandatory.
 
-A subpath deploy must also tell the app its prefix by setting **`ROOT_PATH=/dp`** in `.env` (or
-passing `uvicorn --root-path /dp`). Without it, the FastAPI docs at `/dp/docs` fetch the OpenAPI
-schema from the bare `/openapi.json` and fail with *"Not Found /openapi.json"*; with it, the docs
-page requests `/dp/openapi.json` (which nginx strips back to `/openapi.json`).
+> **Do not set `ROOT_PATH` with this stripping config.** Because the trailing-slash `proxy_pass`
+> strips `/dp`, the app already serves at the root. FastAPI's `root_path` makes *mounted* apps
+> (like `/static`) require the `/dp` prefix on the incoming path, so combining it with prefix
+> stripping makes every static asset 404. `ROOT_PATH` is only for a proxy that forwards the prefix
+> intact (see *Alternative: forward the prefix* below). Here the FastAPI docs are made to work with
+> a `sub_filter` instead (the `/openapi.json` rule below).
 
 ```nginx
 # inside the server { listen 443 ssl; server_name my-domain.com; ... } block
@@ -238,6 +240,10 @@ location /dp/ {
     sub_filter '="/book'     '="/dp/book';          # covers /book and /bookings
     sub_filter '="/profile'  '="/dp/profile';
     sub_filter '="/api'      '="/dp/api';
+
+    # 3) Swagger UI (/dp/docs) fetches the OpenAPI schema from a root-absolute URL; rewrite it
+    #    so the browser requests /dp/openapi.json (stripped back to /openapi.json above).
+    sub_filter "url: '/openapi.json'" "url: '/dp/openapi.json'";
 }
 ```
 
@@ -245,6 +251,26 @@ Notes:
 - The session cookie is set with `Path=/`, so it is sent to `/dp/*` without extra config. To scope
   it to the subpath, add `proxy_cookie_path / /dp/;`.
 - API clients (Jenkins/CI) call the prefixed URL, e.g. `https://my-domain.com/dp/bookings`.
+
+#### Alternative: forward the prefix and use `ROOT_PATH`
+
+Instead of stripping `/dp` and rewriting URLs, you can forward the full path to the app and let
+FastAPI own the prefix. Drop the trailing slash on `proxy_pass` (so `/dp/...` is passed through
+unchanged) and set **`ROOT_PATH=/dp`** in the app's `.env`:
+
+```nginx
+location /dp/ {
+    proxy_pass http://MY_LOCAL_IP:8000;   # NO trailing slash — forwards /dp/... unchanged
+    # ... same proxy_set_header lines as above ...
+    # still need the sub_filter rules, because the templates emit root-absolute URLs
+}
+```
+
+With `ROOT_PATH=/dp` the app serves under `/dp` natively: `/dp/static/...` and `/dp/openapi.json`
+resolve directly and the docs page needs no special `sub_filter`. You still need the `sub_filter`
+rules that rewrite the *templates'* root-absolute links (`/static`, `/auth`, …) to `/dp/...`,
+since those are hard-coded in the HTML. Pick **one** approach — stripping **or** `ROOT_PATH` — never
+both, or static assets will 404.
 
 ---
 
