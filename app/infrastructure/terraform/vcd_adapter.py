@@ -209,27 +209,36 @@ class TerraformVcdAdapter:
         shutil.rmtree(workspace_dir, ignore_errors=True)
 
     async def _destroy_state(self, workspace_id: str, workspace_dir: Path, on_progress=None) -> None:
-        """Run `terraform destroy`, recovering once from a stale state lock.
+        """Run `terraform destroy`, recovering from a stale state lock.
 
-        A release is a terminal teardown of an isolated per-booking workspace, so a lock left
-        behind by an interrupted apply/destroy (worker killed/OOM, container restart) must not
-        block it. If destroy fails to acquire the lock, force-unlock that exact lock id and
-        retry the destroy once; any other failure — or a second lock failure — propagates to
-        the task's existing retry/FAILED handling.
+        A release is a terminal teardown of an isolated, single-use per-booking workspace, so a
+        lock left behind by an interrupted apply/destroy (worker killed/OOM, container restart)
+        must not block it. If destroy fails to acquire the lock, force-unlock the lock id reported
+        in that error and retry — re-reading the current lock each pass and tolerating a
+        force-unlock that itself fails (the lock may already be gone, or its id may have changed).
+        A non-lock failure, or exhausting the attempts, propagates to the task's retry/FAILED path.
         """
-        try:
-            await self._run("destroy", "-auto-approve", "-no-color", cwd=workspace_dir, on_progress=on_progress)
-            return
-        except TerraformError as exc:
-            lock_id = self._stale_lock_id(str(exc))
-            if lock_id is None:
-                raise
-            logger.warning("Stale state lock %s on %s — force-unlocking", lock_id, workspace_id)
-            if on_progress:
-                on_progress(f"Stale state lock {lock_id} — force-unlocking")
-            await self._run("force-unlock", "-force", lock_id, cwd=workspace_dir, on_progress=on_progress)
-
-        await self._run("destroy", "-auto-approve", "-no-color", cwd=workspace_dir, on_progress=on_progress)
+        attempts = 3
+        for attempt in range(attempts):
+            try:
+                await self._run("destroy", "-auto-approve", "-no-color", cwd=workspace_dir, on_progress=on_progress)
+                return
+            except TerraformError as exc:
+                lock_id = self._stale_lock_id(str(exc))
+                if lock_id is None or attempt == attempts - 1:
+                    raise
+                logger.warning(
+                    "Stale state lock %s on %s — force-unlocking (attempt %d/%d)",
+                    lock_id, workspace_id, attempt + 1, attempts - 1,
+                )
+                if on_progress:
+                    on_progress(f"Stale state lock {lock_id} — force-unlocking")
+                try:
+                    await self._run("force-unlock", "-force", lock_id, cwd=workspace_dir, on_progress=on_progress)
+                except TerraformError as unlock_exc:
+                    # Lock already released, or its id changed — the next destroy re-reads the
+                    # current lock state, so log and carry on rather than aborting teardown.
+                    logger.warning("force-unlock of %s failed (%s); retrying destroy", lock_id, unlock_exc)
 
     @staticmethod
     def _stale_lock_id(message: str) -> str | None:

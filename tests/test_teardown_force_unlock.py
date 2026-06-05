@@ -1,9 +1,11 @@
-"""Regression test for #180 — VM release force-unlocks a stale Terraform state lock.
+"""Regression tests for #180 / #196 — VM release force-unlocks a stale Terraform state lock.
 
-Before the fix, an interrupted apply/destroy could leave the per-booking PG backend holding a
-stale lock; every later `terraform destroy` then failed on "Error acquiring the state lock" and
-the booking could never be released. After the fix, `_destroy_state` detects the lock error,
-parses the lock id, runs `terraform force-unlock -force <id>`, and retries the destroy once.
+#180: an interrupted apply/destroy could leave the per-booking PG backend holding a stale lock;
+every later `terraform destroy` then failed on "Error acquiring the state lock". `_destroy_state`
+detects the lock error, parses the lock id, runs `terraform force-unlock -force <id>`, and retries.
+
+#196: the recovery is hardened to tolerate a `force-unlock` that itself fails (the lock may have
+been released already, or its id changed) — it retries the destroy instead of aborting teardown.
 """
 import asyncio
 from pathlib import Path
@@ -48,6 +50,31 @@ def test_destroy_force_unlocks_stale_lock_then_retries():
     # The exact stale lock id was force-unlocked, with -force.
     unlock = next(c for c in calls if c[0] == "force-unlock")
     assert unlock == ("force-unlock", "-force", "9b3f1c4e-1a2b-4c3d-8e9f-0a1b2c3d4e5f")
+
+
+def test_destroy_recovers_when_force_unlock_itself_fails():
+    """#196: a force-unlock that errors (lock already gone / id changed) must not abort teardown.
+
+    Fails before the fix — the force-unlock TerraformError propagated; passes after, because the
+    loop tolerates it and retries the destroy.
+    """
+    adapter = TerraformVcdAdapter()
+    calls: list[tuple] = []
+
+    async def fake_run(*args, cwd=None, on_progress=None):
+        calls.append(args)
+        if args[0] == "destroy" and len([c for c in calls if c[0] == "destroy"]) == 1:
+            raise TerraformError(f"terraform destroy failed (exit 1):\n{LOCK_ERROR}")
+        if args[0] == "force-unlock":
+            raise TerraformError("terraform force-unlock failed (exit 1):\nLock ID does not match")
+        return ""
+
+    adapter._run = fake_run
+    _run_destroy(adapter, calls)  # must not raise
+
+    verbs = [c[0] for c in calls]
+    # destroy (locked) -> force-unlock (fails) -> destroy (succeeds)
+    assert verbs == ["destroy", "force-unlock", "destroy"]
 
 
 def test_destroy_without_lock_never_force_unlocks():
