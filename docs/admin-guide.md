@@ -205,6 +205,11 @@ headers (`proxy_redirect`) and the HTML bodies (`sub_filter`). This works but is
 top-level route added to the app needs a matching `sub_filter` rule. Prefer Option A unless a
 subpath is mandatory.
 
+A subpath deploy must also tell the app its prefix by setting **`ROOT_PATH=/dp`** in `.env` (or
+passing `uvicorn --root-path /dp`). Without it, the FastAPI docs at `/dp/docs` fetch the OpenAPI
+schema from the bare `/openapi.json` and fail with *"Not Found /openapi.json"*; with it, the docs
+page requests `/dp/openapi.json` (which nginx strips back to `/openapi.json`).
+
 ```nginx
 # inside the server { listen 443 ssl; server_name my-domain.com; ... } block
 location = /dp { return 301 /dp/; }
