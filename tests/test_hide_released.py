@@ -123,8 +123,9 @@ def test_toggle_button_preserves_owner_filter(setup):
         resp = client.get("/?filter=all")
 
     assert resp.status_code == 200
-    # While released is hidden, the toggle turns it on but keeps filter=all.
-    assert "/?filter=all&show_released=1" in resp.text
+    # While released is hidden, the toggle turns it on but keeps filter=all. The VM page uses the
+    # named /book/vm path (not bare "/") so the URL survives the reverse-proxy sub_filter (#192).
+    assert "/book/vm?filter=all&show_released=1" in resp.text
     assert "Show released" in resp.text
 
 

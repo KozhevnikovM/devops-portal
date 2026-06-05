@@ -100,7 +100,7 @@ async def vm_bookings_page(
 ):
     return await _render_bookings_page(
         request, session, current_user,
-        booking_type="VM", page_path="/", active_nav="vm",
+        booking_type="VM", page_path="/book/vm", active_nav="vm",
         filter=filter, show_released=show_released,
     )
 
