@@ -155,6 +155,94 @@ image build lines up.
 
 ---
 
+## Running behind an HTTPS reverse proxy
+
+The app listens on plain HTTP (`http://<host>:8000`). In production, terminate TLS at a reverse
+proxy in front of it. With TLS in place, set **`SESSION_COOKIE_SECURE=true`** (the default) so the
+session cookie is only sent over HTTPS, and forward `X-Forwarded-Proto`.
+
+> If you serve over plain HTTP (no proxy/TLS), you **must** set `SESSION_COOKIE_SECURE=false` —
+> otherwise the browser drops the `Secure` session cookie and login silently loops back to the
+> login page.
+
+### Option A — subdomain (recommended)
+
+Serving the portal at its **own host** (e.g. `https://dp.my-domain.com`) needs **no app changes** —
+the app's URLs are all root-absolute and resolve correctly at the domain root.
+
+```nginx
+# /etc/nginx/conf.d/dp.conf
+server {
+    listen 80;
+    server_name dp.my-domain.com;
+    return 301 https://$host$request_uri;          # force HTTPS
+}
+
+server {
+    listen 443 ssl;
+    server_name dp.my-domain.com;
+
+    ssl_certificate     /etc/ssl/certs/my-domain.crt;
+    ssl_certificate_key /etc/ssl/private/my-domain.key;
+
+    location / {
+        proxy_pass http://MY_LOCAL_IP:8000;        # the portal's app service
+        proxy_http_version 1.1;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Host  $host;
+    }
+}
+```
+
+### Option B — subpath `https://my-domain.com/dp`
+
+The app emits **root-absolute** URLs (`/static/...`, `/auth/login`, `hx-get="/bookings/..."`) and
+absolute redirects (`Location: /`), so a subpath requires nginx to rewrite both the redirect
+headers (`proxy_redirect`) and the HTML bodies (`sub_filter`). This works but is **fragile** — a new
+top-level route added to the app needs a matching `sub_filter` rule. Prefer Option A unless a
+subpath is mandatory.
+
+```nginx
+# inside the server { listen 443 ssl; server_name my-domain.com; ... } block
+location = /dp { return 301 /dp/; }
+
+location /dp/ {
+    # trailing slash strips the /dp prefix before proxying to the app
+    proxy_pass http://MY_LOCAL_IP:8000/;
+    proxy_http_version 1.1;
+
+    proxy_set_header Host              $host;
+    proxy_set_header X-Real-IP         $remote_addr;
+    proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+
+    # 1) Rewrite redirect Location headers (e.g. 302 -> "/" or "/auth/login") to live under /dp
+    proxy_redirect ~^/(.*)$ /dp/$1;
+
+    # 2) Rewrite root-absolute URLs in HTML (links, assets, form actions, HTMX attrs) to /dp/...
+    proxy_set_header Accept-Encoding "";            # let sub_filter see uncompressed HTML
+    sub_filter_once  off;
+    sub_filter_types text/html;                     # JSON API responses are left untouched
+    sub_filter 'href="/"'    'href="/dp/"';
+    sub_filter '="/static/'  '="/dp/static/';
+    sub_filter '="/auth/'    '="/dp/auth/';
+    sub_filter '="/admin'    '="/dp/admin';
+    sub_filter '="/book'     '="/dp/book';          # covers /book and /bookings
+    sub_filter '="/profile'  '="/dp/profile';
+    sub_filter '="/api'      '="/dp/api';
+}
+```
+
+Notes:
+- The session cookie is set with `Path=/`, so it is sent to `/dp/*` without extra config. To scope
+  it to the subpath, add `proxy_cookie_path / /dp/;`.
+- API clients (Jenkins/CI) call the prefixed URL, e.g. `https://my-domain.com/dp/bookings`.
+
+---
+
 ## Auth Setup
 
 ### First login
