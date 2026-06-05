@@ -88,7 +88,9 @@ def test_create_namespace_duplicate_returns_error_fragment(client):
 
     assert resp.status_code == 200
     assert resp.headers.get("HX-Retarget") == "#namespace-create-error"
+    # The clash is on the (name, cluster) pair, so the error names the cluster.
     assert "already exists" in resp.text
+    assert "prod-cluster" in resp.text
 
 
 # ── GET edit / PATCH ──────────────────────────────────────────────────────────

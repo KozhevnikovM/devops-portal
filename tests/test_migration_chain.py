@@ -13,7 +13,14 @@ def _script() -> ScriptDirectory:
 
 
 def test_single_head():
-    assert _script().get_heads() == ["0016"]
+    assert _script().get_heads() == ["0017"]
+
+
+def test_namespace_per_cluster_chain_is_linear():
+    # The (name, cluster) uniqueness arrives in its own revision on top of 0016,
+    # not by editing the namespaces table migration in place.
+    down = {r.revision: r.down_revision for r in _script().walk_revisions()}
+    assert down["0017"] == "0016"
 
 
 def test_static_vm_chain_is_linear():

@@ -51,6 +51,9 @@ class CreateBookingRequest(BaseModel):
     image_id: UUID | None = None
     hw_config_id: UUID | None = None
     namespace_id: UUID | None = None
+    # Order a specific namespace by its (name, cluster) pair instead of namespace_id.
+    namespace_name: str | None = None
+    cluster_name: str | None = None
     static_vm_id: UUID | None = None
 
 
@@ -149,9 +152,18 @@ async def create_booking(
 ):
     # ── Namespace — reserve from the pool (pick-specific or any), else queue ──
     if body.resource_type == ResourceType.NAMESPACE.value:
+        # A (name, cluster) pair identifies a namespace; both must be given together.
+        if bool(body.namespace_name) != bool(body.cluster_name):
+            raise HTTPException(
+                status_code=400,
+                detail="namespace_name and cluster_name must be provided together",
+            )
         try:
             booking = await _book_namespace_use_case.execute(
-                session, body.ttl_minutes, user_id=str(current_user.id), namespace_id=body.namespace_id
+                session, body.ttl_minutes, user_id=str(current_user.id),
+                namespace_id=body.namespace_id,
+                namespace_name=body.namespace_name,
+                cluster_name=body.cluster_name,
             )
         except NamespaceUnavailableError as exc:
             raise HTTPException(status_code=409, detail=str(exc))

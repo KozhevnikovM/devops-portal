@@ -368,7 +368,10 @@ async def admin_create_namespace(
         await _namespace_repo.create(session, name, cluster_name, api_url.strip() or None)
     except IntegrityError:
         await session.rollback()
-        error_html = f'<span class="text-red-400 text-xs">Namespace "{escape(name)}" already exists.</span>'
+        error_html = (
+            f'<span class="text-red-400 text-xs">Namespace "{escape(name)}" already exists '
+            f'on cluster "{escape(cluster_name)}".</span>'
+        )
         return HTMLResponse(
             content=error_html,
             headers={"HX-Retarget": "#namespace-create-error", "HX-Reswap": "innerHTML"},
@@ -418,7 +421,10 @@ async def admin_update_namespace(
         raise HTTPException(status_code=404, detail=str(exc))
     except IntegrityError:
         await session.rollback()
-        error_html = f'<span class="text-red-400 text-xs">Namespace "{escape(name)}" already exists.</span>'
+        error_html = (
+            f'<span class="text-red-400 text-xs">Namespace "{escape(name)}" already exists '
+            f'on cluster "{escape(cluster_name)}".</span>'
+        )
         return HTMLResponse(
             content=error_html,
             headers={"HX-Retarget": "#namespace-create-error", "HX-Reswap": "innerHTML"},
