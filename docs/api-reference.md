@@ -677,6 +677,16 @@ is a presentation route, not part of the JSON API (and is omitted from `/docs`).
 
 ---
 
+### `GET /bookings/{booking_id}/audit`
+
+Renders the **HTML audit-log page** for a booking (timeline of status transitions, actors, and
+metadata). Linked from the **Audit log** item in a FAILED booking's ⋮ menu. This is a browser
+presentation route (omitted from `/docs`); the machine-readable trail is `GET /api/bookings/{id}/audit`.
+
+**Auth:** the booking **owner** or an **admin**. A non-owner gets `403`; an unknown id gets `404`.
+
+---
+
 ## Admin — Catalog UI
 
 ### `GET /admin/catalog`

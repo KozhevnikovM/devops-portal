@@ -441,6 +441,13 @@ admin catalog hardware form). A booking's disk counts toward the matching drive-
 
 Release a `READY` or `FAILED` booking to free up its resources and retry.
 
+### Inspecting a failed booking
+
+A `FAILED` booking row shows the failure message inline, and its **⋮** menu has an **Audit log**
+link. It opens `/bookings/{id}/audit` — a timeline of the booking's status transitions, actors,
+and metadata (e.g. the captured error) — to help diagnose why provisioning failed. The owner or
+an admin can view it; the same trail is available as JSON at `GET /api/bookings/{id}/audit`.
+
 ---
 
 ## Terraform Adapter Setup

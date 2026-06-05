@@ -36,7 +36,8 @@
       "Bash(git -c commit.gpgsign=false commit -q -m 'feat: group the programmatic booking API under /api/bookings \\(#188\\) *)",
       "Bash(grep -n \"namespace_id\\\\` | UUID\\\\|JSON body fields\\\\|Namespace \\(specific\" docs/api-reference.md)",
       "Bash(git -c commit.gpgsign=false commit -q -m 'feat: order a namespace by \\(name, cluster\\) pair via the API \\(#190\\) *)",
-      "Bash(git -c commit.gpgsign=false commit -q -m 'fix: VM filter 404 behind a reverse-proxy subpath \\(#192\\) *)"
+      "Bash(git -c commit.gpgsign=false commit -q -m 'fix: VM filter 404 behind a reverse-proxy subpath \\(#192\\) *)",
+      "Bash(git -c commit.gpgsign=false commit -q -m 'feat: view a booking'\\\\''s audit log in the UI, linked from failed bookings \\(#194\\) *)"
     ]
   }
 }

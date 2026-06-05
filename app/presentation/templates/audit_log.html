@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+
+{% block title %}Audit log — DevOps Portal{% endblock %}
+
+{% block content %}
+<div class="mb-6">
+    <a href="/" class="text-xs text-gray-500 hover:text-gray-300 transition-colors">← Back to bookings</a>
+</div>
+
+<div class="flex items-baseline justify-between mb-4">
+    <h1 class="text-sm text-gray-400 uppercase tracking-widest">Audit log</h1>
+    <span class="text-xs px-2 py-1 rounded font-semibold status-{{ booking.status.value }}">{{ booking.status.value }}</span>
+</div>
+
+<div class="text-xs text-gray-500 mb-6 space-y-1">
+    <div>Resource: <span class="text-gray-300">{{ booking.resource_type.value }}</span></div>
+    <div>Booking: <span class="text-gray-300">{{ booking.id }}</span></div>
+    {% if booking.status_message %}
+    <div class="mt-2">Message:
+        <pre class="text-xs text-red-400 mt-1 whitespace-pre-wrap break-all">{{ booking.status_message }}</pre>
+    </div>
+    {% endif %}
+</div>
+
+{% if entries %}
+<div class="border border-gray-800 rounded-lg overflow-x-auto">
+    <table class="w-full text-sm">
+        <thead>
+            <tr class="text-left text-xs text-gray-500 uppercase tracking-wider border-b border-gray-800">
+                <th class="px-4 py-2 font-medium">Time</th>
+                <th class="px-4 py-2 font-medium">Action</th>
+                <th class="px-4 py-2 font-medium">Status</th>
+                <th class="px-4 py-2 font-medium">Actor</th>
+                <th class="px-4 py-2 font-medium">Details</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for entry in entries %}
+            <tr class="border-b border-gray-900 last:border-0 align-top">
+                <td class="px-4 py-3 text-xs text-gray-400 whitespace-nowrap">{{ entry.created_at | as_tz(current_user.timezone) }}</td>
+                <td class="px-4 py-3 text-gray-300">{{ entry.action }}</td>
+                <td class="px-4 py-3 text-xs text-gray-400 whitespace-nowrap">
+                    {% if entry.old_status or entry.new_status %}
+                        {{ entry.old_status or '—' }} → {{ entry.new_status or '—' }}
+                    {% else %}—{% endif %}
+                </td>
+                <td class="px-4 py-3 text-xs text-gray-400">{{ entry.actor_id or 'system' }}</td>
+                <td class="px-4 py-3 text-xs text-gray-500">
+                    {% if entry.metadata %}
+                        {% for key, value in entry.metadata.items() %}
+                        <div><span class="text-gray-400">{{ key }}:</span> {{ value }}</div>
+                        {% endfor %}
+                    {% else %}—{% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% else %}
+<p class="text-sm text-gray-500">No audit entries for this booking.</p>
+{% endif %}
+{% endblock %}
