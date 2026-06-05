@@ -42,9 +42,9 @@ def client():
 
 def test_list_bookings_returns_200(client):
     bookings = [_make_booking(BookingStatus.READY), _make_booking(BookingStatus.PENDING)]
-    with patch("app.presentation.routes.bookings._repo") as mock_repo:
+    with patch("app.presentation.routes.api_bookings._repo") as mock_repo:
         mock_repo.list_all = AsyncMock(return_value=bookings)
-        resp = client.get("/bookings")
+        resp = client.get("/api/bookings")
 
     assert resp.status_code == 200
     data = resp.json()
@@ -52,9 +52,9 @@ def test_list_bookings_returns_200(client):
 
 
 def test_list_bookings_empty_returns_empty_array(client):
-    with patch("app.presentation.routes.bookings._repo") as mock_repo:
+    with patch("app.presentation.routes.api_bookings._repo") as mock_repo:
         mock_repo.list_all = AsyncMock(return_value=[])
-        resp = client.get("/bookings")
+        resp = client.get("/api/bookings")
 
     assert resp.status_code == 200
     assert resp.json() == []
@@ -62,9 +62,9 @@ def test_list_bookings_empty_returns_empty_array(client):
 
 def test_list_bookings_response_shape(client):
     booking = _make_booking(BookingStatus.READY)
-    with patch("app.presentation.routes.bookings._repo") as mock_repo:
+    with patch("app.presentation.routes.api_bookings._repo") as mock_repo:
         mock_repo.list_all = AsyncMock(return_value=[booking])
-        resp = client.get("/bookings")
+        resp = client.get("/api/bookings")
 
     row = resp.json()[0]
     assert set(row.keys()) == {

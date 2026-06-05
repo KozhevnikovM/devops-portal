@@ -130,17 +130,20 @@ def test_cancel_queued_booking_releases_without_promote(client):
     queued = _booking(BookingStatus.QUEUED, user_id=str(fake_user.id))
     released = _booking(BookingStatus.RELEASED, id=queued.id, user_id=str(fake_user.id))
 
-    with patch("app.presentation.routes.bookings._repo") as mock_repo, \
-         patch("app.tasks.teardown.teardown_vm_task") as mock_task:
-        mock_repo.get = AsyncMock(side_effect=[queued, released])
-        mock_repo.update_status = AsyncMock()
-        mock_repo.promote_next_queued = AsyncMock()
-        resp = cl.delete(f"/bookings/{queued.id}", headers={"Accept": "application/json"})
+    from app.presentation.routes import api_bookings
+    mock_repo = MagicMock()
+    mock_repo.get = AsyncMock(side_effect=[queued, released])
+    mock_repo.update_status = AsyncMock()
+    mock_repo.promote_next_queued = AsyncMock()
+    mock_dispatcher = MagicMock()
+    with patch.object(api_bookings._release_use_case, "_repo", mock_repo), \
+         patch.object(api_bookings._release_use_case, "_dispatcher", mock_dispatcher):
+        resp = cl.delete(f"/api/bookings/{queued.id}")
 
     assert resp.status_code == 202
     assert resp.json()["status"] == "RELEASED"
     assert mock_repo.update_status.call_args.args[2] == BookingStatus.RELEASED
-    mock_task.delay.assert_not_called()              # nothing to tear down
+    mock_dispatcher.dispatch_teardown.assert_not_called()  # nothing to tear down
     mock_repo.promote_next_queued.assert_not_called()  # cancelling frees no resource
 
 

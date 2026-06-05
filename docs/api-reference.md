@@ -320,7 +320,13 @@ The two filters are independent and compose, e.g. `/?filter=all&show_released=1`
 
 ---
 
-### `GET /bookings`
+> **Bookings: API vs browser.** The programmatic booking API lives under **`/api/bookings`** and
+> speaks JSON (request bodies and responses). The browser UI uses separate root HTMX routes
+> (`POST /bookings`, `DELETE /bookings/{id}`, `PUT /bookings/{id}/extend`, `GET /bookings/{id}/row`)
+> that return HTML fragments; those are not part of this API and are omitted from `/docs`. API
+> clients should always use `/api/bookings`.
+
+### `GET /api/bookings`
 
 List bookings.
 
@@ -358,18 +364,18 @@ Each row carries the fields for every resource type; the ones that don't apply a
 `static_vm`/`host`/`username` for static-VM bookings. `QUEUED` bookings have no resource fields set.
 
 > **No secrets in the list.** `vm_password` (and static-VM credentials) are **not** included in
-> `GET /bookings`. The VM password is returned only on the owner-scoped creation response
-> (`POST /bookings`) and the owner/admin-gated single-row view (`GET /bookings/{id}/row`).
+> `GET /api/bookings`. The VM password is returned only on the owner-scoped creation response
+> (`POST /api/bookings`) and the owner/admin-gated single-row view (`GET /bookings/{id}/row`).
 
 **Example:**
 ```bash
-curl -s http://localhost:8000/bookings \
+curl -s http://localhost:8000/api/bookings \
      -H "Authorization: Bearer dp_<api_key>" | python3 -m json.tool
 ```
 
 ---
 
-### `POST /bookings`
+### `POST /api/bookings`
 
 Create a new booking. A booking is one of:
 - **VM** (`VM`) — provisioned via Terraform.
@@ -382,9 +388,9 @@ Create a new booking. A booking is one of:
 
 **Auth:** any authenticated user. The booking is created under the caller's identity.
 
-**Content-Type:** `application/x-www-form-urlencoded`
+**Content-Type:** `application/json`
 
-**Form fields:**
+**JSON body fields:**
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
@@ -395,9 +401,7 @@ Create a new booking. A booking is one of:
 | `namespace_id` | UUID | No | A specific namespace; omit for "Any available" |
 | `static_vm_id` | UUID | No | A specific static VM; omit for "Any available" |
 
-**VM response:**
-
-- With `Accept: application/json` → `201`:
+**VM response:** `201`
 
 ```json
 {
@@ -423,7 +427,7 @@ Create a new booking. A booking is one of:
 **Namespace response:**
 
 A namespace booking is allocated synchronously and is `READY` immediately (no provisioning,
-no credentials issued). With `Accept: application/json` → `201`:
+no credentials issued). `201`:
 
 ```json
 {
@@ -445,7 +449,7 @@ no credentials issued). With `Accept: application/json` → `201`:
 **Static VM response:**
 
 Reserved synchronously and `READY` immediately, returning the VM's host + credentials
-(password and/or SSH key — whichever the admin registered). With `Accept: application/json` → `201`:
+(password and/or SSH key — whichever the admin registered). `201`:
 
 ```json
 {
@@ -471,8 +475,8 @@ Reserved synchronously and `READY` immediately, returning the VM's host + creden
 
 When no resource of the requested pooled type is free, an "Any available" request is created
 as `QUEUED` with no resource assigned and a FIFO `queue_position`. Its TTL starts only when it
-is promoted to `READY` (the moment one frees). Poll `GET /bookings/{id}/row` (browser) or
-`GET /bookings` (JSON) to observe the promotion. Example `201`:
+is promoted to `READY` (the moment one frees). Poll `GET /api/bookings` (JSON) — or
+`GET /bookings/{id}/row` in the browser — to observe the promotion. Example `201`:
 
 ```json
 {
@@ -491,33 +495,30 @@ is promoted to `READY` (the moment one frees). Poll `GET /bookings/{id}/row` (br
 }
 ```
 
-Cancel a queued booking with `DELETE /bookings/{id}` (it holds no resource, so it just leaves
+Cancel a queued booking with `DELETE /api/bookings/{id}` (it holds no resource, so it just leaves
 the queue).
-
-Without `Accept: application/json`, all return a `201` HTMX HTML fragment (booking row), and
-errors re-render the booking form with a banner.
 
 **Example (Jenkins/CI):**
 ```bash
 # VM
-curl -s -X POST http://localhost:8000/bookings \
-     -H "Accept: application/json" -H "Authorization: Bearer dp_<api_key>" \
-     -d "ttl_minutes=240&image_id=<image-uuid>&hw_config_id=<hw-config-uuid>" | python3 -m json.tool
+curl -s -X POST http://localhost:8000/api/bookings \
+     -H "Content-Type: application/json" -H "Authorization: Bearer dp_<api_key>" \
+     -d '{"resource_type": "VM", "ttl_minutes": 240, "image_id": "<image-uuid>", "hw_config_id": "<hw-config-uuid>"}' | python3 -m json.tool
 
 # Namespace (specific, or omit namespace_id for "Any available")
-curl -s -X POST http://localhost:8000/bookings \
-     -H "Accept: application/json" -H "Authorization: Bearer dp_<api_key>" \
-     -d "resource_type=NAMESPACE&ttl_minutes=240&namespace_id=<namespace-uuid>" | python3 -m json.tool
+curl -s -X POST http://localhost:8000/api/bookings \
+     -H "Content-Type: application/json" -H "Authorization: Bearer dp_<api_key>" \
+     -d '{"resource_type": "NAMESPACE", "ttl_minutes": 240, "namespace_id": "<namespace-uuid>"}' | python3 -m json.tool
 
 # Static VM — "Any available" (queues if the pool is empty)
-curl -s -X POST http://localhost:8000/bookings \
-     -H "Accept: application/json" -H "Authorization: Bearer dp_<api_key>" \
-     -d "resource_type=STATIC_VM&ttl_minutes=240" | python3 -m json.tool
+curl -s -X POST http://localhost:8000/api/bookings \
+     -H "Content-Type: application/json" -H "Authorization: Bearer dp_<api_key>" \
+     -d '{"resource_type": "STATIC_VM", "ttl_minutes": 240}' | python3 -m json.tool
 ```
 
 ---
 
-### `PUT /bookings/{booking_id}/extend`
+### `PUT /api/bookings/{booking_id}/extend`
 
 Extend the TTL of a `READY` booking. Only the booking owner may extend; admins have no override here.
 Permanent bookings (`ttl_minutes == 0`) cannot be extended.
@@ -530,7 +531,9 @@ Permanent bookings (`ttl_minutes == 0`) cannot be extended.
 |-----------|------|-------------|
 | `booking_id` | UUID | ID of the booking to extend |
 
-**Form fields:**
+**Content-Type:** `application/json`
+
+**JSON body fields:**
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
@@ -538,7 +541,7 @@ Permanent bookings (`ttl_minutes == 0`) cannot be extended.
 
 **Responses:**
 
-- `200 OK` — TTL extended. Returns updated HTML row fragment (default) or JSON (with `Accept: application/json`).
+- `200 OK` — TTL extended. Returns the updated booking JSON.
 - `403 Forbidden` — caller is not the booking owner.
 - `404 Not Found` — booking does not exist.
 - `409 Conflict` — booking is not `READY`, or booking is permanent (`ttl_minutes == 0`).
@@ -555,20 +558,21 @@ Permanent bookings (`ttl_minutes == 0`) cannot be extended.
 
 **Example:**
 ```bash
-curl -s -X PUT http://localhost:8000/bookings/<booking-id>/extend \
-     -H "Accept: application/json" \
+curl -s -X PUT http://localhost:8000/api/bookings/<booking-id>/extend \
+     -H "Content-Type: application/json" \
      -H "Authorization: Bearer dp_<api_key>" \
-     -d "extend_minutes=60" | python3 -m json.tool
+     -d '{"extend_minutes": 60}' | python3 -m json.tool
 ```
 
 ---
 
-### `DELETE /bookings/{booking_id}`
+### `DELETE /api/bookings/{booking_id}`
 
 Release a VM booking. Only the booking owner or an admin may release.
 
 Transitions the booking to `RELEASING` and queues `teardown_vm_task` which runs
-`terraform destroy`. The booking reaches `RELEASED` once teardown completes.
+`terraform destroy`. The booking reaches `RELEASED` once teardown completes. (Pooled
+namespace/static-VM bookings go straight to `RELEASED` and return to the pool.)
 
 **Auth:** booking owner or admin.
 
@@ -580,7 +584,7 @@ Transitions the booking to `RELEASING` and queues `teardown_vm_task` which runs
 
 **Responses:**
 
-- `202 Accepted` — teardown queued; booking status is now `RELEASING`. Returns HTML row fragment (default) or JSON (with `Accept: application/json`).
+- `202 Accepted` — teardown queued; booking status is now `RELEASING`. Returns the booking JSON.
 - `403 Forbidden` — caller is not the booking owner or admin.
 - `404 Not Found` — booking does not exist.
 - `409 Conflict` — booking is in-flight (`PENDING`, `PROVISIONING`, `RETRY`, or already `RELEASING`) or already `RELEASED`.
@@ -594,14 +598,13 @@ Transitions the booking to `RELEASING` and queues `teardown_vm_task` which runs
 
 **Example:**
 ```bash
-curl -s -X DELETE http://localhost:8000/bookings/<booking-id> \
-     -H "Accept: application/json" \
+curl -s -X DELETE http://localhost:8000/api/bookings/<booking-id> \
      -H "Authorization: Bearer dp_<api_key>" | python3 -m json.tool
 ```
 
 ---
 
-### `GET /bookings/{booking_id}/audit`
+### `GET /api/bookings/{booking_id}/audit`
 
 Returns the full audit trail for a booking in chronological order.
 
@@ -647,7 +650,7 @@ Returns the full audit trail for a booking in chronological order.
 
 **Example:**
 ```bash
-curl -s http://localhost:8000/bookings/<booking-id>/audit \
+curl -s http://localhost:8000/api/bookings/<booking-id>/audit \
      -H "Authorization: Bearer dp_<api_key>" | python3 -m json.tool
 ```
 
@@ -655,7 +658,8 @@ curl -s http://localhost:8000/bookings/<booking-id>/audit \
 
 ### `GET /bookings/{booking_id}/row`
 
-Returns an HTML fragment for a single booking row. Used by HTMX polling.
+Returns an HTML fragment for a single booking row. Used by **HTMX polling in the browser** — this
+is a presentation route, not part of the JSON API (and is omitted from `/docs`).
 
 **Auth:** the booking **owner** or an **admin**. A non-owner gets `403`; an unknown id gets `404`.
 

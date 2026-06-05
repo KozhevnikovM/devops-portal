@@ -69,33 +69,28 @@ def test_admin_can_force_delete_in_flight_booking(admin_client, status):
     releasing = _make_booking(BookingStatus.RELEASING)
     releasing.id = booking.id
 
-    with (
-        patch("app.presentation.routes.bookings._repo") as mock_repo,
-        patch("app.tasks.teardown.teardown_vm_task") as mock_task,
-    ):
-        mock_repo.get = AsyncMock(side_effect=[booking, releasing])
-        mock_repo.update_status = AsyncMock()
-        mock_task.delay = MagicMock()
-
-        resp = admin_client.delete(
-            f"/bookings/{booking.id}",
-            headers={"Accept": "application/json"},
-        )
+    from app.presentation.routes import api_bookings
+    mock_repo = MagicMock()
+    mock_repo.get = AsyncMock(side_effect=[booking, releasing])
+    mock_repo.update_status = AsyncMock()
+    mock_dispatcher = MagicMock()
+    with patch.object(api_bookings._release_use_case, "_repo", mock_repo), \
+         patch.object(api_bookings._release_use_case, "_dispatcher", mock_dispatcher):
+        resp = admin_client.delete(f"/api/bookings/{booking.id}")
 
     assert resp.status_code == 202, f"Expected 202 for admin force-delete of {status.value}"
     assert resp.json()["status"] == "RELEASING"
-    mock_task.delay.assert_called_once_with(str(booking.id))
+    mock_dispatcher.dispatch_teardown.assert_called_once_with(str(booking.id))
 
 
 def test_admin_gets_409_for_releasing_booking(admin_client):
     """RELEASING is already in teardown — admin cannot re-trigger."""
     booking = _make_booking(BookingStatus.RELEASING)
-    with patch("app.presentation.routes.bookings._repo") as mock_repo:
-        mock_repo.get = AsyncMock(return_value=booking)
-        resp = admin_client.delete(
-            f"/bookings/{booking.id}",
-            headers={"Accept": "application/json"},
-        )
+    from app.presentation.routes import api_bookings
+    mock_repo = MagicMock()
+    mock_repo.get = AsyncMock(return_value=booking)
+    with patch.object(api_bookings._release_use_case, "_repo", mock_repo):
+        resp = admin_client.delete(f"/api/bookings/{booking.id}")
     assert resp.status_code == 409
 
 
@@ -112,10 +107,9 @@ def test_admin_gets_409_for_releasing_booking(admin_client):
 def test_regular_user_gets_409_for_in_flight_booking(user_client, status):
     client, fake_user = user_client
     booking = _make_booking(status, user_id=str(fake_user.id))
-    with patch("app.presentation.routes.bookings._repo") as mock_repo:
-        mock_repo.get = AsyncMock(return_value=booking)
-        resp = client.delete(
-            f"/bookings/{booking.id}",
-            headers={"Accept": "application/json"},
-        )
+    from app.presentation.routes import api_bookings
+    mock_repo = MagicMock()
+    mock_repo.get = AsyncMock(return_value=booking)
+    with patch.object(api_bookings._release_use_case, "_repo", mock_repo):
+        resp = client.delete(f"/api/bookings/{booking.id}")
     assert resp.status_code == 409, f"Expected 409 for regular user on {status.value}"

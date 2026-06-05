@@ -236,9 +236,9 @@ def test_list_bookings_json_omits_vm_password(client_as_admin):
     """
     client, _ = client_as_admin
     booking = _make_booking()
-    with patch("app.presentation.routes.bookings._repo") as mock_repo:
+    with patch("app.presentation.routes.api_bookings._repo") as mock_repo:
         mock_repo.list_all = AsyncMock(return_value=[booking])
-        resp = client.get("/bookings")
+        resp = client.get("/api/bookings")
 
     assert resp.status_code == 200
     row = resp.json()[0]
