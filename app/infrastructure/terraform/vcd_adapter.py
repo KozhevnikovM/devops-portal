@@ -16,6 +16,10 @@ logger = logging.getLogger(__name__)
 _LOCK_ERROR_MARKER = "Error acquiring the state lock"
 _LOCK_ID_RE = re.compile(r"^\s*ID:\s*(\S+)", re.MULTILINE)
 
+# VCD rejects creating a vApp that already exists — happens when an apply created the vApp but a
+# reboot (SIGKILL) killed terraform before the new resource was persisted to state.
+_ALREADY_EXISTS_RE = re.compile(r"entity (\S+) already exists")
+
 
 class TerraformError(Exception):
     pass
@@ -171,6 +175,33 @@ class TerraformVcdAdapter:
 
         await self._run("init", "-no-color", cwd=workspace_dir, on_progress=on_progress)
         await self._run("workspace", "select", "-or-create", workspace_id, cwd=workspace_dir, on_progress=on_progress)
+
+        try:
+            await self._apply(workspace_dir, on_progress)
+        except TerraformError as exc:
+            if not self._is_orphaned_vapp(str(exc), config["name"]):
+                raise
+            # The vApp exists in VCD but not in state (an apply created it, then a reboot killed
+            # terraform before it persisted state) — refresh can't reconcile a resource it never
+            # recorded. Import the orphan, destroy it (which also clears any partial VMs/networks
+            # inside the vApp), and apply again from a clean slate.
+            logger.warning(
+                "vApp %s exists in VCD but not in state — importing, destroying, recreating",
+                config["name"],
+            )
+            if on_progress:
+                on_progress(f"Recovering orphaned vApp {config['name']}")
+            import_id = f"{settings.VCD_ORG}.{settings.VCD_VDC}.{config['name']}"
+            await self._run("import", "-no-color", "vcd_vapp.this", import_id, cwd=workspace_dir, on_progress=on_progress)
+            await self._destroy_state(workspace_id, workspace_dir, on_progress=on_progress)
+            await self._apply(workspace_dir, on_progress)
+
+        output_json = await self._run("output", "-json", cwd=workspace_dir, on_progress=on_progress)
+        outputs = json.loads(output_json)
+        ip = outputs["primary_ip"]["value"]
+        return {"ip": ip}
+
+    async def _apply(self, workspace_dir: Path, on_progress=None) -> None:
         await self._run(
             "apply", "-auto-approve", "-no-color",
             f"-refresh={str(settings.TF_APPLY_REFRESH).lower()}",
@@ -179,10 +210,11 @@ class TerraformVcdAdapter:
             on_progress=on_progress,
         )
 
-        output_json = await self._run("output", "-json", cwd=workspace_dir, on_progress=on_progress)
-        outputs = json.loads(output_json)
-        ip = outputs["primary_ip"]["value"]
-        return {"ip": ip}
+    @staticmethod
+    def _is_orphaned_vapp(message: str, vapp_name: str) -> bool:
+        """True if `message` is a VCD 'entity already exists' conflict for our own vApp."""
+        match = _ALREADY_EXISTS_RE.search(message)
+        return match is not None and match.group(1) == vapp_name
 
     async def destroy(
         self,
