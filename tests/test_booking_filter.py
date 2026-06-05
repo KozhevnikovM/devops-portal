@@ -62,6 +62,35 @@ def test_default_filter_calls_list_by_user(setup):
     mock_repo.list_all.assert_not_called()
 
 
+def test_vm_filter_tabs_use_named_book_vm_path(setup):
+    """#192: the VM filter tabs target /book/vm, not the bare "/".
+
+    The bare "/?filter=…" URL isn't matched by the reverse-proxy sub_filter rules, so it 404s
+    behind a /dp subpath. Rendering the tabs against /book/vm (covered by the ="/book" rule)
+    keeps them working both locally and behind the proxy.
+    """
+    client, _ = setup
+
+    with patch("app.presentation.routes.bookings._repo") as mock_repo, \
+         patch("app.presentation.routes.bookings._image_repo") as mock_img, \
+         patch("app.presentation.routes.bookings._hw_config_repo") as mock_hw, \
+         patch("app.presentation.routes.bookings._namespace_repo") as mock_ns, \
+         patch("app.presentation.routes.bookings._static_vm_repo") as mock_svm:
+        mock_repo.list_by_user = AsyncMock(return_value=[])
+        mock_img.list_active = AsyncMock(return_value=[])
+        mock_hw.list_active = AsyncMock(return_value=[])
+        mock_ns.list_available = AsyncMock(return_value=[])
+        mock_svm.list_available = AsyncMock(return_value=[])
+
+        resp = client.get("/")
+
+    assert resp.status_code == 200
+    assert 'hx-get="/book/vm?filter=all"' in resp.text
+    assert 'hx-get="/book/vm?filter=mine"' in resp.text
+    # The bare-"/" filter URL (unreachable behind the /dp proxy) is gone.
+    assert 'hx-get="/?filter=' not in resp.text
+
+
 def test_filter_mine_calls_list_by_user(setup):
     """GET /?filter=mine calls list_by_user."""
     client, _ = setup
