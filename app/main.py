@@ -3,6 +3,8 @@ from contextlib import asynccontextmanager
 
 import bcrypt
 from fastapi import FastAPI
+from fastapi.responses import HTMLResponse
+from fastapi.routing import APIRoute
 from fastapi.staticfiles import StaticFiles
 
 from app.config import settings
@@ -85,6 +87,13 @@ app.include_router(admin_router)
 app.include_router(auth_router)
 app.include_router(router)
 app.include_router(api_router)
+
+# Keep the OpenAPI schema (/docs) to the JSON API surface: hide the HTML/HTMX page and
+# fragment routes, which all declare response_class=HTMLResponse. get_openapi() skips routes
+# with include_in_schema=False, so this also covers any HTML route added later.
+for _route in app.routes:
+    if isinstance(_route, APIRoute) and _route.response_class is HTMLResponse:
+        _route.include_in_schema = False
 
 
 def _custom_openapi():

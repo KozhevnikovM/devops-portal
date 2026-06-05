@@ -3,6 +3,9 @@
 All endpoints require authentication. Browser users are redirected to `/auth/login`
 when unauthenticated. API clients must pass `Authorization: Bearer <api_key>` on every request.
 
+The interactive docs at `/docs` (and `/openapi.json`) list only the JSON API endpoints below.
+The server-rendered HTML pages and HTMX fragments are intentionally excluded from the schema.
+
 ---
 
 ## Authentication
