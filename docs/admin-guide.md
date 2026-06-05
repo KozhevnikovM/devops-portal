@@ -250,7 +250,7 @@ location /dp/ {
 Notes:
 - The session cookie is set with `Path=/`, so it is sent to `/dp/*` without extra config. To scope
   it to the subpath, add `proxy_cookie_path / /dp/;`.
-- API clients (Jenkins/CI) call the prefixed URL, e.g. `https://my-domain.com/dp/bookings`.
+- API clients (Jenkins/CI) call the prefixed URL, e.g. `https://my-domain.com/dp/api/bookings`.
 
 #### Alternative: forward the prefix and use `ROOT_PATH`
 
@@ -346,10 +346,10 @@ Response:
 Store the `key` value in Jenkins credentials. Use it in all API requests:
 
 ```bash
-curl -s -X POST http://localhost:8000/bookings \
-     -H "Accept: application/json" \
+curl -s -X POST http://localhost:8000/api/bookings \
+     -H "Content-Type: application/json" \
      -H "Authorization: Bearer dp_a1b2c3d4..." \
-     -d "ttl_minutes=240&image_id=<uuid>&hw_config_id=<uuid>"
+     -d '{"resource_type": "VM", "ttl_minutes": 240, "image_id": "<uuid>", "hw_config_id": "<uuid>"}'
 ```
 
 **Revoke an API key:**
@@ -424,8 +424,9 @@ Response:
 
 ### Quota enforcement
 
-When a booking would exceed quota, `POST /bookings` returns `409 Conflict`. Browser users
-see an error banner above the booking form; API clients receive:
+When a booking would exceed quota, `POST /api/bookings` returns `409 Conflict` (and the browser's
+`POST /bookings` re-renders the form). Browser users see an error banner above the booking form;
+API clients receive:
 
 ```json
 { "detail": "Quota exceeded: CPU (18/16 cores), memory (36/32 GB)" }
@@ -608,10 +609,10 @@ with `VCD_USER` / `VCD_PASSWORD`.
 docker compose up -d
 # Open http://localhost:8000, book a VM, watch status reach READY with a real IP.
 # Or use the API (replace UUIDs with real IDs from GET /api/images and /api/hardware):
-curl -s -X POST http://localhost:8000/bookings \
-     -H "Accept: application/json" \
+curl -s -X POST http://localhost:8000/api/bookings \
+     -H "Content-Type: application/json" \
      -H "Authorization: Bearer dp_<api_key>" \
-     -d "ttl_minutes=240&image_id=<image-uuid>&hw_config_id=<hw-config-uuid>" | python3 -m json.tool
+     -d '{"resource_type": "VM", "ttl_minutes": 240, "image_id": "<image-uuid>", "hw_config_id": "<hw-config-uuid>"}' | python3 -m json.tool
 ```
 
 Check worker logs to follow terraform output:
@@ -642,7 +643,7 @@ of the Active Bookings table.
 - Admins can see the password for any booking.
 - Other users see `—` in the Password column.
 
-The password is also returned in the `vm_password` field of the `GET /bookings` JSON response.
+The password is also returned in the `vm_password` field of the `GET /api/bookings` JSON response.
 
 ---
 
@@ -658,10 +659,10 @@ when the booking is `READY` and belongs to the logged-in user. Choose a duration
 **Via the API:**
 
 ```bash
-curl -s -X PUT http://localhost:8000/bookings/<booking-id>/extend \
-     -H "Accept: application/json" \
+curl -s -X PUT http://localhost:8000/api/bookings/<booking-id>/extend \
+     -H "Content-Type: application/json" \
      -H "Authorization: Bearer dp_<api_key>" \
-     -d "extend_minutes=60" | python3 -m json.tool
+     -d '{"extend_minutes": 60}' | python3 -m json.tool
 ```
 
 The response is `200 OK` with updated `ttl_minutes` and `expires_at`. The `EXTENDED` action
@@ -687,8 +688,7 @@ a queued booking). A confirmation dialog appears first.
 **Via the API:**
 
 ```bash
-curl -s -X DELETE http://localhost:8000/bookings/<booking-id> \
-     -H "Accept: application/json" \
+curl -s -X DELETE http://localhost:8000/api/bookings/<booking-id> \
      -H "Authorization: Bearer dp_<api_key>" | python3 -m json.tool
 ```
 

@@ -123,12 +123,11 @@ def test_post_booking_namespace_returns_row(client):
 def test_post_booking_namespace_json(client):
     cl, _ = client
     booking = _make_ns_booking()
-    with patch("app.presentation.routes.bookings._book_namespace_use_case") as mock_uc:
+    with patch("app.presentation.routes.api_bookings._book_namespace_use_case") as mock_uc:
         mock_uc.execute = AsyncMock(return_value=booking)
         resp = cl.post(
-            "/bookings",
-            data={"resource_type": "NAMESPACE", "namespace_id": str(booking.namespace_id), "ttl_minutes": "240"},
-            headers={"Accept": "application/json"},
+            "/api/bookings",
+            json={"resource_type": "NAMESPACE", "namespace_id": str(booking.namespace_id), "ttl_minutes": 240},
         )
 
     assert resp.status_code == 201
@@ -141,12 +140,11 @@ def test_post_booking_namespace_json(client):
 
 def test_post_booking_namespace_unavailable_409_json(client):
     cl, _ = client
-    with patch("app.presentation.routes.bookings._book_namespace_use_case") as mock_uc:
+    with patch("app.presentation.routes.api_bookings._book_namespace_use_case") as mock_uc:
         mock_uc.execute = AsyncMock(side_effect=NamespaceUnavailableError("already booked"))
         resp = cl.post(
-            "/bookings",
-            data={"resource_type": "NAMESPACE", "namespace_id": str(uuid4()), "ttl_minutes": "240"},
-            headers={"Accept": "application/json"},
+            "/api/bookings",
+            json={"resource_type": "NAMESPACE", "namespace_id": str(uuid4()), "ttl_minutes": 240},
         )
 
     assert resp.status_code == 409
@@ -172,18 +170,21 @@ def test_release_namespace_sets_released_without_teardown(client):
     booking = _make_ns_booking(user_id=str(fake_user.id), status=BookingStatus.READY)
     released = _make_ns_booking(id=booking.id, user_id=str(fake_user.id), status=BookingStatus.RELEASED)
 
-    with patch("app.presentation.routes.bookings._repo") as mock_repo, \
-         patch("app.tasks.teardown.teardown_vm_task") as mock_task:
-        mock_repo.get = AsyncMock(side_effect=[booking, released])
-        mock_repo.update_status = AsyncMock()
-        mock_repo.promote_next_queued = AsyncMock()
-        resp = cl.delete(f"/bookings/{booking.id}", headers={"Accept": "application/json"})
+    from app.presentation.routes import api_bookings
+    mock_repo = MagicMock()
+    mock_repo.get = AsyncMock(side_effect=[booking, released])
+    mock_repo.update_status = AsyncMock()
+    mock_repo.promote_next_queued = AsyncMock()
+    mock_dispatcher = MagicMock()
+    with patch.object(api_bookings._release_use_case, "_repo", mock_repo), \
+         patch.object(api_bookings._release_use_case, "_dispatcher", mock_dispatcher):
+        resp = cl.delete(f"/api/bookings/{booking.id}")
 
     assert resp.status_code == 202
     assert resp.json()["status"] == "RELEASED"
     # status set directly to RELEASED; no teardown task queued for a namespace
     assert mock_repo.update_status.call_args.args[2] == BookingStatus.RELEASED
-    mock_task.delay.assert_not_called()
+    mock_dispatcher.dispatch_teardown.assert_not_called()
     # releasing a pooled resource hands it to the next queued booking
     mock_repo.promote_next_queued.assert_awaited_once()
 

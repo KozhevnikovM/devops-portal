@@ -1,6 +1,6 @@
-"""Regression tests for #137 — `GET /bookings` owner scoping + no leaked secrets.
+"""Regression tests for #137 — `GET /api/bookings` owner scoping + no leaked secrets.
 
-Before the fix, `GET /bookings` called `list_all` for everyone and serialized `vm_password`,
+Before the fix, `GET /api/bookings` called `list_all` for everyone and serialized `vm_password`,
 so any authenticated user could read every other user's credentials. After the fix:
 - non-admins are scoped to their own bookings (`list_by_user`);
 - admins still see all (`list_all`);
@@ -59,10 +59,10 @@ def test_non_admin_is_scoped_to_own_bookings():
     own = _make_booking(str(user.id))
     app = _client(user)
 
-    with patch("app.presentation.routes.bookings._repo") as mock_repo:
+    with patch("app.presentation.routes.api_bookings._repo") as mock_repo:
         mock_repo.list_by_user = AsyncMock(return_value=[own])
         mock_repo.list_all = AsyncMock(return_value=[own, _make_booking("someone-else")])
-        resp = TestClient(app).get("/bookings")
+        resp = TestClient(app).get("/api/bookings")
 
     # Owner scoping must use list_by_user, never the unscoped list_all.
     mock_repo.list_by_user.assert_awaited_once_with(mock_repo.list_by_user.call_args.args[0], str(user.id))
@@ -77,9 +77,9 @@ def test_no_vm_password_in_payload_for_non_admin():
     user = make_fake_user()
     app = _client(user)
 
-    with patch("app.presentation.routes.bookings._repo") as mock_repo:
+    with patch("app.presentation.routes.api_bookings._repo") as mock_repo:
         mock_repo.list_by_user = AsyncMock(return_value=[_make_booking(str(user.id))])
-        resp = TestClient(app).get("/bookings")
+        resp = TestClient(app).get("/api/bookings")
 
     body = resp.text
     assert "hunter2-plaintext" not in body
@@ -93,10 +93,10 @@ def test_admin_sees_all_bookings_without_secrets():
     rows = [_make_booking("user-a"), _make_booking("user-b")]
     app = _client(admin)
 
-    with patch("app.presentation.routes.bookings._repo") as mock_repo:
+    with patch("app.presentation.routes.api_bookings._repo") as mock_repo:
         mock_repo.list_all = AsyncMock(return_value=rows)
         mock_repo.list_by_user = AsyncMock()
-        resp = TestClient(app).get("/bookings")
+        resp = TestClient(app).get("/api/bookings")
 
     mock_repo.list_all.assert_awaited_once()
     mock_repo.list_by_user.assert_not_called()

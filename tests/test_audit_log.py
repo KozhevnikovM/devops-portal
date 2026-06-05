@@ -247,11 +247,11 @@ def test_get_audit_returns_200_with_entries(api_client):
                           created_at=now + timedelta(seconds=5)),
     ]
 
-    with patch("app.presentation.routes.bookings._repo") as mock_repo:
+    with patch("app.presentation.routes.api_bookings._repo") as mock_repo:
         mock_repo.get = AsyncMock()
         mock_repo.list_audit = AsyncMock(return_value=entries)
 
-        resp = api_client.get(f"/bookings/{booking_id}/audit")
+        resp = api_client.get(f"/api/bookings/{booking_id}/audit")
 
     assert resp.status_code == 200
     data = resp.json()
@@ -265,10 +265,10 @@ def test_get_audit_returns_200_with_entries(api_client):
 def test_get_audit_returns_404_for_missing_booking(api_client):
     booking_id = uuid4()
 
-    with patch("app.presentation.routes.bookings._repo") as mock_repo:
+    with patch("app.presentation.routes.api_bookings._repo") as mock_repo:
         mock_repo.get = AsyncMock(side_effect=BookingNotFoundError(booking_id))
 
-        resp = api_client.get(f"/bookings/{booking_id}/audit")
+        resp = api_client.get(f"/api/bookings/{booking_id}/audit")
 
     assert resp.status_code == 404
 
@@ -284,11 +284,11 @@ def test_get_audit_entries_have_expected_fields(api_client):
         metadata={"vm_ip": "10.0.0.5"},
     )
 
-    with patch("app.presentation.routes.bookings._repo") as mock_repo:
+    with patch("app.presentation.routes.api_bookings._repo") as mock_repo:
         mock_repo.get = AsyncMock()
         mock_repo.list_audit = AsyncMock(return_value=[entry])
 
-        resp = api_client.get(f"/bookings/{booking_id}/audit")
+        resp = api_client.get(f"/api/bookings/{booking_id}/audit")
 
     data = resp.json()
     assert len(data) == 1

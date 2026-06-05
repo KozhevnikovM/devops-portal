@@ -16,14 +16,16 @@ KEPT_PATHS = {
     "/api/images",
     "/api/hardware",
     "/api/users",
-    "/bookings",
-    "/bookings/{booking_id}/audit",
+    "/api/bookings",
+    "/api/bookings/{booking_id}/audit",
 }
 
-# HTML pages / HTMX fragments that must not appear in the schema.
+# HTML pages / HTMX fragments that must not appear in the schema (incl. the root HTMX booking
+# routes, now HTML-only — the JSON API lives under /api/bookings).
 HIDDEN_PATHS = {
     "/book/vm",
     "/book/namespace",
+    "/bookings",
     "/bookings/{booking_id}/row",
     "/admin/catalog",
 }
