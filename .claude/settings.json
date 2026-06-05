@@ -26,7 +26,8 @@
       "Bash(python3 -m pytest *)",
       "Bash(git -c commit.gpgsign=false commit -q -m 'fix: force-unlock stale Terraform state lock on VM release \\(#180\\) *)",
       "Bash(git -c commit.gpgsign=false commit -q -m 'chore: source postgres credentials from .env in docker-compose *)",
-      "Bash(git -c commit.gpgsign=false commit -q -m \"chore: update .claude/settings.json permission allowlist\")"
+      "Bash(git -c commit.gpgsign=false commit -q -m \"chore: update .claude/settings.json permission allowlist\")",
+      "Bash(git -c commit.gpgsign=false commit -q -m 'fix: honour ROOT_PATH so /docs works behind a reverse-proxy subpath \\(#183\\) *)"
     ]
   }
 }

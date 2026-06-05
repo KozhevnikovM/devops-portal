@@ -78,6 +78,7 @@ app = FastAPI(
     title="DevOps Portal",
     lifespan=lifespan,
     swagger_ui_parameters={"persistAuthorization": True},
+    root_path=settings.ROOT_PATH,
 )
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
 app.include_router(admin_router)

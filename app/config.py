@@ -10,6 +10,11 @@ class Settings(BaseSettings):
     USE_STUB_TERRAFORM: bool = True
     DEV_USER_ID: str = "dev-user-00000000"
 
+    # URL prefix the app is mounted under when behind a reverse proxy on a subpath
+    # (e.g. "/dp" for https://host/dp/). Empty = served at the root. Passed to FastAPI as
+    # root_path so the generated docs/OpenAPI URLs carry the prefix.
+    ROOT_PATH: str = ""
+
     # Auth
     ADMIN_USERNAME: str = "admin"
     ADMIN_PASSWORD: str = "changeme"
