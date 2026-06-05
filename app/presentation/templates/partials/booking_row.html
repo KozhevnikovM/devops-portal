@@ -115,6 +115,15 @@
                         </form>
                         <div class="border-t border-gray-800"></div>
                         {% endif %}
+                        {% if booking.status.value == 'FAILED' %}
+                        <a
+                            href="/bookings/{{ booking.id }}/audit"
+                            class="block px-3 py-2 text-sm text-gray-300 hover:bg-gray-800 transition-colors"
+                        >
+                            Audit log
+                        </a>
+                        <div class="border-t border-gray-800"></div>
+                        {% endif %}
                         <button
                             class="w-full text-left px-3 py-2 text-sm text-red-400 hover:bg-gray-800 transition-colors"
                             hx-delete="/bookings/{{ booking.id }}"

@@ -251,3 +251,26 @@ async def extend_booking(
     return templates.TemplateResponse(
         request, "partials/booking_row.html", {"booking": booking, "current_user": current_user}
     )
+
+
+@router.get("/bookings/{booking_id}/audit", response_class=HTMLResponse)
+async def booking_audit_page(
+    booking_id: UUID,
+    request: Request,
+    session: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(require_user),
+):
+    """Human-readable audit timeline for a booking (linked from a failed booking row)."""
+    try:
+        booking = await _repo.get(session, booking_id)
+    except BookingNotFoundError:
+        raise HTTPException(status_code=404, detail="Booking not found")
+
+    if booking.user_id != str(current_user.id) and current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Not the booking owner")
+
+    entries = await _repo.list_audit(session, booking_id)
+    return templates.TemplateResponse(
+        request, "audit_log.html",
+        {"booking": booking, "entries": entries, "current_user": current_user},
+    )
