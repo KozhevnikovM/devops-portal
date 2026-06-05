@@ -28,42 +28,52 @@ schema URL, OpenAPI `servers`, `request.url_for(...)`) is missing the prefix. Th
 hand-written templates are already handled by the proxy's `sub_filter` rules, but the
 FastAPI-generated docs page is not.
 
+## Two reverse-proxy topologies (and why this isn't just "set root_path")
+
+FastAPI's `root_path` is the documented mechanism, **but on Starlette ≥ 1.0 it is
+routing-aware for mounted sub-apps**: with `root_path="/dp"`, the `/static` mount (a
+`StaticFiles` Mount) only matches when the incoming request path *includes* the `/dp` prefix.
+Plain routes still match with or without the prefix, so only static assets break.
+
+The portal's documented subpath proxy (Option B) uses a trailing-slash `proxy_pass`, which
+**strips** `/dp` before forwarding — so the app sees `/static/...`. Setting `root_path="/dp"`
+there makes every static asset 404. The two mechanisms are mutually exclusive:
+
+- **Stripping proxy (Option B as written):** the app serves at the root. Leave `ROOT_PATH`
+  unset and fix the docs in nginx with a `sub_filter` that rewrites the Swagger UI's
+  `url: '/openapi.json'` → `url: '/dp/openapi.json'`. The browser then fetches
+  `/dp/openapi.json`, nginx strips it back to `/openapi.json` → 200.
+- **Forwarding proxy (alternative):** drop the trailing slash so `/dp/...` is passed intact,
+  and set `ROOT_PATH=/dp`. FastAPI then serves `/dp/static/...` and `/dp/openapi.json`
+  natively; the docs need no `sub_filter`. (The templates' root-absolute links still need the
+  existing `sub_filter` rules either way.)
+
 ## What changes
 
-Use FastAPI's built-in mechanism for "this app is mounted behind a proxy at a prefix":
-**`root_path`**. A new, optional `ROOT_PATH` setting is passed to the `FastAPI(...)`
-constructor.
+- `app/config.py` — add an optional `ROOT_PATH: str = ""`.
+- `app/main.py` — `FastAPI(..., root_path=settings.ROOT_PATH)` so the forwarding topology is
+  supported.
+- `.env.example` — document `ROOT_PATH`, with a warning never to combine it with a stripping
+  proxy.
+- `docs/admin-guide.md` — Option B keeps the stripping proxy and gains a `sub_filter` rule for
+  `/openapi.json`; a new "Alternative: forward the prefix and use `ROOT_PATH`" subsection
+  documents the other topology. Both warn: pick one, never both.
 
-- `ROOT_PATH=""` (default) — no change; direct access at `http://localhost:8000/docs` keeps
-  fetching `/openapi.json`.
-- `ROOT_PATH="/dp"` — FastAPI generates the docs page with `url: "/dp/openapi.json"` and
-  sets the OpenAPI `servers` to `/dp`. The browser fetches `/dp/openapi.json`, nginx strips
-  `/dp`, the app serves `/openapi.json` → **200**, and Swagger UI renders.
-
-This is the documented FastAPI approach for proxied subpath deployments and fixes the schema
-fetch without the proxy having to `sub_filter` the docs HTML.
-
-### Files
-
-- `app/config.py` — add `ROOT_PATH: str = ""`.
-- `app/main.py` — `FastAPI(..., root_path=settings.ROOT_PATH)`.
-- `.env.example` — document `ROOT_PATH` (commented, empty default).
-- `docs/admin-guide.md` — in the reverse-proxy subpath section, note that subpath deploys
-  must set `ROOT_PATH=/dp` (or pass `uvicorn --root-path /dp`) for `/dp/docs` to work.
-
-No API behaviour change, no DB migration. The subdomain deployment (Option A, app at the
-domain root) needs no `ROOT_PATH` and is unaffected.
+`ROOT_PATH=""` (default) leaves direct/local access and the subdomain deployment (Option A)
+unchanged. No API behaviour change, no DB migration.
 
 ## Expected behaviour after the fix
 
-- Subdomain deploy (`ROOT_PATH` unset) and local/direct access: `/docs` and `/openapi.json`
-  work exactly as before.
-- Subpath deploy with `ROOT_PATH=/dp`: `https://my-domain.com/dp/docs` loads and successfully
-  fetches `https://my-domain.com/dp/openapi.json`; the schema renders.
+- Default / subdomain / local: `/docs` and `/openapi.json` work exactly as before.
+- Stripping subpath proxy + the `/openapi.json` `sub_filter`: `https://host/dp/docs` loads and
+  fetches `https://host/dp/openapi.json`; **static assets keep working** because `ROOT_PATH`
+  stays unset.
+- Forwarding subpath proxy + `ROOT_PATH=/dp`: `/dp/docs`, `/dp/openapi.json`, and
+  `/dp/static/...` all resolve natively.
 
 ## Regression test
 
 A test on the FastAPI app built with `root_path="/dp"` asserts the served Swagger UI HTML
 references `/dp/openapi.json` (not the bare `/openapi.json`), and that with the default empty
-root path it still references `/openapi.json`. This pins the prefix into the generated docs
-page — the exact thing that was broken.
+root path it still references `/openapi.json`. This pins the `root_path` plumbing that backs
+the forwarding topology.
