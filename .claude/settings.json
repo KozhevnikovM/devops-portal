@@ -33,7 +33,9 @@
       "Bash(git -c commit.gpgsign=false commit -q -m 'fix: don'\\\\''t break /static — make ROOT_PATH opt-in for forwarding proxies only *)",
       "Bash(git -c commit.gpgsign=false commit -q -m 'feat: hide HTML/HTMX endpoints from the OpenAPI schema \\(#186\\) *)",
       "Bash(xargs -I{} true)",
-      "Bash(git -c commit.gpgsign=false commit -q -m 'feat: group the programmatic booking API under /api/bookings \\(#188\\) *)"
+      "Bash(git -c commit.gpgsign=false commit -q -m 'feat: group the programmatic booking API under /api/bookings \\(#188\\) *)",
+      "Bash(grep -n \"namespace_id\\\\` | UUID\\\\|JSON body fields\\\\|Namespace \\(specific\" docs/api-reference.md)",
+      "Bash(git -c commit.gpgsign=false commit -q -m 'feat: order a namespace by \\(name, cluster\\) pair via the API \\(#190\\) *)"
     ]
   }
 }

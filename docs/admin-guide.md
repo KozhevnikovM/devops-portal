@@ -542,7 +542,9 @@ profiles (`small`, `medium`, `large`).
 
 Namespaces are **pre-created out-of-band** (the portal does not create or delete them) and
 registered here as a bookable pool. Each entry records a `name`, `cluster`, and optional
-API URL.
+API URL. A namespace name is **unique per cluster** — the same name may be registered on two
+different clusters, and the `(name, cluster)` pair identifies it (API clients can order by that
+pair; see `POST /api/bookings` in the API reference).
 
 - Click **Add** to register an existing namespace.
 - Click **Edit** to update its name, cluster, or API URL inline.

@@ -398,8 +398,15 @@ Create a new booking. A booking is one of:
 | `ttl_minutes` | integer | Yes | Booking duration in minutes; `0` = no expiry |
 | `image_id` | UUID | VM only | VM image to deploy |
 | `hw_config_id` | UUID | VM only | Hardware configuration |
-| `namespace_id` | UUID | No | A specific namespace; omit for "Any available" |
+| `namespace_id` | UUID | No | A specific namespace by id; omit for "Any available" |
+| `namespace_name` | string | No | A specific namespace by name (with `cluster_name`); see below |
+| `cluster_name` | string | No | The cluster the named namespace lives on |
 | `static_vm_id` | UUID | No | A specific static VM; omit for "Any available" |
+
+> **Ordering a namespace by (name, cluster).** A namespace name is unique **per cluster**, so the
+> `(namespace_name, cluster_name)` pair identifies one. Pass **both** to order it without looking up
+> its id. `namespace_id` takes precedence if also given; omitting all three takes "Any available".
+> Supplying only one of the pair → `400`; an unknown/inactive/already-booked pair → `409`.
 
 **VM response:** `201`
 
@@ -505,7 +512,12 @@ curl -s -X POST http://localhost:8000/api/bookings \
      -H "Content-Type: application/json" -H "Authorization: Bearer dp_<api_key>" \
      -d '{"resource_type": "VM", "ttl_minutes": 240, "image_id": "<image-uuid>", "hw_config_id": "<hw-config-uuid>"}' | python3 -m json.tool
 
-# Namespace (specific, or omit namespace_id for "Any available")
+# Namespace by (name, cluster) pair — no id lookup needed
+curl -s -X POST http://localhost:8000/api/bookings \
+     -H "Content-Type: application/json" -H "Authorization: Bearer dp_<api_key>" \
+     -d '{"resource_type": "NAMESPACE", "ttl_minutes": 240, "namespace_name": "team-a-dev", "cluster_name": "prod-cluster"}' | python3 -m json.tool
+
+# Namespace by id (or omit namespace_id for "Any available")
 curl -s -X POST http://localhost:8000/api/bookings \
      -H "Content-Type: application/json" -H "Authorization: Bearer dp_<api_key>" \
      -d '{"resource_type": "NAMESPACE", "ttl_minutes": 240, "namespace_id": "<namespace-uuid>"}' | python3 -m json.tool

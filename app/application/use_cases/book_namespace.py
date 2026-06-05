@@ -39,5 +39,18 @@ class BookNamespaceUseCase(ReservePooledResourceUseCase):
         ttl_minutes: int,
         user_id: str | None = None,
         namespace_id: UUID | None = None,
+        namespace_name: str | None = None,
+        cluster_name: str | None = None,
     ) -> Booking:
+        # An explicit namespace_id wins; otherwise resolve the (name, cluster) pair to one.
+        # When none are given, fall through to the pool's any-available / queue path.
+        if namespace_id is None and (namespace_name or cluster_name):
+            namespace = await self._pool_repo.get_by_name_and_cluster(
+                session, namespace_name, cluster_name
+            )
+            if namespace is None:
+                raise NamespaceUnavailableError(
+                    f"No namespace '{namespace_name}' on cluster '{cluster_name}'"
+                )
+            namespace_id = namespace.id
         return await super().execute(session, ttl_minutes, user_id=user_id, resource_id=namespace_id)

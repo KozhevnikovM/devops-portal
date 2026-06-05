@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Integer, String, Text, func
+from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -35,9 +35,13 @@ class HWConfigModel(Base):
 
 class NamespaceModel(Base):
     __tablename__ = "namespaces"
+    # A namespace name is unique per-cluster, so the (name, cluster) pair identifies it.
+    __table_args__ = (
+        UniqueConstraint("name", "cluster_name", name="uq_namespaces_name_cluster"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    name: Mapped[str] = mapped_column(String(63), unique=True, nullable=False)
+    name: Mapped[str] = mapped_column(String(63), nullable=False)
     cluster_name: Mapped[str] = mapped_column(String(64), nullable=False)
     api_url: Mapped[str | None] = mapped_column(String(256), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)

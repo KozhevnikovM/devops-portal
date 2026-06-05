@@ -77,6 +77,19 @@ class NamespaceRepository:
             raise ValueError(f"Namespace {namespace_id} not found")
         return _to_entity(model)
 
+    async def get_by_name_and_cluster(
+        self, session: AsyncSession, name: str, cluster_name: str
+    ) -> Namespace | None:
+        """Resolve a namespace by its (name, cluster) identity. None if no match."""
+        result = await session.execute(
+            select(NamespaceModel).where(
+                NamespaceModel.name == name,
+                NamespaceModel.cluster_name == cluster_name,
+            )
+        )
+        model = result.scalar_one_or_none()
+        return _to_entity(model) if model is not None else None
+
     async def create(
         self, session: AsyncSession, name: str, cluster_name: str, api_url: str | None
     ) -> Namespace:
