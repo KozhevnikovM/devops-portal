@@ -617,8 +617,14 @@ of **items** entered as a **JSON array** (validated inline). An item has a `reso
 (`VM`/`STATIC_VM`/`NAMESPACE`), an optional `label`, and a `spec` of catalog entries **by name**
 (VM → `image_name`/`hw_config_name`/`roles`/`startup_script`; static/namespace → optional specific
 name, else "any available"). Referenced names aren't checked here — a blueprint may reference a
-catalog entry created later, and names are resolved when it's **ordered** (a later 0.8.0 item).
+catalog entry created later, and names are resolved when it's **ordered**.
 **Add** / **Edit** / **Deactivate** / **Activate** / **Delete** behave as for the other panels.
+
+Users **order** a blueprint via `POST /api/environments` (`{"blueprint_name": "...", "ttl_minutes": N}`),
+which creates a parent environment + its child bookings under one TTL (`GET /api/environments` to
+list). A bad item name creates nothing; a child quota failure rolls the whole order back. Releasing a
+whole environment together (and a browser Environments page) is a later 0.8.0 item; for now release
+the child bookings individually.
 
 The JSON API (`/api/images`, `/api/hardware`, `/api/roles`, `/api/static-vms`,
 `/api/environment-blueprints`) remains available for scripted workflows.

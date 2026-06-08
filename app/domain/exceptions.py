@@ -18,6 +18,18 @@ class StaticVMUnavailableError(BookingError):
     pass
 
 
+class EnvironmentError(Exception):
+    pass
+
+
+class BlueprintNotFoundError(EnvironmentError):
+    pass
+
+
+class EnvironmentItemError(EnvironmentError):
+    """A blueprint item references a catalog entry that doesn't exist / isn't active."""
+
+
 class AuthenticationError(Exception):
     pass
 

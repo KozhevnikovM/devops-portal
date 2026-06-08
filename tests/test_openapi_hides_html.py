@@ -18,6 +18,7 @@ KEPT_PATHS = {
     "/api/static-vms",
     "/api/roles",
     "/api/environment-blueprints",
+    "/api/environments",
     "/api/users",
     "/api/bookings",
     "/api/bookings/{booking_id}/audit",

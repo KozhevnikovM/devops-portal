@@ -1064,6 +1064,44 @@ drive-type quota (`max_ssd_gb` / `max_hdd_gb`).
 
 ---
 
+### `POST /api/environments`
+
+Order an environment blueprint — creates one parent **Environment** plus its child bookings
+(VMs provision, namespaces/static VMs reserve), all under one shared TTL. **Auth:** any
+authenticated user.
+
+**Request body:** `{ "blueprint_name": "dev-stack", "ttl_minutes": 240 }`
+
+Blueprint item names are resolved up front, so a bad name creates nothing. A child quota failure
+rolls the whole environment back. **Responses:** `201` (the environment + its children); `404`
+unknown blueprint; `400` a blueprint item references an unknown catalog entry; `409` quota exceeded
+or a specific pooled resource unavailable.
+
+```json
+{
+  "id": "uuid", "name": "dev-stack", "blueprint_name": "dev-stack",
+  "status": "PROVISIONING", "ttl_minutes": 240,
+  "expires_at": "…", "created_at": "…",
+  "bookings": [
+    { "id": "uuid", "resource_type": "NAMESPACE", "status": "READY", "namespace": "team-a-dev", "roles": [] },
+    { "id": "uuid", "resource_type": "VM", "status": "PROVISIONING", "image_name": "Ubuntu 22.04",
+      "hw_config_name": "medium", "roles": ["docker-machine"], "config_failed": false }
+  ]
+}
+```
+
+The environment `status` is **derived** from its children: any `FAILED` child → `FAILED`; any
+in-flight child → `PROVISIONING`; all `READY` → `READY`; all `RELEASED` → `RELEASED`. Child bookings
+also appear in `GET /api/bookings`, carrying their `environment_id`.
+
+### `GET /api/environments` and `GET /api/environments/{id}`
+
+List environments (owner-scoped; admins see all) / fetch one (owner or admin; `403`/`404` otherwise),
+each with the derived status + child summaries. Releasing a whole environment together is a later
+0.8.0 item; for now release individual children via `DELETE /api/bookings/{id}`.
+
+---
+
 ### `GET /api/environment-blueprints`
 
 List environment blueprints — admin-defined templates bundling several resources into one stack.
