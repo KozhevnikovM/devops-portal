@@ -1,5 +1,7 @@
 # v0.8.0 Plan: Environments, VM configuration scripts & Ansible roles
 
+> **Status: complete.** All items P1.1–P3.4 (#204–#211) are implemented and merged.
+
 ## Context
 
 v0.7.0 was a hardening release. v0.8.0 delivers the headline product capabilities from

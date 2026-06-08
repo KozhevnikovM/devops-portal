@@ -626,8 +626,9 @@ list). A bad item name creates nothing; a child quota failure rolls the whole or
 **`DELETE /api/environments/{id}`** releases the whole stack together — all child resources are torn
 down (VMs destroyed, pooled resources returned), including in-flight ones. When an environment's TTL
 expires, the beat task releases it as a group the same way (env children are skipped by the
-per-booking TTL sweep, so they're never released piecemeal). A browser Environments page is the last
-0.8.0 item.
+per-booking TTL sweep, so they're never released piecemeal). The **Environments** page (top nav) is
+the browser equivalent: pick a blueprint + lease and **Order**, watch the stack's aggregate status
+update live, then **Release** the whole environment from its ⋮ menu.
 
 The JSON API (`/api/images`, `/api/hardware`, `/api/roles`, `/api/static-vms`,
 `/api/environment-blueprints`) remains available for scripted workflows.

@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+
+{% block title %}Environments — DevOps Portal{% endblock %}
+
+{% block content %}
+<div class="space-y-8">
+    {# ── Order an environment ─────────────────────────────────────────────── #}
+    <section>
+        <h2 class="text-sm text-gray-400 uppercase tracking-widest mb-3">Order an Environment</h2>
+        <div class="bg-gray-900 border border-gray-800 rounded-lg p-6">
+            {% include "partials/environment_order_form.html" %}
+        </div>
+    </section>
+
+    {# ── Active environments ──────────────────────────────────────────────── #}
+    <section>
+        <h2 class="text-sm text-gray-400 uppercase tracking-widest mb-3">Environments</h2>
+        <div class="bg-gray-900 border border-gray-800 rounded-lg">
+            {% if environments %}
+            <table class="w-full text-sm">
+                <thead>
+                    <tr class="border-b border-gray-700 text-left">
+                        <th class="px-4 py-2 text-xs text-gray-500 font-normal uppercase tracking-widest">Name</th>
+                        <th class="px-4 py-2 text-xs text-gray-500 font-normal uppercase tracking-widest">Status</th>
+                        <th class="px-4 py-2 text-xs text-gray-500 font-normal uppercase tracking-widest">Resources</th>
+                        <th class="px-4 py-2 text-xs text-gray-500 font-normal uppercase tracking-widest">Expires</th>
+                        <th class="px-4 py-2 text-xs text-gray-500 font-normal uppercase tracking-widest">Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="environments-tbody">
+                    {% for environment in environments %}
+                    {% include "partials/environment_row.html" %}
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <table class="w-full text-sm">
+                <tbody id="environments-tbody"></tbody>
+            </table>
+            <p class="text-gray-600 text-sm px-4 py-6">No environments yet — order one above.</p>
+            {% endif %}
+        </div>
+    </section>
+</div>
+{% endblock %}
