@@ -12,6 +12,7 @@ from app.infrastructure.auth import require_admin
 from app.infrastructure.database.session import get_async_session
 from app.infrastructure.repositories.hw_config_repo import HWConfigRepository
 from app.infrastructure.repositories.image_repo import ImageRepository
+from app.infrastructure.repositories.environment_blueprint_repo import EnvironmentBlueprintRepository
 from app.infrastructure.repositories.namespace_repo import NamespaceRepository
 from app.infrastructure.repositories.role_repo import RoleRepository
 from app.infrastructure.repositories.static_vm_repo import StaticVMRepository
@@ -23,7 +24,10 @@ _image_repo = ImageRepository()
 _hw_config_repo = HWConfigRepository()
 _namespace_repo = NamespaceRepository()
 _role_repo = RoleRepository()
+_blueprint_repo = EnvironmentBlueprintRepository()
 _static_vm_repo = StaticVMRepository()
+
+_VALID_RESOURCE_TYPES = {"VM", "STATIC_VM", "NAMESPACE"}
 
 
 def _parse_default_vars(raw: str) -> dict:
@@ -38,6 +42,33 @@ def _parse_default_vars(raw: str) -> dict:
     if not isinstance(parsed, dict):
         raise ValueError("default_vars must be a JSON object")
     return parsed
+
+
+def _parse_blueprint_items(raw: str) -> list[dict]:
+    """Parse the blueprint items JSON-array textarea; raise ValueError on bad shape."""
+    raw = (raw or "").strip()
+    if not raw:
+        return []
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"items must be valid JSON: {exc}")
+    if not isinstance(parsed, list):
+        raise ValueError("items must be a JSON array")
+    out = []
+    for idx, item in enumerate(parsed):
+        if not isinstance(item, dict):
+            raise ValueError("each item must be a JSON object")
+        rt = item.get("resource_type")
+        if rt not in _VALID_RESOURCE_TYPES:
+            raise ValueError(f"item {idx}: invalid resource_type '{rt}'")
+        spec = item.get("spec") or {}
+        if not isinstance(spec, dict):
+            raise ValueError(f"item {idx}: spec must be a JSON object")
+        if rt == "VM" and not (spec.get("image_name") and spec.get("hw_config_name")):
+            raise ValueError(f"item {idx}: a VM item needs image_name and hw_config_name in spec")
+        out.append({"resource_type": rt, "label": item.get("label"), "position": idx, "spec": spec})
+    return out
 
 
 # ── Catalog page ──────────────────────────────────────────────────────────────
@@ -55,6 +86,7 @@ async def admin_catalog_page(
     static_vms = await _static_vm_repo.list_all(session)
     static_vm_held_by = await _static_vm_repo.held_by(session)
     roles = await _role_repo.list_all(session)
+    blueprints = await _blueprint_repo.list_all(session)
     return templates.TemplateResponse(
         request, "admin/catalog.html",
         {
@@ -65,6 +97,7 @@ async def admin_catalog_page(
             "static_vms": static_vms,
             "static_vm_held_by": static_vm_held_by,
             "roles": roles,
+            "blueprints": blueprints,
             "current_user": current_user,
         },
     )
@@ -809,3 +842,145 @@ async def admin_deactivate_role(
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     return await _role_table(request, session, current_user)
+
+
+# ── Environment Blueprints ────────────────────────────────────────────────────
+
+async def _blueprint_table(request, session, current_user, editing_blueprint=None):
+    blueprints = await _blueprint_repo.list_all(session)
+    editing_items_json = ""
+    if editing_blueprint is not None:
+        editing_items_json = json.dumps(
+            [
+                {"resource_type": it.resource_type, "label": it.label, "spec": it.spec}
+                for it in editing_blueprint.items
+            ],
+            indent=2,
+        )
+    return templates.TemplateResponse(
+        request, "partials/blueprint_table.html",
+        {
+            "blueprints": blueprints, "editing_blueprint": editing_blueprint,
+            "editing_items_json": editing_items_json, "current_user": current_user,
+        },
+    )
+
+
+def _blueprint_error(message: str) -> HTMLResponse:
+    return HTMLResponse(
+        content=f'<span class="text-red-400 text-xs">{escape(message)}</span>',
+        headers={"HX-Retarget": "#blueprint-create-error", "HX-Reswap": "innerHTML"},
+    )
+
+
+@router.get("/admin/catalog/blueprints/table", response_class=HTMLResponse)
+async def blueprint_table(
+    request: Request,
+    session: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(require_admin),
+):
+    return await _blueprint_table(request, session, current_user)
+
+
+@router.post("/admin/catalog/blueprints", response_class=HTMLResponse)
+async def admin_create_blueprint(
+    request: Request,
+    name: str = Form(...),
+    description: str = Form(""),
+    items: str = Form(""),
+    session: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(require_admin),
+):
+    try:
+        parsed_items = _parse_blueprint_items(items)
+    except ValueError as exc:
+        return _blueprint_error(str(exc))
+    try:
+        await _blueprint_repo.create(session, name, description.strip() or None, parsed_items)
+    except IntegrityError:
+        await session.rollback()
+        return _blueprint_error(f'Blueprint "{name}" already exists.')
+    return await _blueprint_table(request, session, current_user)
+
+
+@router.get("/admin/catalog/blueprints/{blueprint_id}/edit", response_class=HTMLResponse)
+async def admin_edit_blueprint_form(
+    request: Request,
+    blueprint_id: UUID,
+    session: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(require_admin),
+):
+    try:
+        editing = await _blueprint_repo.get(session, blueprint_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Blueprint not found")
+    return await _blueprint_table(request, session, current_user, editing_blueprint=editing)
+
+
+@router.patch("/admin/catalog/blueprints/{blueprint_id}", response_class=HTMLResponse)
+async def admin_update_blueprint(
+    request: Request,
+    blueprint_id: UUID,
+    name: str = Form(...),
+    description: str = Form(""),
+    items: str = Form(""),
+    session: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(require_admin),
+):
+    try:
+        parsed_items = _parse_blueprint_items(items)
+    except ValueError as exc:
+        return _blueprint_error(str(exc))
+    try:
+        await _blueprint_repo.update(
+            session, blueprint_id,
+            {"name": name, "description": description.strip() or None}, parsed_items,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except IntegrityError:
+        await session.rollback()
+        return _blueprint_error(f'Blueprint "{name}" already exists.')
+    return await _blueprint_table(request, session, current_user)
+
+
+@router.post("/admin/catalog/blueprints/{blueprint_id}/activate", response_class=HTMLResponse)
+async def admin_activate_blueprint(
+    request: Request,
+    blueprint_id: UUID,
+    session: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(require_admin),
+):
+    try:
+        await _blueprint_repo.activate(session, blueprint_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    return await _blueprint_table(request, session, current_user)
+
+
+@router.delete("/admin/catalog/blueprints/{blueprint_id}/permanent", response_class=HTMLResponse)
+async def admin_delete_blueprint(
+    request: Request,
+    blueprint_id: UUID,
+    session: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(require_admin),
+):
+    try:
+        await _blueprint_repo.delete(session, blueprint_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    return await _blueprint_table(request, session, current_user)
+
+
+@router.delete("/admin/catalog/blueprints/{blueprint_id}", response_class=HTMLResponse)
+async def admin_deactivate_blueprint(
+    request: Request,
+    blueprint_id: UUID,
+    session: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(require_admin),
+):
+    try:
+        await _blueprint_repo.deactivate(session, blueprint_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    return await _blueprint_table(request, session, current_user)

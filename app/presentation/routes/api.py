@@ -13,6 +13,7 @@ from app.infrastructure.auth import require_admin, require_user
 from app.infrastructure.database.session import get_async_session
 from app.infrastructure.repositories.image_repo import ImageRepository
 from app.infrastructure.repositories.hw_config_repo import HWConfigRepository
+from app.infrastructure.repositories.environment_blueprint_repo import EnvironmentBlueprintRepository
 from app.infrastructure.repositories.role_repo import RoleRepository
 from app.infrastructure.repositories.static_vm_repo import StaticVMRepository
 
@@ -21,7 +22,10 @@ router = APIRouter(prefix="/api", tags=["admin"])
 _image_repo = ImageRepository()
 _hw_config_repo = HWConfigRepository()
 _role_repo = RoleRepository()
+_blueprint_repo = EnvironmentBlueprintRepository()
 _static_vm_repo = StaticVMRepository()
+
+_VALID_RESOURCE_TYPES = {"VM", "STATIC_VM", "NAMESPACE"}
 
 
 # ── Pydantic schemas ──────────────────────────────────────────────────────────
@@ -113,6 +117,64 @@ class RoleResponse(BaseModel):
     default_vars: dict
     is_active: bool
     created_at: datetime
+
+
+class BlueprintItemIn(BaseModel):
+    resource_type: str
+    label: Optional[str] = None
+    spec: dict = {}
+
+
+class BlueprintItemResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    resource_type: str
+    position: int
+    label: Optional[str]
+    spec: dict
+
+
+class BlueprintCreate(BaseModel):
+    name: str
+    description: Optional[str] = None
+    items: list[BlueprintItemIn] = []
+
+
+class BlueprintUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    is_active: Optional[bool] = None
+    items: Optional[list[BlueprintItemIn]] = None
+
+
+class BlueprintResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    name: str
+    description: Optional[str]
+    is_active: bool
+    created_at: datetime
+    items: list[BlueprintItemResponse]
+
+
+def _validate_blueprint_items(items: list[BlueprintItemIn]) -> list[dict]:
+    """Validate resource_type + spec shape; return repo-ready item dicts (with position)."""
+    out = []
+    for idx, item in enumerate(items):
+        if item.resource_type not in _VALID_RESOURCE_TYPES:
+            raise HTTPException(status_code=400, detail=f"invalid resource_type '{item.resource_type}'")
+        if item.resource_type == "VM" and not (item.spec.get("image_name") and item.spec.get("hw_config_name")):
+            raise HTTPException(
+                status_code=400,
+                detail="a VM item needs image_name and hw_config_name in its spec",
+            )
+        out.append({
+            "resource_type": item.resource_type, "label": item.label,
+            "position": idx, "spec": item.spec,
+        })
+    return out
 
 
 # ── VM Images ─────────────────────────────────────────────────────────────────
@@ -280,5 +342,61 @@ async def deactivate_role(
 ):
     try:
         await _role_repo.deactivate(session, role_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+
+# ── Environment Blueprints ────────────────────────────────────────────────────
+
+@router.get("/environment-blueprints", response_model=list[BlueprintResponse])
+async def list_blueprints(
+    session: AsyncSession = Depends(get_async_session),
+    _: User = Depends(require_user),  # read-only discovery so users can see what they can order
+):
+    return await _blueprint_repo.list_all(session)
+
+
+@router.post("/environment-blueprints", response_model=BlueprintResponse, status_code=201)
+async def create_blueprint(
+    body: BlueprintCreate,
+    session: AsyncSession = Depends(get_async_session),
+    _: User = Depends(require_admin),
+):
+    items = _validate_blueprint_items(body.items)
+    try:
+        return await _blueprint_repo.create(session, body.name, body.description, items)
+    except IntegrityError:
+        await session.rollback()
+        raise HTTPException(status_code=409, detail=f"Blueprint '{body.name}' already exists")
+
+
+@router.patch("/environment-blueprints/{blueprint_id}", response_model=BlueprintResponse)
+async def update_blueprint(
+    blueprint_id: UUID,
+    body: BlueprintUpdate,
+    session: AsyncSession = Depends(get_async_session),
+    _: User = Depends(require_admin),
+):
+    fields = body.model_dump(exclude_none=True, exclude={"items"})
+    items = _validate_blueprint_items(body.items) if body.items is not None else None
+    if not fields and items is None:
+        raise HTTPException(status_code=422, detail="No fields to update")
+    try:
+        return await _blueprint_repo.update(session, blueprint_id, fields, items)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except IntegrityError:
+        await session.rollback()
+        raise HTTPException(status_code=409, detail="Blueprint name already exists")
+
+
+@router.delete("/environment-blueprints/{blueprint_id}", status_code=204)
+async def deactivate_blueprint(
+    blueprint_id: UUID,
+    session: AsyncSession = Depends(get_async_session),
+    _: User = Depends(require_admin),
+):
+    try:
+        await _blueprint_repo.deactivate(session, blueprint_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
