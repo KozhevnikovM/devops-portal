@@ -89,6 +89,9 @@ Quota: VMs inside an environment count toward the user's VM/drive quota exactly 
 
 ---
 
+> Tracked as GitHub issues **#204–#211**, in item order: P1.1 → #204, P1.2 → #205, P2.1 → #206,
+> P2.2 → #207, P3.1 → #208, P3.2 → #209, P3.3 → #210, P3.4 → #211.
+
 ## Sequencing & workflow
 
 Strict dependency order: **Phase 1 → 2 → 3** (roles reuse the config step; environments bundle
