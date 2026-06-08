@@ -375,5 +375,54 @@
             {% include "partials/role_table.html" %}
         </div>
     </div>
+
+    {# ── Environment Blueprints ───────────────────────────────────────────── #}
+    <div class="mt-8">
+        <h3 class="text-xs text-gray-500 uppercase tracking-widest mb-4">Environment Blueprints</h3>
+
+        <div class="bg-gray-900 border border-gray-800 rounded-lg p-6 mb-4">
+            <p class="text-xs text-gray-500 uppercase tracking-widest mb-4">Add Blueprint</p>
+            <form
+                hx-post="/admin/catalog/blueprints"
+                hx-target="#blueprint-table"
+                hx-swap="outerHTML"
+                hx-on::after-request="if(event.detail.successful) this.reset()"
+                class="flex flex-col gap-3"
+            >
+                <div class="flex items-end gap-3 flex-wrap">
+                    <div class="flex flex-col gap-1.5">
+                        <label class="text-xs text-gray-500" for="new-bp-name">Name</label>
+                        <input id="new-bp-name" name="name" type="text" required autocomplete="off"
+                            class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-44"
+                            placeholder="dev-stack">
+                    </div>
+                    <div class="flex flex-col gap-1.5 flex-1 min-w-48">
+                        <label class="text-xs text-gray-500" for="new-bp-desc">Description</label>
+                        <input id="new-bp-desc" name="description" type="text" autocomplete="off"
+                            class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-full"
+                            placeholder="namespace + web + db">
+                    </div>
+                </div>
+                <div class="flex flex-col gap-1.5">
+                    <label class="text-xs text-gray-500" for="new-bp-items">Items (JSON array)</label>
+                    <textarea id="new-bp-items" name="items" rows="5"
+                        class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-xs text-gray-100 focus:outline-none focus:border-green-600 w-full font-mono"
+                        placeholder='[{"label":"ns","resource_type":"NAMESPACE","spec":{}},
+ {"label":"web","resource_type":"VM","spec":{"image_name":"Ubuntu 22.04","hw_config_name":"medium","roles":["docker-machine"]}}]'></textarea>
+                </div>
+                <div class="flex items-center gap-3">
+                    <button type="submit"
+                        class="px-4 py-2 bg-green-700 hover:bg-green-600 text-green-100 text-sm rounded transition-colors">
+                        Add
+                    </button>
+                    <div id="blueprint-create-error" class="text-xs"></div>
+                </div>
+            </form>
+        </div>
+
+        <div class="bg-gray-900 border border-gray-800 rounded-lg">
+            {% include "partials/blueprint_table.html" %}
+        </div>
+    </div>
 </div>
 {% endblock %}

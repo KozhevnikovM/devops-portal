@@ -17,6 +17,7 @@ KEPT_PATHS = {
     "/api/hardware",
     "/api/static-vms",
     "/api/roles",
+    "/api/environment-blueprints",
     "/api/users",
     "/api/bookings",
     "/api/bookings/{booking_id}/audit",

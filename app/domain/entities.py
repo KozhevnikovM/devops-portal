@@ -73,6 +73,27 @@ class Role:
 
 
 @dataclass
+class EnvironmentBlueprintItem:
+    """One resource in a blueprint. `spec` carries per-type fields (catalog entries by name)."""
+    id: UUID
+    resource_type: str         # ResourceType value: VM | STATIC_VM | NAMESPACE
+    position: int
+    label: str | None
+    spec: dict                 # VM: {image_name, hw_config_name, roles[], startup_script}; etc.
+
+
+@dataclass
+class EnvironmentBlueprint:
+    """An admin-defined template bundling several resources into one orderable stack."""
+    id: UUID
+    name: str
+    description: str | None
+    is_active: bool
+    created_at: datetime
+    items: list = field(default_factory=list)  # list[EnvironmentBlueprintItem]
+
+
+@dataclass
 class StaticVM:
     id: UUID
     name: str

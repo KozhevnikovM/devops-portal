@@ -1064,6 +1064,42 @@ drive-type quota (`max_ssd_gb` / `max_hdd_gb`).
 
 ---
 
+### `GET /api/environment-blueprints`
+
+List environment blueprints — admin-defined templates bundling several resources into one stack.
+**Auth:** any authenticated user (read-only discovery); create/update/delete require **admin**.
+
+**Response:** `200` array (each blueprint includes its ordered `items`):
+
+```json
+[
+  {
+    "id": "uuid",
+    "name": "dev-stack",
+    "description": "namespace + web + db",
+    "is_active": true,
+    "created_at": "2026-06-08T00:00:00+00:00",
+    "items": [
+      { "id": "uuid", "resource_type": "NAMESPACE", "position": 0, "label": "ns", "spec": {} },
+      { "id": "uuid", "resource_type": "VM", "position": 1, "label": "web",
+        "spec": { "image_name": "Ubuntu 22.04", "hw_config_name": "medium", "roles": ["docker-machine"] } }
+    ]
+  }
+]
+```
+
+Each item's `spec` carries the per-type fields (catalog entries **by name**): VM →
+`image_name`/`hw_config_name`/`roles`/`startup_script`; STATIC_VM → `static_vm_name` (null = any);
+NAMESPACE → `namespace_name`/`cluster_name` (null = any). Names are **not** resolved at create time
+(a blueprint may reference a catalog entry added later) — they're resolved when the blueprint is
+*ordered* (a later 0.8.0 item).
+
+**Admin write endpoints:** `POST` / `PATCH /{id}` (replaces the item set) / `DELETE /{id}`
+(deactivate). A VM item needs `image_name` + `hw_config_name`; bad `resource_type` → `400`;
+duplicate `name` → `409`.
+
+---
+
 ### `GET /api/roles`
 
 List Ansible roles in the catalog. **Auth:** any authenticated user (read-only discovery);

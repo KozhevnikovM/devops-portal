@@ -1,0 +1,105 @@
+<div id="blueprint-table">
+    <div id="blueprint-create-error" hx-swap-oob="innerHTML"></div>
+    {% if blueprints %}
+    <table class="w-full text-sm">
+        <thead>
+            <tr class="border-b border-gray-700 text-left">
+                <th class="px-4 py-2 text-xs text-gray-500 font-normal uppercase tracking-widest">Name</th>
+                <th class="px-4 py-2 text-xs text-gray-500 font-normal uppercase tracking-widest">Description</th>
+                <th class="px-4 py-2 text-xs text-gray-500 font-normal uppercase tracking-widest">Resources</th>
+                <th class="px-4 py-2 text-xs text-gray-500 font-normal uppercase tracking-widest">Status</th>
+                <th class="px-4 py-2 text-xs text-gray-500 font-normal uppercase tracking-widest">Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for bp in blueprints %}
+            {% if editing_blueprint and bp.id == editing_blueprint.id %}
+            <tr class="border-b border-gray-800 last:border-0 bg-gray-800/60">
+                <td colspan="5" class="px-4 py-3">
+                    <form
+                        hx-patch="/admin/catalog/blueprints/{{ bp.id }}"
+                        hx-target="#blueprint-table"
+                        hx-swap="outerHTML"
+                        class="flex flex-col gap-2"
+                    >
+                        <div class="flex items-center gap-3 flex-wrap">
+                            <input name="name" value="{{ bp.name }}" required placeholder="Name"
+                                class="bg-gray-900 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-44">
+                            <input name="description" value="{{ bp.description or '' }}" placeholder="Description"
+                                class="bg-gray-900 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-100 focus:outline-none focus:border-green-600 flex-1 min-w-48">
+                        </div>
+                        <textarea name="items" rows="6" placeholder='[{"resource_type":"VM","spec":{"image_name":"...","hw_config_name":"..."}}]'
+                            class="bg-gray-900 border border-gray-600 rounded px-2 py-1.5 text-xs text-gray-100 focus:outline-none focus:border-green-600 w-full font-mono">{{ editing_items_json }}</textarea>
+                        <div class="flex items-center gap-2">
+                            <button type="submit" class="text-xs px-3 py-1.5 rounded bg-green-700 text-green-100 hover:bg-green-600 transition-colors">Save</button>
+                            <button type="button"
+                                hx-get="/admin/catalog/blueprints/table"
+                                hx-target="#blueprint-table"
+                                hx-swap="outerHTML"
+                                class="text-xs px-3 py-1.5 rounded bg-gray-700 text-gray-300 border border-gray-600 hover:bg-gray-600 transition-colors"
+                            >Cancel</button>
+                        </div>
+                    </form>
+                </td>
+            </tr>
+            {% else %}
+            <tr class="border-b border-gray-800 last:border-0 hover:bg-gray-800/40 transition-colors">
+                <td class="px-4 py-3 text-gray-200">{{ bp.name }}</td>
+                <td class="px-4 py-3 text-gray-400">{{ bp.description or '—' }}</td>
+                <td class="px-4 py-3 text-gray-400 text-xs">
+                    {% for item in bp.items %}
+                    <span class="inline-block mr-1 mb-1 px-1.5 py-0.5 rounded bg-gray-800 border border-gray-700 font-mono">{{ item.label or item.resource_type|lower }}</span>
+                    {% else %}—{% endfor %}
+                </td>
+                <td class="px-4 py-3">
+                    {% if bp.is_active %}
+                    <span class="text-xs text-green-400">active</span>
+                    {% else %}
+                    <span class="text-xs text-gray-500">inactive</span>
+                    {% endif %}
+                </td>
+                <td class="px-4 py-3">
+                    <details class="relative">
+                        <summary class="list-none cursor-pointer w-7 h-7 flex items-center justify-center rounded text-gray-400 hover:text-gray-200 hover:bg-gray-700 transition-colors select-none text-lg leading-none">⋮</summary>
+                        <div class="absolute right-0 bottom-full mb-1 w-44 bg-gray-900 border border-gray-700 rounded shadow-lg z-50 py-1">
+                            {% if bp.is_active %}
+                            <button
+                                hx-get="/admin/catalog/blueprints/{{ bp.id }}/edit"
+                                hx-target="#blueprint-table"
+                                hx-swap="outerHTML"
+                                class="w-full text-left px-3 py-2 text-sm text-gray-300 hover:bg-gray-800 transition-colors"
+                            >Edit</button>
+                            <button
+                                hx-delete="/admin/catalog/blueprints/{{ bp.id }}"
+                                hx-target="#blueprint-table"
+                                hx-swap="outerHTML"
+                                hx-confirm="Deactivate blueprint '{{ bp.name }}'?"
+                                class="w-full text-left px-3 py-2 text-sm text-red-400 hover:bg-gray-800 transition-colors"
+                            >Deactivate</button>
+                            {% else %}
+                            <button
+                                hx-post="/admin/catalog/blueprints/{{ bp.id }}/activate"
+                                hx-target="#blueprint-table"
+                                hx-swap="outerHTML"
+                                class="w-full text-left px-3 py-2 text-sm text-green-400 hover:bg-gray-800 transition-colors"
+                            >Activate</button>
+                            <button
+                                hx-delete="/admin/catalog/blueprints/{{ bp.id }}/permanent"
+                                hx-target="#blueprint-table"
+                                hx-swap="outerHTML"
+                                hx-confirm="Permanently delete blueprint '{{ bp.name }}'? This cannot be undone."
+                                class="w-full text-left px-3 py-2 text-sm text-red-400 hover:bg-gray-800 transition-colors"
+                            >Delete</button>
+                            {% endif %}
+                        </div>
+                    </details>
+                </td>
+            </tr>
+            {% endif %}
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p class="text-gray-600 text-sm px-4 py-6">No blueprints yet.</p>
+    {% endif %}
+</div>

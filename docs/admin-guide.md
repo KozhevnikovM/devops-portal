@@ -609,8 +609,19 @@ inline). **Add** / **Edit** / **Deactivate** / **Activate** / **Delete** behave 
 panels. A later 0.8.0 item lets users order a VM with selected roles (applied during the VM's
 `CONFIGURING` step, after the startup script).
 
-The JSON API (`/api/images`, `/api/hardware`, `/api/roles`, `/api/static-vms`) remains available
-for scripted workflows.
+**Environment Blueprints panel:**
+
+A blueprint is an admin-defined template bundling several resources into one orderable stack (e.g.
+`dev-stack` = 1 namespace + 2 VMs). Each records a `name`, optional description, and an ordered list
+of **items** entered as a **JSON array** (validated inline). An item has a `resource_type`
+(`VM`/`STATIC_VM`/`NAMESPACE`), an optional `label`, and a `spec` of catalog entries **by name**
+(VM → `image_name`/`hw_config_name`/`roles`/`startup_script`; static/namespace → optional specific
+name, else "any available"). Referenced names aren't checked here — a blueprint may reference a
+catalog entry created later, and names are resolved when it's **ordered** (a later 0.8.0 item).
+**Add** / **Edit** / **Deactivate** / **Activate** / **Delete** behave as for the other panels.
+
+The JSON API (`/api/images`, `/api/hardware`, `/api/roles`, `/api/static-vms`,
+`/api/environment-blueprints`) remains available for scripted workflows.
 See [docs/api-reference.md](api-reference.md) for the full API reference.
 
 #### Step 4 — Set VCD credentials and configuration

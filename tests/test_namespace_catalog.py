@@ -46,6 +46,7 @@ def test_catalog_page_renders_namespace_availability(client):
         patch("app.presentation.routes.admin._namespace_repo") as mock_ns,
         patch("app.presentation.routes.admin._static_vm_repo") as mock_svm,
         patch("app.presentation.routes.admin._role_repo") as mock_role,
+         patch("app.presentation.routes.admin._blueprint_repo") as mock_bp,
     ):
         mock_img.list_all = AsyncMock(return_value=[])
         mock_hw.list_all = AsyncMock(return_value=[])
@@ -54,6 +55,7 @@ def test_catalog_page_renders_namespace_availability(client):
         mock_svm.list_all = AsyncMock(return_value=[])
         mock_svm.held_by = AsyncMock(return_value={})
         mock_role.list_all = AsyncMock(return_value=[])
+        mock_bp.list_all = AsyncMock(return_value=[])
         resp = client.get("/admin/catalog")
 
     assert resp.status_code == 200
