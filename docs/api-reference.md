@@ -400,6 +400,7 @@ Create a new booking. A booking is one of:
 | `image_name` | string | VM | VM image by name (alternative to `image_id`) |
 | `hw_config_id` | UUID | VM | Hardware configuration (by id) |
 | `hw_config_name` | string | VM | Hardware configuration by name (alternative to `hw_config_id`) |
+| `startup_script` | string | No | Bash script run on the VM over SSH after provisioning (VM only); see below |
 | `namespace_id` | UUID | No | A specific namespace by id; omit for "Any available" |
 | `namespace_name` | string | No | A specific namespace by name (with `cluster_name`); see below |
 | `cluster_name` | string | No | The cluster the named namespace lives on |
@@ -417,6 +418,13 @@ Create a new booking. A booking is one of:
 > `(namespace_name, cluster_name)` pair identifies one. Pass **both** to order it without looking up
 > its id. `namespace_id` takes precedence if also given; omitting all three takes "Any available".
 > Supplying only one of the pair → `400`; an unknown/inactive/already-booked pair → `409`.
+
+> **Startup script (VM).** Provide a `startup_script` to run a bash script on the VM after it's
+> provisioned. The worker SSHes in (state `CONFIGURING`) and runs it via `bash -s`; the booking
+> reaches `READY` only after the script exits `0`. A non-zero exit or an unreachable VM marks the
+> booking `FAILED` (see its audit log). **The script must be idempotent** — a provisioning retry
+> re-runs it. It executes on your own VM. Requires the VM template to allow SSH for the configured
+> `VM_SSH_USER`; see the admin guide.
 
 **VM response:** `201`
 

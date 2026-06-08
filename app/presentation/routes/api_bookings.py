@@ -53,6 +53,8 @@ class CreateBookingRequest(BaseModel):
     # Order a VM by catalog names instead of ids (an explicit *_id wins). Names are unique.
     image_name: str | None = None
     hw_config_name: str | None = None
+    # Optional bash script run on the VM over SSH after provisioning (VM bookings only).
+    startup_script: str | None = None
     namespace_id: UUID | None = None
     # Order a specific namespace by its (name, cluster) pair instead of namespace_id.
     namespace_name: str | None = None
@@ -219,7 +221,8 @@ async def create_booking(
             )
         try:
             booking = await _create_use_case.execute(
-                session, body.ttl_minutes, image_id, hw_config_id, user_id=str(current_user.id)
+                session, body.ttl_minutes, image_id, hw_config_id,
+                user_id=str(current_user.id), startup_script=body.startup_script,
             )
         except QuotaExceededError as exc:
             raise HTTPException(status_code=409, detail=str(exc))

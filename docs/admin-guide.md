@@ -658,6 +658,39 @@ The password is also returned in the `vm_password` field of the `GET /api/bookin
 
 ---
 
+## VM Configuration (startup scripts)
+
+A VM booking can carry a **`startup_script`** (bash) that runs automatically after the VM is
+provisioned. Once Terraform reports an IP, the booking enters the **`CONFIGURING`** state and the
+**worker connects to the VM over SSH** and runs the script via `bash -s`, streaming its output to
+the booking's status. The booking becomes `READY` only after the script exits `0`; a non-zero exit
+or an unreachable VM marks it `FAILED` (visible in the booking's audit log).
+
+Order it via the API:
+
+```bash
+curl -s -X POST http://localhost:8000/api/bookings \
+     -H "Content-Type: application/json" -H "Authorization: Bearer dp_<api_key>" \
+     -d '{"resource_type": "VM", "ttl_minutes": 240, "image_name": "Ubuntu 22.04",
+          "hw_config_name": "medium",
+          "startup_script": "#!/usr/bin/env bash\nset -euo pipefail\napt-get update && apt-get install -y nginx"}'
+```
+
+**Prerequisites** (only when `USE_STUB_TERRAFORM=false`; in stub mode the script is skipped):
+
+- **Network**: the worker must reach the VM's IP over SSH (`VM_SSH_PORT`, default `22`).
+- **Template**: `sshd` running and the `VM_SSH_USER` (default `root`) able to log in — by password
+  (the generated VM password) or, if you set `VM_SSH_PRIVATE_KEY`, by key.
+- **Settings**: `VM_SSH_USER`, `VM_SSH_PORT`, `VM_SSH_PRIVATE_KEY`, `CONFIG_SSH_TIMEOUT` (seconds to
+  wait for SSH before failing the booking). See `.env.example`.
+
+**Idempotency**: a provisioning retry re-runs the whole apply + configuration, so write scripts to
+be safe to run more than once. The script executes on the **user's own VM**, not on the worker.
+
+> Ansible **roles** (a curated catalog applied the same way) build on this in a later 0.8.0 item.
+
+---
+
 ## Extending Bookings
 
 The owner of a `READY` booking can extend its TTL without releasing and re-creating it.

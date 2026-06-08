@@ -41,7 +41,9 @@ def test_configuring_is_force_deletable_and_in_flight():
 def _run_provision():
     booking_id, image_id, hw_config_id = str(uuid4()), str(uuid4()), str(uuid4())
     mock_repo = MagicMock()
-    mock_repo.sync_get = MagicMock(return_value=MagicMock())  # the post-apply booking fetch
+    # The post-apply booking fetch — no startup_script means the config seam is skipped.
+    from types import SimpleNamespace
+    mock_repo.sync_get = MagicMock(return_value=SimpleNamespace(startup_script=None))
     mock_image_repo = MagicMock(sync_get=MagicMock(return_value=_image(image_id)))
     mock_hw_repo = MagicMock(sync_get=MagicMock(return_value=_hw(hw_config_id)))
     return booking_id, image_id, hw_config_id, mock_repo, mock_image_repo, mock_hw_repo

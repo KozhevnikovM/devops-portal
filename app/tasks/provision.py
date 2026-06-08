@@ -14,6 +14,7 @@ from app.infrastructure.database.session import SyncSessionLocal
 from app.infrastructure.repositories.booking_repo import BookingRepository
 from app.infrastructure.repositories.image_repo import ImageRepository
 from app.infrastructure.repositories.hw_config_repo import HWConfigRepository
+from app.infrastructure.config.runner import build_config_runner
 from app.infrastructure.terraform.stub_adapter import StubTerraformAdapter
 from app.infrastructure.terraform.vcd_adapter import TerraformVcdAdapter
 
@@ -23,29 +24,16 @@ repo = BookingRepository()
 image_repo = ImageRepository()
 hw_config_repo = HWConfigRepository()
 terraform = StubTerraformAdapter() if settings.USE_STUB_TERRAFORM else TerraformVcdAdapter()
-
-
-class _NoOpConfigRunner:
-    """Placeholder post-provision config runner (v0.8.0 P1.1).
-
-    The SSH/bash executor lands in P1.2 and the Ansible runner in P2.2; until then nothing is
-    configurable, so this never runs (see ``_needs_configuration``).
-    """
-
-    def run(self, booking, *, ip, password, on_progress=None) -> None:  # pragma: no cover - no-op
-        return None
-
-
-config_runner = _NoOpConfigRunner()
+config_runner = build_config_runner()
 
 
 def _needs_configuration(booking) -> bool:
     """Whether a provisioned VM has post-create configuration to run.
 
-    Always ``False`` today — P1.2 adds a per-booking ``startup_script`` and P2.2 adds roles, each
-    of which will flip this true. Until then every VM goes PROVISIONING → READY unchanged.
+    True when a booking carries a ``startup_script`` (P2.2 will OR in roles). VMs with neither go
+    PROVISIONING → READY unchanged.
     """
-    return False
+    return bool(getattr(booking, "startup_script", None))
 
 
 def _run(work):
