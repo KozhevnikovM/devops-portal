@@ -360,11 +360,16 @@ class BookingRepository:
         session.commit()
 
     def sync_list_expired(self, session: Session) -> list[Booking]:
-        """Return READY bookings whose expires_at is in the past."""
+        """Return READY standalone bookings whose expires_at is in the past.
+
+        Environment children (``environment_id`` set) are excluded — they're released as a group by
+        ``enforce_environment_ttl``, not individually.
+        """
         result = session.execute(
             select(BookingModel).where(
                 BookingModel.status == BookingStatus.READY.value,
                 BookingModel.expires_at < datetime.now(timezone.utc),
+                BookingModel.environment_id.is_(None),
             )
         )
         return [_to_entity(m) for m in result.scalars().all()]

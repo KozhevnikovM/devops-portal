@@ -622,9 +622,12 @@ catalog entry created later, and names are resolved when it's **ordered**.
 
 Users **order** a blueprint via `POST /api/environments` (`{"blueprint_name": "...", "ttl_minutes": N}`),
 which creates a parent environment + its child bookings under one TTL (`GET /api/environments` to
-list). A bad item name creates nothing; a child quota failure rolls the whole order back. Releasing a
-whole environment together (and a browser Environments page) is a later 0.8.0 item; for now release
-the child bookings individually.
+list). A bad item name creates nothing; a child quota failure rolls the whole order back.
+**`DELETE /api/environments/{id}`** releases the whole stack together — all child resources are torn
+down (VMs destroyed, pooled resources returned), including in-flight ones. When an environment's TTL
+expires, the beat task releases it as a group the same way (env children are skipped by the
+per-booking TTL sweep, so they're never released piecemeal). A browser Environments page is the last
+0.8.0 item.
 
 The JSON API (`/api/images`, `/api/hardware`, `/api/roles`, `/api/static-vms`,
 `/api/environment-blueprints`) remains available for scripted workflows.

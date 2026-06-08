@@ -8,11 +8,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.application.use_cases.book_namespace import BookNamespaceUseCase
 from app.application.use_cases.create_booking import CreateBookingUseCase
 from app.application.use_cases.order_environment import OrderEnvironmentUseCase
+from app.application.use_cases.release_booking import ReleaseBookingUseCase
+from app.application.use_cases.release_environment import (
+    EnvironmentNotFoundError, ReleaseEnvironmentUseCase,
+)
 from app.application.use_cases.reserve_static_vm import ReserveStaticVMUseCase
 from app.domain.entities import Environment, User
 from app.domain.enums import BookingStatus
 from app.domain.exceptions import (
-    BlueprintNotFoundError, EnvironmentItemError, NamespaceUnavailableError,
+    BlueprintNotFoundError, BookingPermissionError, EnvironmentItemError, NamespaceUnavailableError,
     QuotaExceededError, StaticVMUnavailableError,
 )
 from app.infrastructure.auth import require_user
@@ -45,6 +49,8 @@ _order_use_case = OrderEnvironmentUseCase(
     _env_repo, _blueprint_repo, _repo, _create_use_case, _reserve_static_vm_use_case,
     _book_namespace_use_case, _image_repo, _hw_config_repo, _role_repo, _static_vm_repo, _dispatcher,
 )
+_release_booking_use_case = ReleaseBookingUseCase(_repo, _dispatcher)
+_release_use_case = ReleaseEnvironmentUseCase(_env_repo, _release_booking_use_case)
 
 # A child is "in flight" until it settles; an environment is FAILED if any child failed.
 _IN_FLIGHT = {
@@ -144,4 +150,20 @@ async def get_environment(
         raise HTTPException(status_code=404, detail="Environment not found")
     if env.user_id != str(current_user.id) and current_user.role != "admin":
         raise HTTPException(status_code=403, detail="Not the environment owner")
+    return _serialize(env)
+
+
+@router.delete("/{environment_id}", status_code=202)
+async def release_environment(
+    environment_id: UUID,
+    session: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(require_user),
+):
+    """Release the whole environment — tear down all its child resources together."""
+    try:
+        env = await _release_use_case.execute(session, environment_id, current_user)
+    except EnvironmentNotFoundError:
+        raise HTTPException(status_code=404, detail="Environment not found")
+    except BookingPermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
     return _serialize(env)

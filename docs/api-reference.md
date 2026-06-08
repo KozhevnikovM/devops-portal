@@ -1097,8 +1097,15 @@ also appear in `GET /api/bookings`, carrying their `environment_id`.
 ### `GET /api/environments` and `GET /api/environments/{id}`
 
 List environments (owner-scoped; admins see all) / fetch one (owner or admin; `403`/`404` otherwise),
-each with the derived status + child summaries. Releasing a whole environment together is a later
-0.8.0 item; for now release individual children via `DELETE /api/bookings/{id}`.
+each with the derived status + child summaries.
+
+### `DELETE /api/environments/{id}`
+
+Release a whole environment — tears down **all** its child resources together (provisioned VMs →
+`RELEASING` + teardown, pooled → back to the pool, queued → cancelled), including in-flight children.
+**Auth:** owner or admin (`403`/`404` otherwise). **Response:** `202` with the environment (children
+now `RELEASING`/`RELEASED`); idempotent if already released. The environment's TTL expiring triggers
+the same grouped teardown automatically.
 
 ---
 
