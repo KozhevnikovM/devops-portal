@@ -1,3 +1,4 @@
+import json
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
@@ -12,6 +13,7 @@ from app.infrastructure.database.session import get_async_session
 from app.infrastructure.repositories.hw_config_repo import HWConfigRepository
 from app.infrastructure.repositories.image_repo import ImageRepository
 from app.infrastructure.repositories.namespace_repo import NamespaceRepository
+from app.infrastructure.repositories.role_repo import RoleRepository
 from app.infrastructure.repositories.static_vm_repo import StaticVMRepository
 from app.presentation.templating import templates
 
@@ -20,7 +22,22 @@ router = APIRouter()
 _image_repo = ImageRepository()
 _hw_config_repo = HWConfigRepository()
 _namespace_repo = NamespaceRepository()
+_role_repo = RoleRepository()
 _static_vm_repo = StaticVMRepository()
+
+
+def _parse_default_vars(raw: str) -> dict:
+    """Parse the default_vars JSON textarea; raise ValueError on bad JSON or a non-object."""
+    raw = (raw or "").strip()
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"default_vars must be valid JSON: {exc}")
+    if not isinstance(parsed, dict):
+        raise ValueError("default_vars must be a JSON object")
+    return parsed
 
 
 # ── Catalog page ──────────────────────────────────────────────────────────────
@@ -37,6 +54,7 @@ async def admin_catalog_page(
     held_by = await _namespace_repo.held_by(session)
     static_vms = await _static_vm_repo.list_all(session)
     static_vm_held_by = await _static_vm_repo.held_by(session)
+    roles = await _role_repo.list_all(session)
     return templates.TemplateResponse(
         request, "admin/catalog.html",
         {
@@ -46,6 +64,7 @@ async def admin_catalog_page(
             "namespace_held_by": held_by,
             "static_vms": static_vms,
             "static_vm_held_by": static_vm_held_by,
+            "roles": roles,
             "current_user": current_user,
         },
     )
@@ -655,3 +674,138 @@ async def admin_deactivate_static_vm(
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     return await _static_vm_table(request, session, current_user)
+
+
+# ── Ansible Roles ─────────────────────────────────────────────────────────────
+
+async def _role_table(request, session, current_user, editing_role=None):
+    roles = await _role_repo.list_all(session)
+    return templates.TemplateResponse(
+        request, "partials/role_table.html",
+        {"roles": roles, "editing_role": editing_role, "current_user": current_user},
+    )
+
+
+def _role_error(message: str) -> HTMLResponse:
+    return HTMLResponse(
+        content=f'<span class="text-red-400 text-xs">{escape(message)}</span>',
+        headers={"HX-Retarget": "#role-create-error", "HX-Reswap": "innerHTML"},
+    )
+
+
+@router.get("/admin/catalog/roles/table", response_class=HTMLResponse)
+async def role_table(
+    request: Request,
+    session: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(require_admin),
+):
+    return await _role_table(request, session, current_user)
+
+
+@router.post("/admin/catalog/roles", response_class=HTMLResponse)
+async def admin_create_role(
+    request: Request,
+    name: str = Form(...),
+    ansible_role: str = Form(...),
+    description: str = Form(""),
+    default_vars: str = Form(""),
+    session: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(require_admin),
+):
+    try:
+        parsed_vars = _parse_default_vars(default_vars)
+    except ValueError as exc:
+        return _role_error(str(exc))
+    try:
+        await _role_repo.create(session, name, description.strip() or None, ansible_role, parsed_vars)
+    except IntegrityError:
+        await session.rollback()
+        return _role_error(f'Role "{name}" already exists.')
+    return await _role_table(request, session, current_user)
+
+
+@router.get("/admin/catalog/roles/{role_id}/edit", response_class=HTMLResponse)
+async def admin_edit_role_form(
+    request: Request,
+    role_id: UUID,
+    session: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(require_admin),
+):
+    roles = await _role_repo.list_all(session)
+    editing_role = next((r for r in roles if r.id == role_id), None)
+    if editing_role is None:
+        raise HTTPException(status_code=404, detail="Role not found")
+    return templates.TemplateResponse(
+        request, "partials/role_table.html",
+        {"roles": roles, "editing_role": editing_role, "current_user": current_user},
+    )
+
+
+@router.patch("/admin/catalog/roles/{role_id}", response_class=HTMLResponse)
+async def admin_update_role(
+    request: Request,
+    role_id: UUID,
+    name: str = Form(...),
+    ansible_role: str = Form(...),
+    description: str = Form(""),
+    default_vars: str = Form(""),
+    session: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(require_admin),
+):
+    try:
+        parsed_vars = _parse_default_vars(default_vars)
+    except ValueError as exc:
+        return _role_error(str(exc))
+    try:
+        await _role_repo.update(session, role_id, {
+            "name": name, "ansible_role": ansible_role,
+            "description": description.strip() or None, "default_vars": parsed_vars,
+        })
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except IntegrityError:
+        await session.rollback()
+        return _role_error(f'Role "{name}" already exists.')
+    return await _role_table(request, session, current_user)
+
+
+@router.post("/admin/catalog/roles/{role_id}/activate", response_class=HTMLResponse)
+async def admin_activate_role(
+    request: Request,
+    role_id: UUID,
+    session: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(require_admin),
+):
+    try:
+        await _role_repo.activate(session, role_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    return await _role_table(request, session, current_user)
+
+
+@router.delete("/admin/catalog/roles/{role_id}/permanent", response_class=HTMLResponse)
+async def admin_delete_role(
+    request: Request,
+    role_id: UUID,
+    session: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(require_admin),
+):
+    try:
+        await _role_repo.delete(session, role_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    return await _role_table(request, session, current_user)
+
+
+@router.delete("/admin/catalog/roles/{role_id}", response_class=HTMLResponse)
+async def admin_deactivate_role(
+    request: Request,
+    role_id: UUID,
+    session: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(require_admin),
+):
+    try:
+        await _role_repo.deactivate(session, role_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    return await _role_table(request, session, current_user)

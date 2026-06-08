@@ -4,6 +4,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.entities import User
@@ -12,12 +13,14 @@ from app.infrastructure.auth import require_admin, require_user
 from app.infrastructure.database.session import get_async_session
 from app.infrastructure.repositories.image_repo import ImageRepository
 from app.infrastructure.repositories.hw_config_repo import HWConfigRepository
+from app.infrastructure.repositories.role_repo import RoleRepository
 from app.infrastructure.repositories.static_vm_repo import StaticVMRepository
 
 router = APIRouter(prefix="/api", tags=["admin"])
 
 _image_repo = ImageRepository()
 _hw_config_repo = HWConfigRepository()
+_role_repo = RoleRepository()
 _static_vm_repo = StaticVMRepository()
 
 
@@ -83,6 +86,33 @@ class StaticVMSummaryResponse(BaseModel):
     memory_mb: int | None
     is_active: bool
     available: bool
+
+
+class RoleCreate(BaseModel):
+    name: str
+    description: Optional[str] = None
+    ansible_role: str
+    default_vars: dict = {}
+
+
+class RoleUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    ansible_role: Optional[str] = None
+    default_vars: Optional[dict] = None
+    is_active: Optional[bool] = None
+
+
+class RoleResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    name: str
+    description: Optional[str]
+    ansible_role: str
+    default_vars: dict
+    is_active: bool
+    created_at: datetime
 
 
 # ── VM Images ─────────────────────────────────────────────────────────────────
@@ -199,3 +229,56 @@ async def list_static_vms(
         )
         for vm in vms
     ]
+
+
+# ── Ansible Roles ─────────────────────────────────────────────────────────────
+
+@router.get("/roles", response_model=list[RoleResponse])
+async def list_roles(
+    session: AsyncSession = Depends(get_async_session),
+    _: User = Depends(require_user),  # read-only discovery so role names are orderable by anyone
+):
+    return await _role_repo.list_all(session)
+
+
+@router.post("/roles", response_model=RoleResponse, status_code=201)
+async def create_role(
+    body: RoleCreate,
+    session: AsyncSession = Depends(get_async_session),
+    _: User = Depends(require_admin),
+):
+    try:
+        return await _role_repo.create(
+            session, body.name, body.description, body.ansible_role, body.default_vars,
+        )
+    except IntegrityError:
+        await session.rollback()
+        raise HTTPException(status_code=409, detail=f"Role '{body.name}' already exists")
+
+
+@router.patch("/roles/{role_id}", response_model=RoleResponse)
+async def update_role(
+    role_id: UUID,
+    body: RoleUpdate,
+    session: AsyncSession = Depends(get_async_session),
+    _: User = Depends(require_admin),
+):
+    fields = body.model_dump(exclude_none=True)
+    if not fields:
+        raise HTTPException(status_code=422, detail="No fields to update")
+    try:
+        return await _role_repo.update(session, role_id, fields)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+
+@router.delete("/roles/{role_id}", status_code=204)
+async def deactivate_role(
+    role_id: UUID,
+    session: AsyncSession = Depends(get_async_session),
+    _: User = Depends(require_admin),
+):
+    try:
+        await _role_repo.deactivate(session, role_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))

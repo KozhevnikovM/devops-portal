@@ -585,7 +585,17 @@ Users reserve a static VM from the *Virtual Machines* page (a **Provisioned | St
 — a specific VM or **"Any available"** — and receive its host + credentials. Release / TTL
 returns it to the pool. See **Booking Queue** below for what happens when the pool is empty.
 
-The JSON API (`/api/images`, `/api/hardware`) remains available for scripted workflows.
+**Ansible Roles panel:**
+
+Roles are reusable configuration units applied to a provisioned VM. Each entry records a `name`,
+the **Ansible role** directory it maps to (`ansible_role`, under `ansible/roles/`), an optional
+description, and **default variables** entered as a **JSON object** (invalid JSON is rejected
+inline). **Add** / **Edit** / **Deactivate** / **Activate** / **Delete** behave as for the other
+panels. A later 0.8.0 item lets users order a VM with selected roles (applied during the VM's
+`CONFIGURING` step, after the startup script).
+
+The JSON API (`/api/images`, `/api/hardware`, `/api/roles`, `/api/static-vms`) remains available
+for scripted workflows.
 See [docs/api-reference.md](api-reference.md) for the full API reference.
 
 #### Step 4 — Set VCD credentials and configuration

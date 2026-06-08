@@ -61,6 +61,18 @@ class Namespace:
 
 
 @dataclass
+class Role:
+    """An Ansible role offered in the catalog, applied to a VM during configuration."""
+    id: UUID
+    name: str
+    description: str | None
+    ansible_role: str          # the role directory name under ansible/roles/
+    default_vars: dict         # admin-set Ansible variables for this role
+    is_active: bool
+    created_at: datetime
+
+
+@dataclass
 class StaticVM:
     id: UUID
     name: str
