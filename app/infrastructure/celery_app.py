@@ -20,6 +20,10 @@ celery_app.conf.update(
             "task":     "app.tasks.beat_tasks.enforce_ttl",
             "schedule": settings.ENFORCE_TTL_INTERVAL_SECONDS,
         },
+        "enforce-environment-ttl": {
+            "task":     "app.tasks.beat_tasks.enforce_environment_ttl",
+            "schedule": settings.ENFORCE_TTL_INTERVAL_SECONDS,
+        },
         "reap-stale-provisioning": {
             "task":     "app.tasks.beat_tasks.reap_stale_provisioning",
             "schedule": 900,   # every 15 min

@@ -32,13 +32,17 @@ class ReleaseBookingUseCase:
         self._repo = repo
         self._dispatcher = dispatcher
 
-    async def execute(self, session: AsyncSession, booking_id: UUID, current_user: User) -> Booking:
+    async def execute(
+        self, session: AsyncSession, booking_id: UUID, current_user: User, force: bool = False,
+    ) -> Booking:
         booking = await self._repo.get(session, booking_id)  # raises BookingNotFoundError
 
         if booking.user_id != str(current_user.id) and current_user.role != "admin":
             raise BookingPermissionError("Not the booking owner")
 
-        is_admin_force_delete = (
+        # `force` (used when releasing a whole environment) tears down any non-terminal child
+        # regardless of status — the same effect as an admin force-delete.
+        is_admin_force_delete = force or (
             current_user.role == "admin" and booking.status in _FORCE_DELETABLE_STATUSES
         )
 

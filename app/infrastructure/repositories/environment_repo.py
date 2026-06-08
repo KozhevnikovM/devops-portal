@@ -1,11 +1,20 @@
+from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
 from sqlalchemy import String, cast, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Session
 
 from app.domain.entities import Environment
+from app.domain.enums import BookingStatus
 from app.infrastructure.database.models import BookingModel, EnvironmentModel, UserModel
 from app.infrastructure.repositories.booking_repo import _to_entity as _booking_to_entity
+
+# Child statuses still worth releasing (everything but the terminal/already-tearing-down ones).
+_LIVE_CHILD_STATUSES = [
+    s.value for s in BookingStatus
+    if s not in (BookingStatus.RELEASED, BookingStatus.RELEASING, BookingStatus.FAILED)
+]
 
 
 def _to_entity(m: EnvironmentModel, bookings=None, owner_username=None) -> Environment:
@@ -77,3 +86,29 @@ class EnvironmentRepository:
             children = await self._children(session, model.id)
             envs.append(_to_entity(model, bookings=children, owner_username=owner))
         return envs
+
+    # ── Sync helpers (Celery beat — env-aware TTL enforcement) ──────────────────
+    def sync_list_expired(self, session: Session) -> list[Environment]:
+        """Return environments past their expires_at that still have at least one live child."""
+        live_child = (
+            select(BookingModel.environment_id)
+            .where(BookingModel.status.in_(_LIVE_CHILD_STATUSES),
+                   BookingModel.environment_id.is_not(None))
+        )
+        result = session.execute(
+            select(EnvironmentModel).where(
+                EnvironmentModel.expires_at < datetime.now(timezone.utc),
+                EnvironmentModel.id.in_(live_child),
+            )
+        )
+        return [_to_entity(m) for m in result.scalars().all()]
+
+    def sync_live_children(self, session: Session, environment_id: UUID):
+        """Return the still-live child bookings of an environment (for grouped teardown)."""
+        result = session.execute(
+            select(BookingModel).where(
+                BookingModel.environment_id == environment_id,
+                BookingModel.status.in_(_LIVE_CHILD_STATUSES),
+            )
+        )
+        return [_booking_to_entity(m) for m in result.scalars().all()]
