@@ -1,0 +1,101 @@
+<div id="role-table">
+    <div id="role-create-error" hx-swap-oob="innerHTML"></div>
+    {% if roles %}
+    <table class="w-full text-sm">
+        <thead>
+            <tr class="border-b border-gray-700 text-left">
+                <th class="px-4 py-2 text-xs text-gray-500 font-normal uppercase tracking-widest">Name</th>
+                <th class="px-4 py-2 text-xs text-gray-500 font-normal uppercase tracking-widest">Ansible role</th>
+                <th class="px-4 py-2 text-xs text-gray-500 font-normal uppercase tracking-widest">Description</th>
+                <th class="px-4 py-2 text-xs text-gray-500 font-normal uppercase tracking-widest">Default vars</th>
+                <th class="px-4 py-2 text-xs text-gray-500 font-normal uppercase tracking-widest">Status</th>
+                <th class="px-4 py-2 text-xs text-gray-500 font-normal uppercase tracking-widest">Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for role in roles %}
+            {% if editing_role and role.id == editing_role.id %}
+            <tr class="border-b border-gray-800 last:border-0 bg-gray-800/60">
+                <td colspan="6" class="px-4 py-3">
+                    <form
+                        hx-patch="/admin/catalog/roles/{{ role.id }}"
+                        hx-target="#role-table"
+                        hx-swap="outerHTML"
+                        class="flex items-start gap-3 flex-wrap"
+                    >
+                        <input name="name" value="{{ role.name }}" required placeholder="Name"
+                            class="bg-gray-900 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-40">
+                        <input name="ansible_role" value="{{ role.ansible_role }}" required placeholder="ansible role dir"
+                            class="bg-gray-900 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-40 font-mono">
+                        <input name="description" value="{{ role.description or '' }}" placeholder="Description"
+                            class="bg-gray-900 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-100 focus:outline-none focus:border-green-600 flex-1 min-w-48">
+                        <textarea name="default_vars" rows="2" placeholder='{"key": "value"}'
+                            class="bg-gray-900 border border-gray-600 rounded px-2 py-1.5 text-xs text-gray-100 focus:outline-none focus:border-green-600 w-full font-mono">{{ role.default_vars | tojson }}</textarea>
+                        <button type="submit" class="text-xs px-3 py-1.5 rounded bg-green-700 text-green-100 hover:bg-green-600 transition-colors">Save</button>
+                        <button type="button"
+                            hx-get="/admin/catalog/roles/table"
+                            hx-target="#role-table"
+                            hx-swap="outerHTML"
+                            class="text-xs px-3 py-1.5 rounded bg-gray-700 text-gray-300 border border-gray-600 hover:bg-gray-600 transition-colors"
+                        >Cancel</button>
+                    </form>
+                </td>
+            </tr>
+            {% else %}
+            <tr class="border-b border-gray-800 last:border-0 hover:bg-gray-800/40 transition-colors">
+                <td class="px-4 py-3 text-gray-200">{{ role.name }}</td>
+                <td class="px-4 py-3 text-gray-400 text-xs font-mono">{{ role.ansible_role }}</td>
+                <td class="px-4 py-3 text-gray-400">{{ role.description or '—' }}</td>
+                <td class="px-4 py-3 text-gray-400 text-xs font-mono">{{ role.default_vars | tojson if role.default_vars else '—' }}</td>
+                <td class="px-4 py-3">
+                    {% if role.is_active %}
+                    <span class="text-xs text-green-400">active</span>
+                    {% else %}
+                    <span class="text-xs text-gray-500">inactive</span>
+                    {% endif %}
+                </td>
+                <td class="px-4 py-3">
+                    <details class="relative">
+                        <summary class="list-none cursor-pointer w-7 h-7 flex items-center justify-center rounded text-gray-400 hover:text-gray-200 hover:bg-gray-700 transition-colors select-none text-lg leading-none">⋮</summary>
+                        <div class="absolute right-0 bottom-full mb-1 w-44 bg-gray-900 border border-gray-700 rounded shadow-lg z-50 py-1">
+                            {% if role.is_active %}
+                            <button
+                                hx-get="/admin/catalog/roles/{{ role.id }}/edit"
+                                hx-target="#role-table"
+                                hx-swap="outerHTML"
+                                class="w-full text-left px-3 py-2 text-sm text-gray-300 hover:bg-gray-800 transition-colors"
+                            >Edit</button>
+                            <button
+                                hx-delete="/admin/catalog/roles/{{ role.id }}"
+                                hx-target="#role-table"
+                                hx-swap="outerHTML"
+                                hx-confirm="Deactivate role '{{ role.name }}'?"
+                                class="w-full text-left px-3 py-2 text-sm text-red-400 hover:bg-gray-800 transition-colors"
+                            >Deactivate</button>
+                            {% else %}
+                            <button
+                                hx-post="/admin/catalog/roles/{{ role.id }}/activate"
+                                hx-target="#role-table"
+                                hx-swap="outerHTML"
+                                class="w-full text-left px-3 py-2 text-sm text-green-400 hover:bg-gray-800 transition-colors"
+                            >Activate</button>
+                            <button
+                                hx-delete="/admin/catalog/roles/{{ role.id }}/permanent"
+                                hx-target="#role-table"
+                                hx-swap="outerHTML"
+                                hx-confirm="Permanently delete role '{{ role.name }}'? This cannot be undone."
+                                class="w-full text-left px-3 py-2 text-sm text-red-400 hover:bg-gray-800 transition-colors"
+                            >Delete</button>
+                            {% endif %}
+                        </div>
+                    </details>
+                </td>
+            </tr>
+            {% endif %}
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p class="text-gray-600 text-sm px-4 py-6">No roles yet.</p>
+    {% endif %}
+</div>

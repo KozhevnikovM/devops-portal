@@ -1056,6 +1056,36 @@ drive-type quota (`max_ssd_gb` / `max_hdd_gb`).
 
 ---
 
+### `GET /api/roles`
+
+List Ansible roles in the catalog. **Auth:** any authenticated user (read-only discovery);
+creating/updating/deleting roles requires **admin**.
+
+**Response:** `200` array:
+
+```json
+[
+  {
+    "id": "uuid",
+    "name": "docker-machine",
+    "description": "Install Docker Engine",
+    "ansible_role": "docker_machine",
+    "default_vars": { "version": "latest" },
+    "is_active": true,
+    "created_at": "2026-06-08T00:00:00+00:00"
+  }
+]
+```
+
+A role pairs a catalog `name` with an Ansible role directory (`ansible_role`, under
+`ansible/roles/`) and admin-set `default_vars`. Roles will be applied to a VM during configuration
+(a later 0.8.0 item lets you order a VM with `roles: [...]`).
+
+**Admin write endpoints:** `POST /api/roles` (201), `PATCH /api/roles/{id}`,
+`DELETE /api/roles/{id}` (deactivate). `default_vars` must be a JSON object; duplicate `name` → `409`.
+
+---
+
 ### `GET /api/static-vms`
 
 List active static VMs so their names are discoverable for ordering (`static_vm_name` on
