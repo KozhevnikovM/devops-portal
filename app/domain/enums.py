@@ -5,6 +5,7 @@ class BookingStatus(str, Enum):
     QUEUED       = "QUEUED"   # pooled booking waiting for a free resource (FIFO)
     PENDING      = "PENDING"
     PROVISIONING = "PROVISIONING"
+    CONFIGURING  = "CONFIGURING"  # VM provisioned; running post-create config (bash/Ansible)
     RETRY        = "RETRY"
     READY        = "READY"
     FAILED       = "FAILED"

@@ -11,7 +11,10 @@ from app.infrastructure.repositories.booking_repo import BookingRepository
 # A booking the owner may release directly (it holds a live resource).
 _RELEASABLE_STATUSES = {BookingStatus.READY, BookingStatus.FAILED}
 # In-flight states an admin may force-delete (provisioning never reached a steady resource).
-_FORCE_DELETABLE_STATUSES = {BookingStatus.PENDING, BookingStatus.PROVISIONING, BookingStatus.RETRY}
+# CONFIGURING included: the VM exists in VCD, so an abandoned config still tears it down.
+_FORCE_DELETABLE_STATUSES = {
+    BookingStatus.PENDING, BookingStatus.PROVISIONING, BookingStatus.CONFIGURING, BookingStatus.RETRY,
+}
 # States that are not safe for an ordinary release (work is mid-flight).
 _IN_FLIGHT_STATUSES = {*_FORCE_DELETABLE_STATUSES, BookingStatus.RELEASING}
 

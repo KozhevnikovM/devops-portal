@@ -362,10 +362,11 @@ class BookingRepository:
     def sync_list_stale_provisioning(
         self, session: Session, threshold_minutes: int = 60
     ) -> list[Booking]:
-        """Return PENDING/PROVISIONING/RETRY bookings created more than threshold_minutes ago."""
+        """Return PENDING/PROVISIONING/CONFIGURING/RETRY bookings older than threshold_minutes."""
         stale_statuses = [
             BookingStatus.PENDING.value,
             BookingStatus.PROVISIONING.value,
+            BookingStatus.CONFIGURING.value,
             BookingStatus.RETRY.value,
         ]
         cutoff = datetime.now(timezone.utc) - timedelta(minutes=threshold_minutes)
@@ -378,10 +379,11 @@ class BookingRepository:
         return [_to_entity(m) for m in result.scalars().all()]
 
     def sync_list_in_progress(self, session: Session) -> list[Booking]:
-        """Return all PENDING/PROVISIONING/RETRY bookings regardless of age."""
+        """Return all PENDING/PROVISIONING/CONFIGURING/RETRY bookings regardless of age."""
         statuses = [
             BookingStatus.PENDING.value,
             BookingStatus.PROVISIONING.value,
+            BookingStatus.CONFIGURING.value,
             BookingStatus.RETRY.value,
         ]
         result = session.execute(
