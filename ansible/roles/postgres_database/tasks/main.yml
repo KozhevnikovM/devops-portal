@@ -1,36 +1,12 @@
 ---
-# Install PostgreSQL on a Debian/Ubuntu VM and create a database + user.
-- name: Install PostgreSQL
-  ansible.builtin.apt:
-    name:
-      - "postgresql-{{ postgres_version }}"
-      - python3-psycopg2
-    state: present
-    update_cache: true
+# MOCK role — demo/testing only. Real roles are written and supplied by the admin (placed under
+# ANSIBLE_ROLES_PATH); the portal ships no opinionated configuration of its own.
+- name: postgres-database (mock) — report what a real role would do
+  ansible.builtin.debug:
+    msg: "Mock postgres-database role applied (a real role would install PostgreSQL). message={{ role_message | default('—') }}"
 
-- name: Ensure PostgreSQL is started and enabled
-  ansible.builtin.service:
-    name: postgresql
-    state: started
-    enabled: true
-
-- name: Set listen_addresses
-  ansible.builtin.lineinfile:
-    path: "/etc/postgresql/{{ postgres_version }}/main/postgresql.conf"
-    regexp: "^#?listen_addresses"
-    line: "listen_addresses = '{{ postgres_listen_addresses }}'"
-  notify: Restart postgresql
-
-- name: Create application database
-  become_user: postgres
-  community.postgresql.postgresql_db:
-    name: "{{ postgres_db }}"
-    state: present
-
-- name: Create application user
-  become_user: postgres
-  community.postgresql.postgresql_user:
-    db: "{{ postgres_db }}"
-    name: "{{ postgres_user }}"
-    password: "{{ postgres_password }}"
-    state: present
+- name: Drop a marker so the run is observable
+  ansible.builtin.copy:
+    dest: /tmp/portal-role-postgres_database.applied
+    content: "applied by the portal mock postgres-database role\n"
+    mode: "0644"

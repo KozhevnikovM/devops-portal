@@ -72,6 +72,7 @@ class AnsibleConfigRunner:
         env = {
             "ANSIBLE_HOST_KEY_CHECKING": "False",
             "ANSIBLE_ROLES_PATH": settings.ANSIBLE_ROLES_PATH,
+            "ANSIBLE_COLLECTIONS_PATH": settings.ANSIBLE_COLLECTIONS_PATH,
             "PATH": "/usr/local/bin:/usr/bin:/bin",
             "ANSIBLE_STDOUT_CALLBACK": "default",
         }

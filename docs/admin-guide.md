@@ -709,10 +709,26 @@ is `FAILED`. Roles are **snapshotted** at order time, so editing a catalog role 
 running VM. Requirements (real adapter only):
 
 - The worker image bundles `ansible-core`, `openssh-client`, and `sshpass` (password SSH).
-- Shipped example roles live under `ansible/roles/` (`docker_machine`, `postgres_database`);
-  register catalog entries whose **Ansible role** matches the directory name. Add your own roles
-  there (override the search path with `ANSIBLE_ROLES_PATH`).
+- **You write the roles.** The repo ships only two trivial **mock** roles under `ansible/roles/`
+  (`docker_machine`, `postgres_database`) that just print a message + drop a marker file — enough to
+  see the pipeline work. Put your real roles under `ANSIBLE_ROLES_PATH` (default
+  `/app/ansible/roles`; mount a volume or bake them into your image), then register a catalog entry
+  whose **Ansible role** matches the directory name.
 - Roles run with `become: true` — the `VM_SSH_USER` must be root or have passwordless `sudo`.
+
+**Ansible collections.** Collections your roles need go in `ansible/requirements.yml`; they're
+installed into `ANSIBLE_COLLECTIONS_PATH` (default `/app/ansible/collections`). The mock roles need
+none. For an **offline / air-gapped** build, pre-download the tarballs on a connected host and
+install from them with no network:
+
+```bash
+# connected host — vendor the tarballs
+ansible-galaxy collection download -r ansible/requirements.yml -p ansible/collections/vendor
+# air-gapped build — point the build at the vendored requirements.yml
+ANSIBLE_COLLECTIONS_REQUIREMENTS=ansible/collections/vendor/requirements.yml docker compose build
+```
+
+(`ansible/collections/` contents are gitignored; ship the `vendor/` directory to the build host.)
 
 Order it via the API:
 

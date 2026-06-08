@@ -99,12 +99,20 @@ RUN pip install --no-cache-dir \
     ${PIP_TRUSTED_HOST:+--trusted-host "${PIP_TRUSTED_HOST}"} \
     -r requirements.txt
 
-# Ansible collections used by the shipped roles (community.postgresql, etc.).
-RUN ansible-galaxy collection install community.postgresql community.general || true
-
 COPY --from=terraform-bin /bin/terraform /usr/local/bin/terraform
 
 COPY . .
+
+# Install Ansible collections into ANSIBLE_COLLECTIONS_PATH from a requirements file. Online by
+# default (from ansible/requirements.yml). For an OFFLINE/air-gapped build, pre-download the
+# tarballs (`ansible-galaxy collection download -r ansible/requirements.yml -p ansible/collections/vendor`),
+# ship ansible/collections/vendor/, and set ANSIBLE_COLLECTIONS_REQUIREMENTS to its requirements.yml.
+# Best-effort: the shipped mock roles need no collections, so a failure here doesn't break the build.
+ENV ANSIBLE_COLLECTIONS_PATH=/app/ansible/collections
+ARG ANSIBLE_COLLECTIONS_REQUIREMENTS=ansible/requirements.yml
+RUN ansible-galaxy collection install -r "${ANSIBLE_COLLECTIONS_REQUIREMENTS}" \
+        -p /app/ansible/collections || \
+    echo "WARNING: ansible-galaxy collection install failed (offline build without vendored collections?)"
 
 COPY --from=frontend /build/dist/css/tailwind.css app/static/css/tailwind.css
 COPY --from=frontend /build/dist/js/htmx.min.js  app/static/js/htmx.min.js

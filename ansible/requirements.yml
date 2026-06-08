@@ -1,4 +1,16 @@
-# Install with: ansible-galaxy collection install -r requirements.yml
+# Ansible collections used by (a) the deploy playbook and (b) the worker when it applies roles to
+# a VM. The shipped *mock* roles need none of these — they're here for the real roles an admin
+# writes (e.g. the Docker collection for a docker role).
+#
+# Online install (into the worker's collections path):
+#   ansible-galaxy collection install -r ansible/requirements.yml -p ansible/collections
+#
+# Offline install (air-gapped): on a connected host, pre-download the tarballs —
+#   ansible-galaxy collection download -r ansible/requirements.yml -p ansible/collections/vendor
+# ship ansible/collections/vendor/ to the build host, then install from it with NO network —
+#   ansible-galaxy collection install -r ansible/collections/vendor/requirements.yml -p ansible/collections
+# (the image build runs this via the ANSIBLE_COLLECTIONS_REQUIREMENTS build arg.)
 collections:
   - name: community.docker
+  - name: community.general
   - name: ansible.posix
