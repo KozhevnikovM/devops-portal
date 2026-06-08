@@ -15,6 +15,7 @@ from app.main import app
 KEPT_PATHS = {
     "/api/images",
     "/api/hardware",
+    "/api/static-vms",
     "/api/users",
     "/api/bookings",
     "/api/bookings/{booking_id}/audit",

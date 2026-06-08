@@ -343,13 +343,15 @@ Response:
 { "id": "uuid", "key": "dp_a1b2c3d4...", "description": "Jenkins CI" }
 ```
 
-Store the `key` value in Jenkins credentials. Use it in all API requests:
+Store the `key` value in Jenkins credentials. Use it in all API requests. You can order by
+catalog **names** (discover them with `GET /api/images`, `GET /api/hardware`,
+`GET /api/static-vms` — all readable by any authenticated user) instead of looking up UUIDs:
 
 ```bash
 curl -s -X POST http://localhost:8000/api/bookings \
      -H "Content-Type: application/json" \
      -H "Authorization: Bearer dp_a1b2c3d4..." \
-     -d '{"resource_type": "VM", "ttl_minutes": 240, "image_id": "<uuid>", "hw_config_id": "<uuid>"}'
+     -d '{"resource_type": "VM", "ttl_minutes": 240, "image_name": "Ubuntu 22.04", "hw_config_name": "medium"}'
 ```
 
 **Revoke an API key:**

@@ -50,11 +50,16 @@ class CreateBookingRequest(BaseModel):
     ttl_minutes: int
     image_id: UUID | None = None
     hw_config_id: UUID | None = None
+    # Order a VM by catalog names instead of ids (an explicit *_id wins). Names are unique.
+    image_name: str | None = None
+    hw_config_name: str | None = None
     namespace_id: UUID | None = None
     # Order a specific namespace by its (name, cluster) pair instead of namespace_id.
     namespace_name: str | None = None
     cluster_name: str | None = None
     static_vm_id: UUID | None = None
+    # Order a specific static VM by name instead of static_vm_id.
+    static_vm_name: str | None = None
 
 
 class ExtendBookingRequest(BaseModel):
@@ -129,6 +134,22 @@ async def _attach_queue_position(session: AsyncSession, booking: Booking) -> Non
         )
 
 
+async def _resolve_catalog_id(session, id_, name, get_by_name, label):
+    """Resolve a catalog entry to its id: an explicit id wins; else look up by name.
+
+    Returns None when neither id nor name is given (the caller reports the 400). Raises 400 if a
+    name is given but matches no active catalog entry.
+    """
+    if id_ is not None:
+        return id_
+    if name:
+        entry = await get_by_name(session, name)
+        if entry is None:
+            raise HTTPException(status_code=400, detail=f"no {label} named '{name}'")
+        return entry.id
+    return None
+
+
 # ── Endpoints ──────────────────────────────────────────────────────────────────
 @router.get("")
 async def list_bookings(
@@ -170,20 +191,35 @@ async def create_booking(
 
     # ── Static VM — reserve from the pool, no provisioning ──
     elif body.resource_type == ResourceType.STATIC_VM.value:
+        static_vm_id = body.static_vm_id
+        if static_vm_id is None and body.static_vm_name:
+            static_vm = await _static_vm_repo.get_by_name(session, body.static_vm_name)
+            if static_vm is None:
+                raise HTTPException(status_code=400, detail=f"no static VM named '{body.static_vm_name}'")
+            static_vm_id = static_vm.id
         try:
             booking = await _reserve_static_vm_use_case.execute(
-                session, body.ttl_minutes, user_id=str(current_user.id), static_vm_id=body.static_vm_id
+                session, body.ttl_minutes, user_id=str(current_user.id), static_vm_id=static_vm_id
             )
         except StaticVMUnavailableError as exc:
             raise HTTPException(status_code=409, detail=str(exc))
 
     # ── VM — provisioning flow ──
     else:
-        if body.image_id is None or body.hw_config_id is None:
-            raise HTTPException(status_code=400, detail="image_id and hw_config_id are required")
+        image_id = await _resolve_catalog_id(
+            session, body.image_id, body.image_name, _image_repo.get_by_name, "VM image",
+        )
+        hw_config_id = await _resolve_catalog_id(
+            session, body.hw_config_id, body.hw_config_name, _hw_config_repo.get_by_name, "hardware config",
+        )
+        if image_id is None or hw_config_id is None:
+            raise HTTPException(
+                status_code=400,
+                detail="image (id or name) and hardware config (id or name) are required",
+            )
         try:
             booking = await _create_use_case.execute(
-                session, body.ttl_minutes, body.image_id, body.hw_config_id, user_id=str(current_user.id)
+                session, body.ttl_minutes, image_id, hw_config_id, user_id=str(current_user.id)
             )
         except QuotaExceededError as exc:
             raise HTTPException(status_code=409, detail=str(exc))
