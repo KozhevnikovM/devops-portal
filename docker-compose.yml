@@ -31,6 +31,7 @@ services:
       secrets:
         - npm_token
         - npm_ca
+        - apt_password
       args:
         PIP_INDEX_URL: ${PIP_INDEX_URL:-}
         PIP_TRUSTED_HOST: ${PIP_TRUSTED_HOST:-}
@@ -40,6 +41,13 @@ services:
         PYTHON_IMAGE: ${PYTHON_IMAGE:-python:3.11-slim}
         PORTAL_UID: ${PORTAL_UID:-1000}
         PORTAL_GID: ${PORTAL_GID:-1000}
+        APT_MIRROR: ${APT_MIRROR:-}
+        APT_SECURITY_MIRROR: ${APT_SECURITY_MIRROR:-}
+        APT_SUITE: ${APT_SUITE:-}
+        APT_COMPONENTS: ${APT_COMPONENTS:-main contrib}
+        APT_REPO_HOST: ${APT_REPO_HOST:-}
+        APT_REPO_USER: ${APT_REPO_USER:-token}
+        ANSIBLE_COLLECTIONS_REQUIREMENTS: ${ANSIBLE_COLLECTIONS_REQUIREMENTS:-ansible/requirements.yml}
     command: sh -c "cp -r /app/app/static/. /static/ && alembic upgrade head"
     user: root
     env_file: .env
@@ -56,6 +64,7 @@ services:
       secrets:
         - npm_token
         - npm_ca
+        - apt_password
       args:
         PIP_INDEX_URL: ${PIP_INDEX_URL:-}
         PIP_TRUSTED_HOST: ${PIP_TRUSTED_HOST:-}
@@ -65,6 +74,13 @@ services:
         PYTHON_IMAGE: ${PYTHON_IMAGE:-python:3.11-slim}
         PORTAL_UID: ${PORTAL_UID:-1000}
         PORTAL_GID: ${PORTAL_GID:-1000}
+        APT_MIRROR: ${APT_MIRROR:-}
+        APT_SECURITY_MIRROR: ${APT_SECURITY_MIRROR:-}
+        APT_SUITE: ${APT_SUITE:-}
+        APT_COMPONENTS: ${APT_COMPONENTS:-main contrib}
+        APT_REPO_HOST: ${APT_REPO_HOST:-}
+        APT_REPO_USER: ${APT_REPO_USER:-token}
+        ANSIBLE_COLLECTIONS_REQUIREMENTS: ${ANSIBLE_COLLECTIONS_REQUIREMENTS:-ansible/requirements.yml}
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
     ports:
       - "8000:8000"
@@ -84,6 +100,7 @@ services:
       secrets:
         - npm_token
         - npm_ca
+        - apt_password
       args:
         PIP_INDEX_URL: ${PIP_INDEX_URL:-}
         PIP_TRUSTED_HOST: ${PIP_TRUSTED_HOST:-}
@@ -93,6 +110,13 @@ services:
         PYTHON_IMAGE: ${PYTHON_IMAGE:-python:3.11-slim}
         PORTAL_UID: ${PORTAL_UID:-1000}
         PORTAL_GID: ${PORTAL_GID:-1000}
+        APT_MIRROR: ${APT_MIRROR:-}
+        APT_SECURITY_MIRROR: ${APT_SECURITY_MIRROR:-}
+        APT_SUITE: ${APT_SUITE:-}
+        APT_COMPONENTS: ${APT_COMPONENTS:-main contrib}
+        APT_REPO_HOST: ${APT_REPO_HOST:-}
+        APT_REPO_USER: ${APT_REPO_USER:-token}
+        ANSIBLE_COLLECTIONS_REQUIREMENTS: ${ANSIBLE_COLLECTIONS_REQUIREMENTS:-ansible/requirements.yml}
     command: celery -A app.infrastructure.celery_app worker -l info -c 4
     env_file: .env
     volumes:
@@ -110,6 +134,7 @@ services:
       secrets:
         - npm_token
         - npm_ca
+        - apt_password
       args:
         PIP_INDEX_URL: ${PIP_INDEX_URL:-}
         PIP_TRUSTED_HOST: ${PIP_TRUSTED_HOST:-}
@@ -119,6 +144,13 @@ services:
         PYTHON_IMAGE: ${PYTHON_IMAGE:-python:3.11-slim}
         PORTAL_UID: ${PORTAL_UID:-1000}
         PORTAL_GID: ${PORTAL_GID:-1000}
+        APT_MIRROR: ${APT_MIRROR:-}
+        APT_SECURITY_MIRROR: ${APT_SECURITY_MIRROR:-}
+        APT_SUITE: ${APT_SUITE:-}
+        APT_COMPONENTS: ${APT_COMPONENTS:-main contrib}
+        APT_REPO_HOST: ${APT_REPO_HOST:-}
+        APT_REPO_USER: ${APT_REPO_USER:-token}
+        ANSIBLE_COLLECTIONS_REQUIREMENTS: ${ANSIBLE_COLLECTIONS_REQUIREMENTS:-ansible/requirements.yml}
     command: celery -A app.infrastructure.celery_app beat -l info
     env_file: .env
     volumes:
@@ -138,6 +170,10 @@ secrets:
   # at the cert; defaults to /dev/null (empty → npm uses the default CA bundle).
   npm_ca:
     file: ${NPM_CA_CERT_FILE:-/dev/null}
+  # Password/token for a local apt mirror that needs auth (used only when APT_MIRROR + APT_REPO_HOST
+  # are set). Sourced from the APT_REPO_PASSWORD env var; empty/unset → no apt auth file is written.
+  apt_password:
+    environment: APT_REPO_PASSWORD
 
 volumes:
   postgres_data:

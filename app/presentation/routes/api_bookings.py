@@ -28,6 +28,7 @@ from app.infrastructure.repositories.booking_repo import BookingRepository
 from app.infrastructure.repositories.hw_config_repo import HWConfigRepository
 from app.infrastructure.repositories.image_repo import ImageRepository
 from app.infrastructure.repositories.namespace_repo import NamespaceRepository
+from app.infrastructure.repositories.role_repo import RoleRepository
 from app.infrastructure.repositories.static_vm_repo import StaticVMRepository
 
 router = APIRouter(prefix="/api/bookings", tags=["bookings"])
@@ -36,6 +37,7 @@ _repo = BookingRepository()
 _image_repo = ImageRepository()
 _hw_config_repo = HWConfigRepository()
 _namespace_repo = NamespaceRepository()
+_role_repo = RoleRepository()
 _static_vm_repo = StaticVMRepository()
 _dispatcher = CeleryTaskDispatcher()
 _create_use_case = CreateBookingUseCase(_repo, _image_repo, _hw_config_repo, dispatcher=_dispatcher)
@@ -55,6 +57,8 @@ class CreateBookingRequest(BaseModel):
     hw_config_name: str | None = None
     # Optional bash script run on the VM over SSH after provisioning (VM bookings only).
     startup_script: str | None = None
+    # Optional Ansible roles (catalog names) applied to the VM after the startup script.
+    roles: list[str] | None = None
     namespace_id: UUID | None = None
     # Order a specific namespace by its (name, cluster) pair instead of namespace_id.
     namespace_name: str | None = None
@@ -85,6 +89,7 @@ def _summary(b: Booking) -> dict:
         "hw_config_name": b.hw_config_name,
         "vm_ip": b.vm_ip,
         "config_failed": b.config_failed,
+        "roles": [r.get("name") for r in (b.config_roles or [])],
         "namespace": b.namespace_name,
         "cluster": b.cluster_name,
         "api_url": b.api_url,
@@ -220,10 +225,20 @@ async def create_booking(
                 status_code=400,
                 detail="image (id or name) and hardware config (id or name) are required",
             )
+        # Resolve role names → a snapshot captured at order time (survives catalog edits).
+        config_roles = []
+        for role_name in (body.roles or []):
+            role = await _role_repo.get_by_name(session, role_name)
+            if role is None:
+                raise HTTPException(status_code=400, detail=f"no role named '{role_name}'")
+            config_roles.append(
+                {"name": role.name, "ansible_role": role.ansible_role, "vars": role.default_vars or {}}
+            )
         try:
             booking = await _create_use_case.execute(
                 session, body.ttl_minutes, image_id, hw_config_id,
                 user_id=str(current_user.id), startup_script=body.startup_script,
+                config_roles=config_roles,
             )
         except QuotaExceededError as exc:
             raise HTTPException(status_code=409, detail=str(exc))

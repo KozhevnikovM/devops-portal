@@ -104,6 +104,7 @@ class BookingModel(Base):
     vm_password: Mapped[str | None] = mapped_column(String(128), nullable=True)
     status_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     startup_script: Mapped[str | None] = mapped_column(Text, nullable=True)
+    config_roles: Mapped[list] = mapped_column(JSONB, nullable=False, default=list, server_default="[]")
     config_failed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=false())
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 

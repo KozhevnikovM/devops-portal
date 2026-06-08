@@ -15,3 +15,6 @@ app/static/js/*.js
 terraform/providers-mirror/
 .playwright-mcp/
 celerybeat-schedule
+# Ansible collections installed/vendored into the path (keep the dir, not its contents)
+ansible/collections/*
+!ansible/collections/.gitkeep

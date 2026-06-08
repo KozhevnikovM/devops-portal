@@ -1,0 +1,3 @@
+---
+# Default vars for the mock postgres-database role (override per catalog entry's default_vars).
+role_message: "hello from postgres-database"

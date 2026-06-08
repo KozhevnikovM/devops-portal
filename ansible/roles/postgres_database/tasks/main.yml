@@ -1,0 +1,12 @@
+---
+# MOCK role — demo/testing only. Real roles are written and supplied by the admin (placed under
+# ANSIBLE_ROLES_PATH); the portal ships no opinionated configuration of its own.
+- name: postgres-database (mock) — report what a real role would do
+  ansible.builtin.debug:
+    msg: "Mock postgres-database role applied (a real role would install PostgreSQL). message={{ role_message | default('—') }}"
+
+- name: Drop a marker so the run is observable
+  ansible.builtin.copy:
+    dest: /tmp/portal-role-postgres_database.applied
+    content: "applied by the portal mock postgres-database role\n"
+    mode: "0644"

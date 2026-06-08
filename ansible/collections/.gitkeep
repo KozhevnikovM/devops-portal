@@ -1,0 +1,3 @@
+# Ansible collections install path (ANSIBLE_COLLECTIONS_PATH). Populated at image build from
+# ansible/requirements.yml, or pre-vendored here for offline installs. Installed/vendored content
+# is gitignored — only this placeholder is tracked.

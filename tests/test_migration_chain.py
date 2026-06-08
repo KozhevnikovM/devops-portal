@@ -13,16 +13,17 @@ def _script() -> ScriptDirectory:
 
 
 def test_single_head():
-    assert _script().get_heads() == ["0020"]
+    assert _script().get_heads() == ["0021"]
 
 
 def test_startup_script_chain_is_linear():
-    # The bookings.startup_script (0018), config_failed (0019), and roles table (0020) each arrive
-    # in their own revision, linear on top of 0017.
+    # The config columns/tables (0018 startup_script, 0019 config_failed, 0020 roles, 0021
+    # config_roles) each arrive in their own revision, linear on top of 0017.
     down = {r.revision: r.down_revision for r in _script().walk_revisions()}
     assert down["0018"] == "0017"
     assert down["0019"] == "0018"
     assert down["0020"] == "0019"
+    assert down["0021"] == "0020"
 
 
 def test_namespace_per_cluster_chain_is_linear():

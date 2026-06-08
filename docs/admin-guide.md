@@ -85,6 +85,21 @@ behaviour.
 | `NPM_REGISTRY` | Private npm registry URL for the frontend build |
 | `NPM_REGISTRY_TOKEN` | Auth token for `NPM_REGISTRY` (authenticated registries) |
 | `NPM_CA_CERT_FILE` | Path to a PEM CA bundle if the registry uses an internal/self-signed CA |
+| `APT_MIRROR` | Local **apt** mirror (deb URI) for OS packages installed in the image build |
+| `APT_SECURITY_MIRROR` | Local apt mirror for the `-security` suite |
+| `APT_REPO_HOST` / `APT_REPO_USER` / `APT_REPO_PASSWORD` | Auth for the apt mirror (only if it needs login); the password is a BuildKit secret |
+
+**Local apt mirror.** Set `APT_MIRROR` (and `APT_SECURITY_MIRROR`) when the build host can't reach
+the public Debian repos. The build then replaces the base image's apt sources with the mirror
+(deb822 format, `Trusted: yes`, `https::Verify-Peer "false"` for self-signed mirrors) before
+installing OS packages (`openssh-client`, `sshpass`). If the mirror needs auth, set `APT_REPO_HOST`
++ `APT_REPO_USER` and the **`APT_REPO_PASSWORD`** secret — the build writes
+`/etc/apt/auth.conf.d/portal-mirror.conf`. `APT_SUITE` **defaults to the base image's own codename**
+(read from `/etc/os-release`), so the mirror always matches the image — your mirror must serve that
+suite (e.g. `trixie` for the current `python:3.11-slim`). If your mirror only has a different suite,
+either set `APT_SUITE` and point `PYTHON_IMAGE` at a matching base tag (e.g.
+`python:3.11-slim-bookworm`), or mirror the right release. Empty `APT_MIRROR` → the base image's
+default repos are used unchanged.
 
 **Private npm registry.** Set `NPM_REGISTRY` (and `NPM_REGISTRY_TOKEN` if it needs auth):
 
@@ -684,6 +699,36 @@ Two outcomes are kept distinct:
   and the script error is recorded. Fix the script (or the VM) and re-book.
 
 A VM with **no** `startup_script` still waits to become reachable before going `READY`.
+
+**Ansible roles.** After the startup script, the worker applies any **roles** selected at order time
+(`roles: ["docker-machine", ...]` on `POST /api/bookings`; names from the **Ansible Roles** catalog
+panel). The worker is the Ansible control node: it renders a single-host inventory + playbook from
+the booking's role snapshot and runs `ansible-playbook` over SSH. A role run that fails (VM
+reachable) is treated like a failed script — `READY` + "⚠ configuration failed"; an unreachable VM
+is `FAILED`. Roles are **snapshotted** at order time, so editing a catalog role doesn't change a
+running VM. Requirements (real adapter only):
+
+- The worker image bundles `ansible-core`, `openssh-client`, and `sshpass` (password SSH).
+- **You write the roles.** The repo ships only two trivial **mock** roles under `ansible/roles/`
+  (`docker_machine`, `postgres_database`) that just print a message + drop a marker file — enough to
+  see the pipeline work. Put your real roles under `ANSIBLE_ROLES_PATH` (default
+  `/app/ansible/roles`; mount a volume or bake them into your image), then register a catalog entry
+  whose **Ansible role** matches the directory name.
+- Roles run with `become: true` — the `VM_SSH_USER` must be root or have passwordless `sudo`.
+
+**Ansible collections.** Collections your roles need go in `ansible/requirements.yml`; they're
+installed into `ANSIBLE_COLLECTIONS_PATH` (default `/app/ansible/collections`). The mock roles need
+none. For an **offline / air-gapped** build, pre-download the tarballs on a connected host and
+install from them with no network:
+
+```bash
+# connected host — vendor the tarballs
+ansible-galaxy collection download -r ansible/requirements.yml -p ansible/collections/vendor
+# air-gapped build — point the build at the vendored requirements.yml
+ANSIBLE_COLLECTIONS_REQUIREMENTS=ansible/collections/vendor/requirements.yml docker compose build
+```
+
+(`ansible/collections/` contents are gitignored; ship the `vendor/` directory to the build host.)
 
 Order it via the API:
 

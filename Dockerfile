@@ -55,6 +55,44 @@ ENV PYTHONPATH=/app
 ARG PIP_INDEX_URL
 ARG PIP_TRUSTED_HOST
 
+# Optional local apt mirror for isolated/air-gapped builds. Set APT_MIRROR (and APT_SECURITY_MIRROR)
+# to a deb URI; the repo password (if any) is a BuildKit secret (id=apt_password) — never a build
+# arg/layer. Empty → the base image's default apt sources are used unchanged.
+ARG APT_MIRROR
+ARG APT_SECURITY_MIRROR
+ARG APT_SUITE
+ARG APT_COMPONENTS="main contrib"
+ARG APT_REPO_HOST
+ARG APT_REPO_USER=token
+
+# SSH client + sshpass let the worker run Ansible (control node) against provisioned VMs over SSH,
+# including password auth. ansible-core itself comes from requirements.txt.
+RUN --mount=type=secret,id=apt_password \
+    if [ -n "$APT_MIRROR" ]; then \
+        # Default the suite to the *base image's own* codename so the mirror always matches the
+        # image (mixing suites pulls conflicting libssl/apt — see issue #217). Override via APT_SUITE.
+        suite="${APT_SUITE:-$(. /etc/os-release && echo "$VERSION_CODENAME")}"; \
+        if [ -z "$suite" ]; then echo "APT_SUITE unset and no codename in /etc/os-release" >&2; exit 1; fi; \
+        if [ -n "$APT_REPO_HOST" ] && [ -s /run/secrets/apt_password ]; then \
+            printf 'machine %s\nlogin %s\npassword %s\n' \
+                "$APT_REPO_HOST" "$APT_REPO_USER" "$(cat /run/secrets/apt_password)" \
+                > /etc/apt/auth.conf.d/portal-mirror.conf; \
+            chmod 600 /etc/apt/auth.conf.d/portal-mirror.conf; \
+        fi; \
+        echo 'Acquire { https::Verify-Peer "false"; };' > /etc/apt/apt.conf.d/99verify-peer.conf; \
+        rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*.sources /etc/apt/sources.list.d/*.list; \
+        { \
+            printf 'Types: deb\nURIs: %s\nSuites: %s %s-updates\nComponents: %s\nTrusted: yes\n\n' \
+                "$APT_MIRROR" "$suite" "$suite" "$APT_COMPONENTS"; \
+            if [ -n "$APT_SECURITY_MIRROR" ]; then \
+                printf 'Types: deb\nURIs: %s\nSuites: %s-security\nComponents: %s\nTrusted: yes\n' \
+                    "$APT_SECURITY_MIRROR" "$suite" "$APT_COMPONENTS"; \
+            fi; \
+        } > /etc/apt/sources.list.d/debian.sources; \
+    fi && \
+    apt-get update && apt-get install -y --no-install-recommends openssh-client sshpass \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY requirements.txt .
 RUN pip install --no-cache-dir \
     ${PIP_INDEX_URL:+--index-url "${PIP_INDEX_URL}"} \
@@ -64,6 +102,17 @@ RUN pip install --no-cache-dir \
 COPY --from=terraform-bin /bin/terraform /usr/local/bin/terraform
 
 COPY . .
+
+# Install Ansible collections into ANSIBLE_COLLECTIONS_PATH from a requirements file. Online by
+# default (from ansible/requirements.yml). For an OFFLINE/air-gapped build, pre-download the
+# tarballs (`ansible-galaxy collection download -r ansible/requirements.yml -p ansible/collections/vendor`),
+# ship ansible/collections/vendor/, and set ANSIBLE_COLLECTIONS_REQUIREMENTS to its requirements.yml.
+# Best-effort: the shipped mock roles need no collections, so a failure here doesn't break the build.
+ENV ANSIBLE_COLLECTIONS_PATH=/app/ansible/collections
+ARG ANSIBLE_COLLECTIONS_REQUIREMENTS=ansible/requirements.yml
+RUN ansible-galaxy collection install -r "${ANSIBLE_COLLECTIONS_REQUIREMENTS}" \
+        -p /app/ansible/collections || \
+    echo "WARNING: ansible-galaxy collection install failed (offline build without vendored collections?)"
 
 COPY --from=frontend /build/dist/css/tailwind.css app/static/css/tailwind.css
 COPY --from=frontend /build/dist/js/htmx.min.js  app/static/js/htmx.min.js

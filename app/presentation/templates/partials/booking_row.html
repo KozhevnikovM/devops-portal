@@ -38,6 +38,13 @@
         {% if booking.status_message %}
         <pre class="text-xs text-gray-500 mt-1 whitespace-pre-wrap break-all">{{ booking.status_message }}</pre>
         {% endif %}
+        {% if booking.config_roles %}
+        <div class="mt-1 flex flex-wrap gap-1">
+            {% for role in booking.config_roles %}
+            <span class="text-xs px-1.5 py-0.5 rounded bg-gray-800 text-gray-400 border border-gray-700 font-mono">{{ role.name }}</span>
+            {% endfor %}
+        </div>
+        {% endif %}
     </td>
     <td class="px-4 py-3 text-gray-400">
         {% if booking.ttl_minutes == 0 %}Forever

@@ -54,6 +54,7 @@ def _to_entity(
         drive_type=m.drive_type,
         status_message=m.status_message,
         startup_script=m.startup_script,
+        config_roles=m.config_roles or [],
         config_failed=m.config_failed,
         namespace_id=m.namespace_id,
         namespace_name=namespace.name if namespace else None,
@@ -164,6 +165,7 @@ class BookingRepository:
             disk_mb=booking.disk_mb,
             drive_type=booking.drive_type,
             startup_script=booking.startup_script,
+            config_roles=booking.config_roles or [],
         )
         session.add(model)
         await session.flush()  # INSERT booking before audit to satisfy FK constraint

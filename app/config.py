@@ -63,6 +63,9 @@ class Settings(BaseSettings):
     VM_SSH_PRIVATE_KEY: str = ""        # PEM key path; empty → password auth with the VM password
     CONFIG_SSH_TIMEOUT: int = 300       # seconds to wait for the VM's SSH to come up (0 disables)
     CONFIG_SSH_RETRY_INTERVAL: int = 30  # seconds between SSH connect attempts while waiting
+    ANSIBLE_ROLES_PATH: str = "/app/ansible/roles"  # where the worker looks up roles (admins add theirs)
+    ANSIBLE_COLLECTIONS_PATH: str = "/app/ansible/collections"  # installed/vendored collections path
+    ANSIBLE_TIMEOUT: int = 1800         # seconds before an ansible-playbook run is killed
 
 
 settings = Settings()

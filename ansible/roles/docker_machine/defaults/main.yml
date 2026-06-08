@@ -1,0 +1,3 @@
+---
+# Default vars for the mock docker-machine role (override per catalog entry's default_vars).
+role_message: "hello from docker-machine"
