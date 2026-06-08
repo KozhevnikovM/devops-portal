@@ -685,6 +685,20 @@ Two outcomes are kept distinct:
 
 A VM with **no** `startup_script` still waits to become reachable before going `READY`.
 
+**Ansible roles.** After the startup script, the worker applies any **roles** selected at order time
+(`roles: ["docker-machine", ...]` on `POST /api/bookings`; names from the **Ansible Roles** catalog
+panel). The worker is the Ansible control node: it renders a single-host inventory + playbook from
+the booking's role snapshot and runs `ansible-playbook` over SSH. A role run that fails (VM
+reachable) is treated like a failed script — `READY` + "⚠ configuration failed"; an unreachable VM
+is `FAILED`. Roles are **snapshotted** at order time, so editing a catalog role doesn't change a
+running VM. Requirements (real adapter only):
+
+- The worker image bundles `ansible-core`, `openssh-client`, and `sshpass` (password SSH).
+- Shipped example roles live under `ansible/roles/` (`docker_machine`, `postgres_database`);
+  register catalog entries whose **Ansible role** matches the directory name. Add your own roles
+  there (override the search path with `ANSIBLE_ROLES_PATH`).
+- Roles run with `become: true` — the `VM_SSH_USER` must be root or have passwordless `sudo`.
+
 Order it via the API:
 
 ```bash

@@ -55,11 +55,19 @@ ENV PYTHONPATH=/app
 ARG PIP_INDEX_URL
 ARG PIP_TRUSTED_HOST
 
+# SSH client + sshpass let the worker run Ansible (control node) against provisioned VMs over SSH,
+# including password auth. ansible-core itself comes from requirements.txt.
+RUN apt-get update && apt-get install -y --no-install-recommends openssh-client sshpass \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY requirements.txt .
 RUN pip install --no-cache-dir \
     ${PIP_INDEX_URL:+--index-url "${PIP_INDEX_URL}"} \
     ${PIP_TRUSTED_HOST:+--trusted-host "${PIP_TRUSTED_HOST}"} \
     -r requirements.txt
+
+# Ansible collections used by the shipped roles (community.postgresql, etc.).
+RUN ansible-galaxy collection install community.postgresql community.general || true
 
 COPY --from=terraform-bin /bin/terraform /usr/local/bin/terraform
 

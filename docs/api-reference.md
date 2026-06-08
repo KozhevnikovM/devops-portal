@@ -401,6 +401,7 @@ Create a new booking. A booking is one of:
 | `hw_config_id` | UUID | VM | Hardware configuration (by id) |
 | `hw_config_name` | string | VM | Hardware configuration by name (alternative to `hw_config_id`) |
 | `startup_script` | string | No | Bash script run on the VM over SSH after provisioning (VM only); see below |
+| `roles` | string[] | No | Ansible role **names** applied to the VM after the startup script (VM only); see below |
 | `namespace_id` | UUID | No | A specific namespace by id; omit for "Any available" |
 | `namespace_name` | string | No | A specific namespace by name (with `cluster_name`); see below |
 | `cluster_name` | string | No | The cluster the named namespace lives on |
@@ -426,6 +427,13 @@ Create a new booking. A booking is one of:
 > audit log); a clean run → `READY`. **The script must be idempotent** — a provisioning retry
 > re-runs it. It executes on your own VM. Requires the VM template to allow SSH for the configured
 > `VM_SSH_USER`; see the admin guide.
+
+> **Roles (VM).** Provide `roles` (a list of catalog **names**, discover via `GET /api/roles`) to
+> apply Ansible roles to the VM in the `CONFIGURING` step, **after** the startup script. The selected
+> roles are snapshotted onto the booking at order time (later catalog edits don't affect a running
+> VM). An unknown/inactive role name → `400`. A role run that fails (VM reachable) → `READY` flagged
+> `config_failed`, like a failed script; an unreachable VM → `FAILED`. Roles must be idempotent.
+> The applied role names appear in the `roles` field of `GET /api/bookings`.
 
 **VM response:** `201`
 

@@ -45,6 +45,7 @@ class CreateBookingUseCase:
         hw_config_id: UUID,
         user_id: str | None = None,
         startup_script: str | None = None,
+        config_roles: list | None = None,
     ) -> Booking:
         image = await self._image_repo.get(session, image_id)
         hw = await self._hw_config_repo.get(session, hw_config_id)
@@ -100,6 +101,7 @@ class CreateBookingUseCase:
             disk_mb=hw.disk_mb,
             drive_type=hw.drive_type,
             startup_script=startup_script or None,
+            config_roles=config_roles or [],
         )
         booking = await self._repo.create(session, booking)
         self._dispatch().dispatch_provision(str(booking.id), str(image.id), str(hw.id))

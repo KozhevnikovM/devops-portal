@@ -1,0 +1,7 @@
+---
+# Default variables for the postgres-database role. Override per catalog entry's default_vars.
+postgres_version: 16
+postgres_db: app
+postgres_user: app
+postgres_password: changeme   # override via the role's default_vars in the catalog
+postgres_listen_addresses: "localhost"

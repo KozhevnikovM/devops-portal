@@ -1,0 +1,3 @@
+---
+# Default variables for the docker-machine role. Override per catalog entry's default_vars.
+docker_users: []        # users to add to the docker group (e.g. ["ubuntu"])

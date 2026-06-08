@@ -14,6 +14,7 @@ from app.infrastructure.database.session import SyncSessionLocal
 from app.infrastructure.repositories.booking_repo import BookingRepository
 from app.infrastructure.repositories.image_repo import ImageRepository
 from app.infrastructure.repositories.hw_config_repo import HWConfigRepository
+from app.infrastructure.config.ansible import AnsibleConfigError, build_ansible_runner
 from app.infrastructure.config.runner import ConfigScriptError, build_config_runner
 from app.infrastructure.terraform.stub_adapter import StubTerraformAdapter
 from app.infrastructure.terraform.vcd_adapter import TerraformVcdAdapter
@@ -25,15 +26,20 @@ image_repo = ImageRepository()
 hw_config_repo = HWConfigRepository()
 terraform = StubTerraformAdapter() if settings.USE_STUB_TERRAFORM else TerraformVcdAdapter()
 config_runner = build_config_runner()
+ansible_runner = build_ansible_runner()
+
+# A reachable-but-failed configuration (bad script or Ansible run) keeps the VM (READY +
+# config_failed); only an unreachable VM fails outright.
+_CONFIG_SOFTWARE_ERRORS = (ConfigScriptError, AnsibleConfigError)
 
 
 def _needs_configuration(booking) -> bool:
     """Whether a provisioned VM has post-create configuration to run.
 
-    True when a booking carries a ``startup_script`` (P2.2 will OR in roles). VMs with neither go
-    PROVISIONING → READY unchanged.
+    True when a booking carries a ``startup_script`` or selected ``config_roles``. VMs with neither
+    go PROVISIONING → READY unchanged.
     """
-    return bool(getattr(booking, "startup_script", None))
+    return bool(getattr(booking, "startup_script", None)) or bool(getattr(booking, "config_roles", None))
 
 
 def _run(work):
@@ -138,14 +144,19 @@ def provision_vm_task(self, booking_id: str, image_id: str, hw_config_id: str) -
                 _on_progress(f"Waiting for {ip} to become reachable…")
                 client = config_runner.connect(ip, vm_password, on_progress=_on_progress)  # VmUnreachableError → FAILED
                 try:
-                    if _needs_configuration(booking):
-                        logger.info("Configuring booking %s — IP: %s", booking_id, ip)
+                    # Reachable: run the bash startup script (if any), then apply Ansible roles
+                    # (if any). Either software failure keeps the VM (READY + config_failed).
+                    if booking.startup_script:
+                        logger.info("Running startup script for booking %s — IP: %s", booking_id, ip)
                         config_runner.run_script(client, booking.startup_script, on_progress=_on_progress)
-                except ConfigScriptError as cfg_exc:
-                    # VM is up but the script failed — keep the VM, flag the failure.
+                    if booking.config_roles:
+                        logger.info("Applying %d role(s) for booking %s", len(booking.config_roles), booking_id)
+                        ansible_runner.apply_roles(booking, ip=ip, password=vm_password, on_progress=_on_progress)
+                except _CONFIG_SOFTWARE_ERRORS as cfg_exc:
+                    # VM is up but configuration failed — keep the VM, flag the failure.
                     config_failed = True
                     config_message = str(cfg_exc)
-                    logger.warning("Configuration script failed for booking %s: %s", booking_id, cfg_exc)
+                    logger.warning("Configuration failed for booking %s: %s", booking_id, cfg_exc)
                 finally:
                     config_runner.close(client)
                 _run(lambda s: repo.sync_set_status_message(s, booking_uuid, config_message))
