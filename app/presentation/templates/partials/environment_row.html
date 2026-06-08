@@ -25,7 +25,7 @@
         <div class="space-y-1">
             {% for b in environment.bookings %}
             <div class="text-xs flex items-center gap-2">
-                <span class="text-gray-500 w-16 truncate" title="{{ b.resource_type.value }}">{{ b.resource_type.value|lower }}</span>
+                <span class="text-gray-500 w-16 truncate" title="{{ b.resource_type.value }}">{{ b.environment_label or b.resource_type.value|lower }}</span>
                 <span class="px-1.5 py-0.5 rounded font-semibold status-{{ b.status.value }}">{{ b.status.value }}</span>
                 <span class="text-gray-300 font-mono">
                     {% if b.resource_type.value == 'NAMESPACE' %}{{ b.namespace_name or '—' }}

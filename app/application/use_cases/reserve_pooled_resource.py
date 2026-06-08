@@ -42,6 +42,7 @@ class ReservePooledResourceUseCase:
         user_id: str | None = None,
         resource_id: UUID | None = None,
         environment_id: UUID | None = None,
+        environment_label: str | None = None,
     ) -> Booking:
         cfg = self._cfg
         uid = user_id or settings.DEV_USER_ID
@@ -59,7 +60,7 @@ class ReservePooledResourceUseCase:
             resource = await self._pool_repo.lock_next_available(session)
             if resource is None:
                 # Pool exhausted — enqueue (FIFO). Promoted to READY when one frees.
-                return await self._enqueue(session, uid, ttl_minutes, now, environment_id)
+                return await self._enqueue(session, uid, ttl_minutes, now, environment_id, environment_label)
 
         expires_at = PERMANENT_EXPIRES_AT if ttl_minutes == 0 else now + timedelta(minutes=ttl_minutes)
 
@@ -72,6 +73,7 @@ class ReservePooledResourceUseCase:
             expires_at=expires_at,
             created_at=now,
             environment_id=environment_id,
+            environment_label=environment_label,
             **{cfg.fk_field: resource.id},
         )
         created = await self._repo.create(session, booking)  # commit releases the row lock
@@ -81,7 +83,7 @@ class ReservePooledResourceUseCase:
         return created
 
     async def _enqueue(self, session, uid: str, ttl_minutes: int, now: datetime,
-                       environment_id: UUID | None = None) -> Booking:
+                       environment_id: UUID | None = None, environment_label: str | None = None) -> Booking:
         """No free resource — create a QUEUED booking (no resource yet, TTL starts on promotion)."""
         booking = Booking(
             id=uuid4(),
@@ -92,5 +94,6 @@ class ReservePooledResourceUseCase:
             expires_at=now,  # placeholder until promotion; enforce_ttl ignores QUEUED
             created_at=now,
             environment_id=environment_id,
+            environment_label=environment_label,
         )
         return await self._repo.create(session, booking)

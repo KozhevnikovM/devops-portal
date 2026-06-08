@@ -103,21 +103,22 @@ class OrderEnvironmentUseCase:
 
     async def _create_child(self, session, item, res, ttl_minutes, user_id, env_id):
         rt = item.resource_type
+        label = item.label
         if rt == ResourceType.VM.value:
             return await self._create.execute(
                 session, ttl_minutes, res["image_id"], res["hw_config_id"], user_id=user_id,
                 startup_script=res["startup_script"], config_roles=res["config_roles"],
-                environment_id=env_id, dispatch=False,
+                environment_id=env_id, environment_label=label, dispatch=False,
             )
         if rt == ResourceType.STATIC_VM.value:
             return await self._reserve_static.execute(
                 session, ttl_minutes, user_id=user_id,
-                static_vm_id=res["static_vm_id"], environment_id=env_id,
+                static_vm_id=res["static_vm_id"], environment_id=env_id, environment_label=label,
             )
         return await self._book_namespace.execute(
             session, ttl_minutes, user_id=user_id,
             namespace_name=res["namespace_name"], cluster_name=res["cluster_name"],
-            environment_id=env_id,
+            environment_id=env_id, environment_label=label,
         )
 
     async def _rollback(self, session, env_id, booking_ids) -> None:

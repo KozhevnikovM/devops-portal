@@ -1083,14 +1083,15 @@ or a specific pooled resource unavailable.
   "status": "PROVISIONING", "ttl_minutes": 240,
   "expires_at": "…", "created_at": "…",
   "bookings": [
-    { "id": "uuid", "resource_type": "NAMESPACE", "status": "READY", "namespace": "team-a-dev", "roles": [] },
-    { "id": "uuid", "resource_type": "VM", "status": "PROVISIONING", "image_name": "Ubuntu 22.04",
+    { "id": "uuid", "label": "ns", "resource_type": "NAMESPACE", "status": "READY", "namespace": "team-a-dev", "roles": [] },
+    { "id": "uuid", "label": "web", "resource_type": "VM", "status": "PROVISIONING", "image_name": "Ubuntu 22.04",
       "hw_config_name": "medium", "roles": ["docker-machine"], "config_failed": false }
   ]
 }
 ```
 
-The environment `status` is **derived** from its children: any `FAILED` child → `FAILED`; any
+Each child's `label` is the blueprint item's label (e.g. `web`); it is `null` for an item with no
+label. The environment `status` is **derived** from its children: any `FAILED` child → `FAILED`; any
 in-flight child → `PROVISIONING`; all `READY` → `READY`; all `RELEASED` → `RELEASED`. Child bookings
 also appear in `GET /api/bookings`, carrying their `environment_id`.
 

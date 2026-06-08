@@ -91,6 +91,7 @@ def _serialize(env: Environment) -> dict:
         "bookings": [
             {
                 "id": str(b.id),
+                "label": b.environment_label,
                 "resource_type": b.resource_type.value,
                 "status": b.status.value,
                 "config_failed": b.config_failed,
