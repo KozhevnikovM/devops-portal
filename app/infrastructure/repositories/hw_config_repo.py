@@ -42,6 +42,17 @@ class HWConfigRepository:
             raise ValueError(f"Hardware config {hw_config_id} not found or inactive")
         return _to_entity(model)
 
+    async def get_by_name(self, session: AsyncSession, name: str) -> HWConfig | None:
+        """Resolve an *active* hardware config by its (unique) name; None if no active match."""
+        result = await session.execute(
+            select(HWConfigModel).where(
+                HWConfigModel.name == name,
+                HWConfigModel.is_active.is_(True),
+            )
+        )
+        model = result.scalar_one_or_none()
+        return _to_entity(model) if model is not None else None
+
     async def create(
         self,
         session: AsyncSession,

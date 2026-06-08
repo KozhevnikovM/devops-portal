@@ -91,6 +91,17 @@ class StaticVMRepository:
             raise ValueError(f"Static VM {static_vm_id} not found")
         return _to_entity(model)
 
+    async def get_by_name(self, session: AsyncSession, name: str) -> StaticVM | None:
+        """Resolve an *active* static VM by its (unique) name; None if no active match."""
+        result = await session.execute(
+            select(StaticVMModel).where(
+                StaticVMModel.name == name,
+                StaticVMModel.is_active.is_(True),
+            )
+        )
+        model = result.scalar_one_or_none()
+        return _to_entity(model) if model is not None else None
+
     async def create(
         self,
         session: AsyncSession,

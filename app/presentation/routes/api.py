@@ -8,15 +8,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.entities import User
 from app.domain.enums import DriveType
-from app.infrastructure.auth import require_admin
+from app.infrastructure.auth import require_admin, require_user
 from app.infrastructure.database.session import get_async_session
 from app.infrastructure.repositories.image_repo import ImageRepository
 from app.infrastructure.repositories.hw_config_repo import HWConfigRepository
+from app.infrastructure.repositories.static_vm_repo import StaticVMRepository
 
 router = APIRouter(prefix="/api", tags=["admin"])
 
 _image_repo = ImageRepository()
 _hw_config_repo = HWConfigRepository()
+_static_vm_repo = StaticVMRepository()
 
 
 # ── Pydantic schemas ──────────────────────────────────────────────────────────
@@ -72,12 +74,23 @@ class HWConfigResponse(BaseModel):
     created_at: datetime
 
 
+class StaticVMSummaryResponse(BaseModel):
+    """Non-secret static-VM view for catalog discovery — never vends password/ssh_key."""
+    id: UUID
+    name: str
+    host: str
+    cpus: int | None
+    memory_mb: int | None
+    is_active: bool
+    available: bool
+
+
 # ── VM Images ─────────────────────────────────────────────────────────────────
 
 @router.get("/images", response_model=list[VMImageResponse])
 async def list_images(
     session: AsyncSession = Depends(get_async_session),
-    _: User = Depends(require_admin),
+    _: User = Depends(require_user),  # read-only catalog discovery for anyone ordering a VM
 ):
     return await _image_repo.list_all(session)
 
@@ -124,7 +137,7 @@ async def deactivate_image(
 @router.get("/hardware", response_model=list[HWConfigResponse])
 async def list_hardware(
     session: AsyncSession = Depends(get_async_session),
-    _: User = Depends(require_admin),
+    _: User = Depends(require_user),  # read-only catalog discovery for anyone ordering a VM
 ):
     return await _hw_config_repo.list_all(session)
 
@@ -167,3 +180,22 @@ async def deactivate_hardware(
         await _hw_config_repo.deactivate(session, hw_config_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
+
+
+# ── Static VMs (discovery) ────────────────────────────────────────────────────
+
+@router.get("/static-vms", response_model=list[StaticVMSummaryResponse])
+async def list_static_vms(
+    session: AsyncSession = Depends(get_async_session),
+    _: User = Depends(require_user),  # read-only discovery so names are orderable by anyone
+):
+    """List active static VMs (names discoverable for ordering). Credentials are never returned."""
+    vms = await _static_vm_repo.list_active(session)
+    held = await _static_vm_repo.held_by(session)
+    return [
+        StaticVMSummaryResponse(
+            id=vm.id, name=vm.name, host=vm.host, cpus=vm.cpus, memory_mb=vm.memory_mb,
+            is_active=vm.is_active, available=vm.id not in held,
+        )
+        for vm in vms
+    ]

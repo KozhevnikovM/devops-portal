@@ -396,12 +396,22 @@ Create a new booking. A booking is one of:
 |-------|------|----------|-------------|
 | `resource_type` | string | No | `VM` (default), `STATIC_VM`, or `NAMESPACE` |
 | `ttl_minutes` | integer | Yes | Booking duration in minutes; `0` = no expiry |
-| `image_id` | UUID | VM only | VM image to deploy |
-| `hw_config_id` | UUID | VM only | Hardware configuration |
+| `image_id` | UUID | VM | VM image to deploy (by id) |
+| `image_name` | string | VM | VM image by name (alternative to `image_id`) |
+| `hw_config_id` | UUID | VM | Hardware configuration (by id) |
+| `hw_config_name` | string | VM | Hardware configuration by name (alternative to `hw_config_id`) |
 | `namespace_id` | UUID | No | A specific namespace by id; omit for "Any available" |
 | `namespace_name` | string | No | A specific namespace by name (with `cluster_name`); see below |
 | `cluster_name` | string | No | The cluster the named namespace lives on |
-| `static_vm_id` | UUID | No | A specific static VM; omit for "Any available" |
+| `static_vm_id` | UUID | No | A specific static VM by id; omit for "Any available" |
+| `static_vm_name` | string | No | A specific static VM by name (alternative to `static_vm_id`) |
+
+> **Ordering by name instead of id.** VM image, hardware-config, and static-VM names are unique, so
+> you can order by name and skip the id lookup: a **VM** needs an image **and** a hardware config,
+> each given by id **or** name; a **static VM** can be picked by `static_vm_name`. The explicit
+> `*_id` wins if both are given. A name that matches no active catalog entry → `400`; for a VM,
+> missing both id and name for the image or the hardware config → `400`. Discover valid names with
+> `GET /api/images`, `GET /api/hardware`, and `GET /api/static-vms`.
 
 > **Ordering a namespace by (name, cluster).** A namespace name is unique **per cluster**, so the
 > `(namespace_name, cluster_name)` pair identifies one. Pass **both** to order it without looking up
@@ -507,7 +517,12 @@ the queue).
 
 **Example (Jenkins/CI):**
 ```bash
-# VM
+# VM by names (discover them with GET /api/images and /api/hardware) — no id lookup needed
+curl -s -X POST http://localhost:8000/api/bookings \
+     -H "Content-Type: application/json" -H "Authorization: Bearer dp_<api_key>" \
+     -d '{"resource_type": "VM", "ttl_minutes": 240, "image_name": "Ubuntu 22.04", "hw_config_name": "medium"}' | python3 -m json.tool
+
+# VM by ids
 curl -s -X POST http://localhost:8000/api/bookings \
      -H "Content-Type: application/json" -H "Authorization: Bearer dp_<api_key>" \
      -d '{"resource_type": "VM", "ttl_minutes": 240, "image_id": "<image-uuid>", "hw_config_id": "<hw-config-uuid>"}' | python3 -m json.tool
@@ -937,13 +952,15 @@ Permanently delete a static VM from the catalog.
 
 ---
 
-## Admin — VM Images (JSON API)
+## VM Images & Hardware (JSON API)
 
-All `/api/images` and `/api/hardware` endpoints require **admin** role.
+**Listing** (`GET /api/images`, `GET /api/hardware`, `GET /api/static-vms`) is available to **any
+authenticated user** — read-only catalog discovery so you can order by name. **Creating, updating,
+and deleting** catalog entries still require **admin** role.
 
 ### `GET /api/images`
 
-List all VM images (active and inactive).
+List all VM images (active and inactive). **Auth:** any authenticated user.
 
 **Response:** `200` array of image objects:
 
@@ -1006,7 +1023,7 @@ Existing bookings referencing this image are unaffected.
 
 ### `GET /api/hardware`
 
-List all hardware configurations (active and inactive).
+List all hardware configurations (active and inactive). **Auth:** any authenticated user.
 
 **Response:** `200` array of hardware config objects:
 
@@ -1027,6 +1044,38 @@ List all hardware configurations (active and inactive).
 
 `drive_type` is `"SSD"` or `"HDD"` (default `"HDD"`). A config's disk counts toward the matching
 drive-type quota (`max_ssd_gb` / `max_hdd_gb`).
+
+---
+
+### `GET /api/static-vms`
+
+List active static VMs so their names are discoverable for ordering (`static_vm_name` on
+`POST /api/bookings`). **Auth:** any authenticated user. **Credentials (`password`, `ssh_key`) are
+never returned here** — they're vended only on the owner's booking-creation response.
+
+**Response:** `200` array:
+
+```json
+[
+  {
+    "id": "uuid",
+    "name": "build-agent-1",
+    "host": "10.0.0.12",
+    "cpus": 4,
+    "memory_mb": 8192,
+    "is_active": true,
+    "available": true
+  }
+]
+```
+
+`available` is `false` while a live booking currently holds the static VM.
+
+**Example:**
+```bash
+curl -s http://localhost:8000/api/static-vms \
+     -H "Authorization: Bearer dp_<api_key>" | python3 -m json.tool
+```
 
 ---
 

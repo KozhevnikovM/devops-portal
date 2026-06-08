@@ -39,6 +39,17 @@ class ImageRepository:
             raise ValueError(f"VM image {image_id} not found or inactive")
         return _to_entity(model)
 
+    async def get_by_name(self, session: AsyncSession, name: str) -> VMImage | None:
+        """Resolve an *active* VM image by its (unique) name; None if no active match."""
+        result = await session.execute(
+            select(VMImageModel).where(
+                VMImageModel.name == name,
+                VMImageModel.is_active.is_(True),
+            )
+        )
+        model = result.scalar_one_or_none()
+        return _to_entity(model) if model is not None else None
+
     async def create(self, session: AsyncSession, name: str, vapp_template_id: str) -> VMImage:
         model = VMImageModel(id=uuid4(), name=name, vapp_template_id=vapp_template_id)
         session.add(model)
