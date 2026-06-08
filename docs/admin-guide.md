@@ -616,8 +616,10 @@ A blueprint is an admin-defined template bundling several resources into one ord
 of **items** entered as a **JSON array** (validated inline). An item has a `resource_type`
 (`VM`/`STATIC_VM`/`NAMESPACE`), an optional `label`, and a `spec` of catalog entries **by name**
 (VM → `image_name`/`hw_config_name`/`roles`/`startup_script`; static/namespace → optional specific
-name, else "any available"). Referenced names aren't checked here — a blueprint may reference a
-catalog entry created later, and names are resolved when it's **ordered**.
+name, else "any available"). The `label` is what the **Environments** page shows for that resource
+(e.g. `web`, `db`); an item with no label falls back to its resource type. Referenced names aren't
+checked here — a blueprint may reference a catalog entry created later, and names are resolved when
+it's **ordered**.
 **Add** / **Edit** / **Deactivate** / **Activate** / **Delete** behave as for the other panels.
 
 #### Adding a blueprint

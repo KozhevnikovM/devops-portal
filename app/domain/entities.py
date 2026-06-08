@@ -149,6 +149,7 @@ class Booking:
     config_roles: list = field(default_factory=list)  # snapshot: [{name, ansible_role, vars}]
     config_failed: bool = False
     environment_id: UUID | None = None  # parent Environment, when ordered as part of a stack
+    environment_label: str | None = None  # blueprint item label (e.g. "web") within the stack
     namespace_id: UUID | None = None
     namespace_name: str | None = None
     cluster_name: str | None = None
