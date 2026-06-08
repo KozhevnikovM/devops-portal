@@ -620,6 +620,70 @@ name, else "any available"). Referenced names aren't checked here — a blueprin
 catalog entry created later, and names are resolved when it's **ordered**.
 **Add** / **Edit** / **Deactivate** / **Activate** / **Delete** behave as for the other panels.
 
+#### Adding a blueprint
+
+1. Open **Catalog** (admin menu → Catalog) and scroll to the **Environment Blueprints** panel.
+2. In **Add Blueprint**, fill in:
+   - **Name** — unique, e.g. `dev-stack`.
+   - **Description** — optional, e.g. `namespace + web + db`.
+   - **Items (JSON array)** — one object per resource (format below).
+3. Click **Add**. Invalid JSON, a bad `resource_type`, or a duplicate name is rejected inline.
+
+Each **item** is an object:
+
+| Field | Required | Notes |
+|---|---|---|
+| `resource_type` | yes | `"VM"`, `"NAMESPACE"`, or `"STATIC_VM"` |
+| `label` | no | A short name for the resource in the stack, e.g. `"web"` |
+| `spec` | yes | Per-type fields (below); `{}` = "any available" for pooled types |
+
+`spec` by resource type:
+
+- **VM** — `image_name` and `hw_config_name` are **required**; `roles` (a list of role names) and
+  `startup_script` are optional.
+- **NAMESPACE** — `namespace_name` + `cluster_name` to pin a specific one, or `{}` for any available.
+- **STATIC_VM** — `static_vm_name` to pin one, or `{}` for any available.
+
+Example items value for `dev-stack` (a pooled namespace + a Docker-host VM + a Postgres VM):
+
+```json
+[
+  { "label": "ns",  "resource_type": "NAMESPACE", "spec": {} },
+  { "label": "web", "resource_type": "VM",
+    "spec": {
+      "image_name": "Ubuntu 22.04",
+      "hw_config_name": "medium",
+      "roles": ["docker-machine"],
+      "startup_script": "#!/bin/bash\napt-get update -y"
+    } },
+  { "label": "db",  "resource_type": "VM",
+    "spec": { "image_name": "Ubuntu 22.04", "hw_config_name": "large", "roles": ["postgres-database"] } }
+]
+```
+
+> **Names are resolved at order time, not on save.** `image_name`, `hw_config_name`, and each role
+> name must match active entries in the Catalog (Images, Hardware, Ansible Roles) — but a wrong name
+> only surfaces as a `400` when a user **orders** the blueprint, not when you save it. Make sure the
+> referenced catalog entries exist and are active before users order.
+
+**Via the API** (admin key; equivalent to the panel — a VM item missing `image_name`/`hw_config_name`
+→ `400`, a duplicate `name` → `409`):
+
+```bash
+curl -s -X POST http://localhost:8000/api/environment-blueprints \
+     -H "Content-Type: application/json" \
+     -H "Authorization: Bearer dp_<api_key>" \
+     -d '{
+           "name": "dev-stack",
+           "description": "namespace + web + db",
+           "items": [
+             {"label": "ns",  "resource_type": "NAMESPACE", "spec": {}},
+             {"label": "web", "resource_type": "VM", "spec": {"image_name": "Ubuntu 22.04", "hw_config_name": "medium", "roles": ["docker-machine"]}},
+             {"label": "db",  "resource_type": "VM", "spec": {"image_name": "Ubuntu 22.04", "hw_config_name": "large", "roles": ["postgres-database"]}}
+           ]
+         }'
+```
+
 Users **order** a blueprint via `POST /api/environments` (`{"blueprint_name": "...", "ttl_minutes": N}`),
 which creates a parent environment + its child bookings under one TTL (`GET /api/environments` to
 list). A bad item name creates nothing; a child quota failure rolls the whole order back.
