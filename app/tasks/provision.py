@@ -14,6 +14,7 @@ from app.infrastructure.database.session import SyncSessionLocal
 from app.infrastructure.repositories.booking_repo import BookingRepository
 from app.infrastructure.repositories.image_repo import ImageRepository
 from app.infrastructure.repositories.hw_config_repo import HWConfigRepository
+from app.infrastructure.config.runner import ConfigScriptError, build_config_runner
 from app.infrastructure.terraform.stub_adapter import StubTerraformAdapter
 from app.infrastructure.terraform.vcd_adapter import TerraformVcdAdapter
 
@@ -23,29 +24,16 @@ repo = BookingRepository()
 image_repo = ImageRepository()
 hw_config_repo = HWConfigRepository()
 terraform = StubTerraformAdapter() if settings.USE_STUB_TERRAFORM else TerraformVcdAdapter()
-
-
-class _NoOpConfigRunner:
-    """Placeholder post-provision config runner (v0.8.0 P1.1).
-
-    The SSH/bash executor lands in P1.2 and the Ansible runner in P2.2; until then nothing is
-    configurable, so this never runs (see ``_needs_configuration``).
-    """
-
-    def run(self, booking, *, ip, password, on_progress=None) -> None:  # pragma: no cover - no-op
-        return None
-
-
-config_runner = _NoOpConfigRunner()
+config_runner = build_config_runner()
 
 
 def _needs_configuration(booking) -> bool:
     """Whether a provisioned VM has post-create configuration to run.
 
-    Always ``False`` today — P1.2 adds a per-booking ``startup_script`` and P2.2 adds roles, each
-    of which will flip this true. Until then every VM goes PROVISIONING → READY unchanged.
+    True when a booking carries a ``startup_script`` (P2.2 will OR in roles). VMs with neither go
+    PROVISIONING → READY unchanged.
     """
-    return False
+    return bool(getattr(booking, "startup_script", None))
 
 
 def _run(work):
@@ -137,20 +125,39 @@ def provision_vm_task(self, booking_id: str, image_id: str, hw_config_id: str) -
             ip = result["ip"]
             _run(lambda s: repo.sync_set_status_message(s, booking_uuid, None))
 
-            # ── Post-provision configuration (no-op until P1.2/P2.2) ──
+            # ── Post-provision: wait for SSH reachability, then run the startup script ──
+            # Two distinct outcomes: an unreachable VM is an infra failure (raises → FAILED); a
+            # reachable VM whose script fails is still usable → READY with config_failed=True.
             booking = _run(lambda s: repo.sync_get(s, booking_uuid))
-            if _needs_configuration(booking):
+            config_failed = False
+            config_message = None
+            if not settings.USE_STUB_TERRAFORM:
                 _run(lambda s: repo.sync_update_status(
                     s, booking_uuid, BookingStatus.CONFIGURING, vm_ip=ip, vm_password=vm_password
                 ))
-                logger.info("Configuring booking %s — IP: %s", booking_id, ip)
-                config_runner.run(booking, ip=ip, password=vm_password, on_progress=_on_progress)
-                _run(lambda s: repo.sync_set_status_message(s, booking_uuid, None))
+                _on_progress(f"Waiting for {ip} to become reachable…")
+                client = config_runner.connect(ip, vm_password, on_progress=_on_progress)  # VmUnreachableError → FAILED
+                try:
+                    if _needs_configuration(booking):
+                        logger.info("Configuring booking %s — IP: %s", booking_id, ip)
+                        config_runner.run_script(client, booking.startup_script, on_progress=_on_progress)
+                except ConfigScriptError as cfg_exc:
+                    # VM is up but the script failed — keep the VM, flag the failure.
+                    config_failed = True
+                    config_message = str(cfg_exc)
+                    logger.warning("Configuration script failed for booking %s: %s", booking_id, cfg_exc)
+                finally:
+                    config_runner.close(client)
+                _run(lambda s: repo.sync_set_status_message(s, booking_uuid, config_message))
 
             _run(lambda s: repo.sync_update_status(
-                s, booking_uuid, BookingStatus.READY, vm_ip=ip, vm_password=vm_password
+                s, booking_uuid, BookingStatus.READY,
+                vm_ip=ip, vm_password=vm_password, config_failed=config_failed,
             ))
-            logger.info("Provisioning complete for booking %s — IP: %s", booking_id, ip)
+            logger.info(
+                "Provisioning complete for booking %s — IP: %s (config_failed=%s)",
+                booking_id, ip, config_failed,
+            )
 
         except Exception as exc:
             logger.error("Provisioning failed for booking %s: %s", booking_id, exc)

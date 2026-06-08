@@ -53,6 +53,8 @@ def _to_entity(
         disk_mb=m.disk_mb,
         drive_type=m.drive_type,
         status_message=m.status_message,
+        startup_script=m.startup_script,
+        config_failed=m.config_failed,
         namespace_id=m.namespace_id,
         namespace_name=namespace.name if namespace else None,
         cluster_name=namespace.cluster_name if namespace else None,
@@ -161,6 +163,7 @@ class BookingRepository:
             memory_mb=booking.memory_mb,
             disk_mb=booking.disk_mb,
             drive_type=booking.drive_type,
+            startup_script=booking.startup_script,
         )
         session.add(model)
         await session.flush()  # INSERT booking before audit to satisfy FK constraint
@@ -319,6 +322,7 @@ class BookingRepository:
         status: BookingStatus,
         vm_ip: str | None = None,
         vm_password: str | None = None,
+        config_failed: bool | None = None,
         actor_id: str = "system",
     ) -> None:
         model = session.get(BookingModel, booking_id)
@@ -330,6 +334,8 @@ class BookingRepository:
             model.vm_ip = vm_ip
         if vm_password is not None:
             model.vm_password = vm_password
+        if config_failed is not None:
+            model.config_failed = config_failed
         session.add(BookingAuditModel(
             booking_id=booking_id,
             actor_id=actor_id,

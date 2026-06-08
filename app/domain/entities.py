@@ -95,6 +95,8 @@ class Booking:
     disk_mb: int = 0
     drive_type: str = DriveType.HDD.value
     status_message: str | None = None
+    startup_script: str | None = None
+    config_failed: bool = False
     namespace_id: UUID | None = None
     namespace_name: str | None = None
     cluster_name: str | None = None
