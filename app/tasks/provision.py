@@ -25,6 +25,29 @@ hw_config_repo = HWConfigRepository()
 terraform = StubTerraformAdapter() if settings.USE_STUB_TERRAFORM else TerraformVcdAdapter()
 
 
+class _NoOpConfigRunner:
+    """Placeholder post-provision config runner (v0.8.0 P1.1).
+
+    The SSH/bash executor lands in P1.2 and the Ansible runner in P2.2; until then nothing is
+    configurable, so this never runs (see ``_needs_configuration``).
+    """
+
+    def run(self, booking, *, ip, password, on_progress=None) -> None:  # pragma: no cover - no-op
+        return None
+
+
+config_runner = _NoOpConfigRunner()
+
+
+def _needs_configuration(booking) -> bool:
+    """Whether a provisioned VM has post-create configuration to run.
+
+    Always ``False`` today — P1.2 adds a per-booking ``startup_script`` and P2.2 adds roles, each
+    of which will flip this true. Until then every VM goes PROVISIONING → READY unchanged.
+    """
+    return False
+
+
 def _run(work):
     """Run one unit of DB work in a short-lived session, releasing the connection at once.
 
@@ -112,8 +135,18 @@ def provision_vm_task(self, booking_id: str, image_id: str, hw_config_id: str) -
                 terraform.apply(workspace_id, config, api_token=api_token, on_progress=_on_progress)
             )
             ip = result["ip"]
-
             _run(lambda s: repo.sync_set_status_message(s, booking_uuid, None))
+
+            # ── Post-provision configuration (no-op until P1.2/P2.2) ──
+            booking = _run(lambda s: repo.sync_get(s, booking_uuid))
+            if _needs_configuration(booking):
+                _run(lambda s: repo.sync_update_status(
+                    s, booking_uuid, BookingStatus.CONFIGURING, vm_ip=ip, vm_password=vm_password
+                ))
+                logger.info("Configuring booking %s — IP: %s", booking_id, ip)
+                config_runner.run(booking, ip=ip, password=vm_password, on_progress=_on_progress)
+                _run(lambda s: repo.sync_set_status_message(s, booking_uuid, None))
+
             _run(lambda s: repo.sync_update_status(
                 s, booking_uuid, BookingStatus.READY, vm_ip=ip, vm_password=vm_password
             ))

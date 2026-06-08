@@ -33,7 +33,7 @@ def enforce_ttl() -> None:
 
 @celery_app.task
 def reap_stale_provisioning() -> None:
-    """Mark PENDING/PROVISIONING/RETRY bookings stuck past the threshold as FAILED."""
+    """Mark PENDING/PROVISIONING/CONFIGURING/RETRY bookings stuck past the threshold as FAILED."""
     threshold = settings.STALE_PROVISIONING_THRESHOLD_MINUTES
 
     with SyncSessionLocal() as session:
