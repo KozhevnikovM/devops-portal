@@ -313,5 +313,4 @@ def test_header_nav_shows_booking_types(client):
     assert resp.status_code == 200
     assert 'href="/book/vm"' in resp.text
     assert 'href="/book/namespace"' in resp.text
-    assert "Environment" in resp.text
-    assert "cursor-not-allowed" in resp.text  # Environment is disabled
+    assert 'href="/environments"' in resp.text  # Environments is now a live page

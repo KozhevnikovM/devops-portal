@@ -1,0 +1,66 @@
+{% set is_terminal = environment.derived_status in ('READY', 'FAILED', 'RELEASED') %}
+{% set is_owner = environment.owner_username == current_user.username %}
+<tr
+    id="environment-{{ environment.id }}"
+    class="border-b border-gray-800 last:border-0 align-top hover:bg-gray-800/40 transition-colors"
+    {% if not is_terminal %}
+        hx-get="/environments/{{ environment.id }}/row"
+        hx-trigger="every 3s"
+        hx-swap="outerHTML"
+    {% endif %}
+>
+    <td class="px-4 py-3 text-gray-200">
+        {{ environment.name }}
+        {% if environment.blueprint_name %}
+        <div class="text-xs text-gray-500">from {{ environment.blueprint_name }}</div>
+        {% endif %}
+    </td>
+    <td class="px-4 py-3">
+        <span class="text-xs px-2 py-1 rounded font-semibold status-{{ environment.derived_status }}">
+            {% if environment.derived_status == 'PROVISIONING' %}<span class="animate-pulse">⬤</span>{% endif %}
+            {{ environment.derived_status }}
+        </span>
+    </td>
+    <td class="px-4 py-3">
+        <div class="space-y-1">
+            {% for b in environment.bookings %}
+            <div class="text-xs flex items-center gap-2">
+                <span class="text-gray-500 w-16 truncate" title="{{ b.resource_type.value }}">{{ b.resource_type.value|lower }}</span>
+                <span class="px-1.5 py-0.5 rounded font-semibold status-{{ b.status.value }}">{{ b.status.value }}</span>
+                <span class="text-gray-300 font-mono">
+                    {% if b.resource_type.value == 'NAMESPACE' %}{{ b.namespace_name or '—' }}
+                    {% elif b.resource_type.value == 'STATIC_VM' %}{{ b.static_vm_name or '—' }}{% if b.static_vm_host %} @ {{ b.static_vm_host }}{% endif %}
+                    {% else %}{{ b.image_name or '—' }}{% if b.vm_ip %} @ {{ b.vm_ip }}{% endif %}{% endif %}
+                </span>
+                {% if b.config_failed %}<span class="text-amber-400" title="configuration failed">⚠</span>{% endif %}
+            </div>
+            {% else %}
+            <span class="text-gray-600 text-xs">no resources</span>
+            {% endfor %}
+        </div>
+    </td>
+    <td class="px-4 py-3 text-gray-400 text-xs">
+        {% if environment.ttl_minutes == 0 %}Never
+        {% else %}{{ environment.expires_at | as_tz(current_user.timezone) }}{% endif %}
+    </td>
+    <td class="px-4 py-3">
+        {% if (is_owner or current_user.role == 'admin') and environment.derived_status != 'RELEASED' %}
+        <details class="relative">
+            <summary class="list-none cursor-pointer w-7 h-7 flex items-center justify-center rounded text-gray-400 hover:text-gray-200 hover:bg-gray-700 transition-colors select-none text-lg leading-none">⋮</summary>
+            <div class="absolute right-0 bottom-full mb-1 w-48 bg-gray-900 border border-gray-700 rounded shadow-lg z-50 py-1">
+                <button
+                    class="w-full text-left px-3 py-2 text-sm text-red-400 hover:bg-gray-800 transition-colors"
+                    hx-delete="/environments/{{ environment.id }}"
+                    hx-target="#environment-{{ environment.id }}"
+                    hx-swap="outerHTML"
+                    hx-confirm="Release this whole environment? All its resources will be torn down."
+                >
+                    Release
+                </button>
+            </div>
+        </details>
+        {% else %}
+        <span class="text-gray-600">—</span>
+        {% endif %}
+    </td>
+</tr>

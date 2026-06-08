@@ -1107,6 +1107,11 @@ Release a whole environment — tears down **all** its child resources together 
 now `RELEASING`/`RELEASED`); idempotent if already released. The environment's TTL expiring triggers
 the same grouped teardown automatically.
 
+> **Browser UI:** the **Environments** page (`GET /environments`, in the top nav) lets users order a
+> blueprint, watch the stack come up (HTMX polling), and release it — the same operations as the JSON
+> API above. Those `/environments*` routes return HTML fragments and are intentionally absent from
+> the schema.
+
 ---
 
 ### `GET /api/environment-blueprints`
