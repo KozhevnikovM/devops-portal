@@ -94,6 +94,23 @@ class EnvironmentBlueprint:
 
 
 @dataclass
+class Environment:
+    """An ordered stack: a parent owning N child bookings, with one shared TTL.
+
+    `status` is not stored — it's derived from the child bookings' statuses.
+    """
+    id: UUID
+    name: str
+    blueprint_name: str | None
+    user_id: str
+    ttl_minutes: int
+    expires_at: datetime
+    created_at: datetime
+    bookings: list = field(default_factory=list)  # list[Booking] — the children
+    owner_username: str | None = None
+
+
+@dataclass
 class StaticVM:
     id: UUID
     name: str
@@ -131,6 +148,7 @@ class Booking:
     startup_script: str | None = None
     config_roles: list = field(default_factory=list)  # snapshot: [{name, ansible_role, vars}]
     config_failed: bool = False
+    environment_id: UUID | None = None  # parent Environment, when ordered as part of a stack
     namespace_id: UUID | None = None
     namespace_name: str | None = None
     cluster_name: str | None = None

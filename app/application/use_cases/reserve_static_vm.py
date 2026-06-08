@@ -41,5 +41,9 @@ class ReserveStaticVMUseCase(ReservePooledResourceUseCase):
         ttl_minutes: int,
         user_id: str | None = None,
         static_vm_id: UUID | None = None,
+        environment_id: UUID | None = None,
     ) -> Booking:
-        return await super().execute(session, ttl_minutes, user_id=user_id, resource_id=static_vm_id)
+        return await super().execute(
+            session, ttl_minutes, user_id=user_id, resource_id=static_vm_id,
+            environment_id=environment_id,
+        )

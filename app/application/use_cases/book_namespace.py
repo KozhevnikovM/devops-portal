@@ -41,6 +41,7 @@ class BookNamespaceUseCase(ReservePooledResourceUseCase):
         namespace_id: UUID | None = None,
         namespace_name: str | None = None,
         cluster_name: str | None = None,
+        environment_id: UUID | None = None,
     ) -> Booking:
         # An explicit namespace_id wins; otherwise resolve the (name, cluster) pair to one.
         # When none are given, fall through to the pool's any-available / queue path.
@@ -53,4 +54,7 @@ class BookNamespaceUseCase(ReservePooledResourceUseCase):
                     f"No namespace '{namespace_name}' on cluster '{cluster_name}'"
                 )
             namespace_id = namespace.id
-        return await super().execute(session, ttl_minutes, user_id=user_id, resource_id=namespace_id)
+        return await super().execute(
+            session, ttl_minutes, user_id=user_id, resource_id=namespace_id,
+            environment_id=environment_id,
+        )

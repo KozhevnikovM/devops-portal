@@ -1,0 +1,147 @@
+"""JSON API for ordering and viewing environments (a stack of child bookings)."""
+from uuid import UUID
+
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.application.use_cases.book_namespace import BookNamespaceUseCase
+from app.application.use_cases.create_booking import CreateBookingUseCase
+from app.application.use_cases.order_environment import OrderEnvironmentUseCase
+from app.application.use_cases.reserve_static_vm import ReserveStaticVMUseCase
+from app.domain.entities import Environment, User
+from app.domain.enums import BookingStatus
+from app.domain.exceptions import (
+    BlueprintNotFoundError, EnvironmentItemError, NamespaceUnavailableError,
+    QuotaExceededError, StaticVMUnavailableError,
+)
+from app.infrastructure.auth import require_user
+from app.infrastructure.celery_dispatcher import CeleryTaskDispatcher
+from app.infrastructure.database.session import get_async_session
+from app.infrastructure.repositories.booking_repo import BookingRepository
+from app.infrastructure.repositories.environment_blueprint_repo import EnvironmentBlueprintRepository
+from app.infrastructure.repositories.environment_repo import EnvironmentRepository
+from app.infrastructure.repositories.hw_config_repo import HWConfigRepository
+from app.infrastructure.repositories.image_repo import ImageRepository
+from app.infrastructure.repositories.namespace_repo import NamespaceRepository
+from app.infrastructure.repositories.role_repo import RoleRepository
+from app.infrastructure.repositories.static_vm_repo import StaticVMRepository
+
+router = APIRouter(prefix="/api/environments", tags=["environments"])
+
+_repo = BookingRepository()
+_env_repo = EnvironmentRepository()
+_blueprint_repo = EnvironmentBlueprintRepository()
+_image_repo = ImageRepository()
+_hw_config_repo = HWConfigRepository()
+_role_repo = RoleRepository()
+_namespace_repo = NamespaceRepository()
+_static_vm_repo = StaticVMRepository()
+_dispatcher = CeleryTaskDispatcher()
+_create_use_case = CreateBookingUseCase(_repo, _image_repo, _hw_config_repo, dispatcher=_dispatcher)
+_reserve_static_vm_use_case = ReserveStaticVMUseCase(_repo, _static_vm_repo)
+_book_namespace_use_case = BookNamespaceUseCase(_repo, _namespace_repo)
+_order_use_case = OrderEnvironmentUseCase(
+    _env_repo, _blueprint_repo, _repo, _create_use_case, _reserve_static_vm_use_case,
+    _book_namespace_use_case, _image_repo, _hw_config_repo, _role_repo, _static_vm_repo, _dispatcher,
+)
+
+# A child is "in flight" until it settles; an environment is FAILED if any child failed.
+_IN_FLIGHT = {
+    BookingStatus.QUEUED, BookingStatus.PENDING, BookingStatus.PROVISIONING,
+    BookingStatus.CONFIGURING, BookingStatus.RETRY,
+}
+
+
+class OrderEnvironmentRequest(BaseModel):
+    blueprint_name: str
+    ttl_minutes: int
+
+
+def _derived_status(env: Environment) -> str:
+    """Aggregate the environment's status from its children."""
+    statuses = [b.status for b in env.bookings]
+    if not statuses:
+        return BookingStatus.READY.value
+    if any(s == BookingStatus.FAILED for s in statuses):
+        return BookingStatus.FAILED.value
+    if any(s in _IN_FLIGHT for s in statuses):
+        return BookingStatus.PROVISIONING.value
+    if all(s == BookingStatus.RELEASED for s in statuses):
+        return BookingStatus.RELEASED.value
+    return BookingStatus.READY.value
+
+
+def _serialize(env: Environment) -> dict:
+    return {
+        "id": str(env.id),
+        "name": env.name,
+        "blueprint_name": env.blueprint_name,
+        "status": _derived_status(env),
+        "owner_username": env.owner_username,
+        "ttl_minutes": env.ttl_minutes,
+        "expires_at": env.expires_at.isoformat(),
+        "created_at": env.created_at.isoformat(),
+        "bookings": [
+            {
+                "id": str(b.id),
+                "resource_type": b.resource_type.value,
+                "status": b.status.value,
+                "config_failed": b.config_failed,
+                "image_name": b.image_name,
+                "hw_config_name": b.hw_config_name,
+                "namespace": b.namespace_name,
+                "static_vm": b.static_vm_name,
+                "vm_ip": b.vm_ip,
+                "roles": [r.get("name") for r in (b.config_roles or [])],
+            }
+            for b in env.bookings
+        ],
+    }
+
+
+@router.post("", status_code=201)
+async def order_environment(
+    body: OrderEnvironmentRequest,
+    session: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(require_user),
+):
+    try:
+        env = await _order_use_case.execute(
+            session, body.blueprint_name, body.ttl_minutes, user_id=str(current_user.id)
+        )
+    except BlueprintNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except EnvironmentItemError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except (QuotaExceededError, NamespaceUnavailableError, StaticVMUnavailableError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    env.owner_username = current_user.username
+    return _serialize(env)
+
+
+@router.get("")
+async def list_environments(
+    session: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(require_user),
+):
+    if current_user.role == "admin":
+        envs = await _env_repo.list_all(session)
+    else:
+        envs = await _env_repo.list_by_user(session, str(current_user.id))
+    return [_serialize(e) for e in envs]
+
+
+@router.get("/{environment_id}")
+async def get_environment(
+    environment_id: UUID,
+    session: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(require_user),
+):
+    try:
+        env = await _env_repo.get(session, environment_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Environment not found")
+    if env.user_id != str(current_user.id) and current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Not the environment owner")
+    return _serialize(env)
