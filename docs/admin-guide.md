@@ -662,9 +662,18 @@ The password is also returned in the `vm_password` field of the `GET /api/bookin
 
 A VM booking can carry a **`startup_script`** (bash) that runs automatically after the VM is
 provisioned. Once Terraform reports an IP, the booking enters the **`CONFIGURING`** state and the
-**worker connects to the VM over SSH** and runs the script via `bash -s`, streaming its output to
-the booking's status. The booking becomes `READY` only after the script exits `0`; a non-zero exit
-or an unreachable VM marks it `FAILED` (visible in the booking's audit log).
+**worker retries an SSH connect every `CONFIG_SSH_RETRY_INTERVAL` (30 s) up to `CONFIG_SSH_TIMEOUT`**
+— Terraform reports the IP before the guest finishes booting, so this waits for the VM to actually
+become reachable. Then it runs the script via `bash -s`, streaming output to the booking's status.
+
+Two outcomes are kept distinct:
+
+- **VM never reachable within the timeout → `FAILED`** (an infrastructure failure).
+- **VM reachable but the script exits non-zero → `READY`, flagged "⚠ configuration failed"** — the
+  VM is up and usable, so it's handed over, but the row shows the warning and an **Audit log** link,
+  and the script error is recorded. Fix the script (or the VM) and re-book.
+
+A VM with **no** `startup_script` still waits to become reachable before going `READY`.
 
 Order it via the API:
 

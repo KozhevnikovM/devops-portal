@@ -65,12 +65,14 @@ def test_no_config_goes_straight_to_ready():
         provision_vm_task.apply(args=[bid, iid, hid])
 
     statuses = [c.args[2] for c in mock_repo.sync_update_status.call_args_list]
+    # Stub mode has no real VM, so the reachability/config step is skipped entirely.
     assert BookingStatus.CONFIGURING not in statuses
     assert statuses[-1] == BookingStatus.READY
-    runner.run.assert_not_called()
+    runner.connect.assert_not_called()
 
 
-def test_needs_config_enters_configuring_then_ready():
+def test_real_mode_enters_configuring_then_ready():
+    """In real mode the worker waits for SSH (CONFIGURING) then marks READY."""
     bid, iid, hid, mock_repo, img, hw = _run_provision()
     with (
         patch("app.tasks.provision.SyncSessionLocal") as sf,
@@ -78,18 +80,19 @@ def test_needs_config_enters_configuring_then_ready():
         patch("app.tasks.provision.image_repo", img),
         patch("app.tasks.provision.hw_config_repo", hw),
         patch("app.tasks.provision.asyncio.run", return_value={"ip": "10.0.0.5"}),
-        patch("app.tasks.provision._needs_configuration", return_value=True),
+        patch("app.tasks.provision.settings.USE_STUB_TERRAFORM", False),
         patch("app.tasks.provision.config_runner") as runner,
     ):
         sf.return_value.__enter__ = MagicMock(return_value=MagicMock())
         sf.return_value.__exit__ = MagicMock(return_value=False)
+        runner.connect.return_value = MagicMock()
         from app.tasks.provision import provision_vm_task
         provision_vm_task.apply(args=[bid, iid, hid])
 
     statuses = [c.args[2] for c in mock_repo.sync_update_status.call_args_list]
-    # PROVISIONING → CONFIGURING → READY, in order.
+    # PROVISIONING → CONFIGURING → READY, in order; reachability was checked.
     assert statuses == [BookingStatus.PROVISIONING, BookingStatus.CONFIGURING, BookingStatus.READY]
-    runner.run.assert_called_once()
+    runner.connect.assert_called_once()
 
 
 # ── Release classification ────────────────────────────────────────────────────

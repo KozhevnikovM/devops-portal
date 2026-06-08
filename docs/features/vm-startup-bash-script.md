@@ -24,30 +24,45 @@ plumbing that the Ansible runner (P2.2) reuses.
   it. Browser form is unchanged.)
 
 ### Config runner (`app/infrastructure/config/`)
-- A `ConfigRunner` Protocol: `run(booking, *, ip, password, on_progress) -> None`.
-- `SshConfigRunner` (real): waits for SSH on `(ip, VM_SSH_PORT)` up to `CONFIG_SSH_TIMEOUT`
-  (retrying), connects as `VM_SSH_USER` with the VM password (or `VM_SSH_PRIVATE_KEY` if set), runs
-  the script via `bash -s` over `exec_command`, streams output lines through `on_progress`, and
-  raises `ConfigError` on a non-zero exit or if SSH never comes up. Uses **paramiko** (sync — fits
-  the sync Celery worker); added to `requirements.txt` and the worker image.
-- `StubConfigRunner` (no-op) selected when `USE_STUB_TERRAFORM` is true, so dev/CI bookings with a
-  script don't hang waiting for a real VM.
-- `provision.py` selects the runner like the terraform adapter
-  (`StubConfigRunner()` vs `SshConfigRunner()`) and `_needs_configuration(booking)` becomes
-  `bool(booking.startup_script)` (P2.2 will OR in roles).
+- `SshConfigRunner` (real), with two distinct phases so reachability and script outcomes are
+  handled differently:
+  - **`connect(ip, password, on_progress)`** — retries an SSH connect **every
+    `CONFIG_SSH_RETRY_INTERVAL` (default 30 s)** up to `CONFIG_SSH_TIMEOUT`. Returns a client, or
+    raises **`VmUnreachableError`** if the VM never accepts SSH within the timeout.
+  - **`run_script(client, script, on_progress)`** — runs the script via `bash -s`, streams output,
+    raises **`ConfigScriptError`** on a non-zero exit.
+- `StubConfigRunner` (no-op connect/run) selected when `USE_STUB_TERRAFORM` is true, so dev/CI
+  bookings don't wait for a real VM.
+- `provision.py` selects the runner like the terraform adapter and orchestrates the two phases (see
+  below). `_needs_configuration(booking)` is `bool(booking.startup_script)` (P2.2 ORs in roles) and
+  gates only the script run, not the reachability wait.
 
 ### Settings (`.env.example` documented)
 - `VM_SSH_USER` (default `root`), `VM_SSH_PORT` (default `22`), `VM_SSH_PRIVATE_KEY` (optional PEM;
-  empty → password auth with the VM password), `CONFIG_SSH_TIMEOUT` (default `300` s).
+  empty → password auth with the VM password), `CONFIG_SSH_TIMEOUT` (default `300` s),
+  `CONFIG_SSH_RETRY_INTERVAL` (default `30` s).
 
-### Behaviour & failure handling
-- A VM with no `startup_script`: unchanged — straight to `READY` (seam predicate false).
-- A VM with a `startup_script`: `PROVISIONING → CONFIGURING` (script output streamed to
-  `status_message`) `→ READY`. SSH-unreachable within the timeout, or a non-zero script exit, raises
-  → the provision task's existing retry/`FAILED` path (message + audit). **Scripts must be
-  idempotent** — a task retry re-runs the whole apply+config (documented).
-- **Security**: the script runs on the user's **own** VM (executed there, not on the worker).
-  Documented in the admin guide.
+### Behaviour — reachability vs configuration are separate outcomes
+
+After `terraform apply` returns the IP, the worker (real mode only; stub skips) **retries SSH every
+30 s within `CONFIG_SSH_TIMEOUT`**, with two outcomes the user asked for:
+
+1. **VM not reachable within the timeout → `FAILED`.** A VM that never accepts SSH is an
+   infrastructure failure: `VmUnreachableError` propagates to the provision task's existing
+   retry/`FAILED` path (message + audit).
+2. **VM reachable but the script failed → `READY`, flagged "configuration failed".** The VM is up
+   and usable, so it goes `READY`, but a new **`bookings.config_failed`** flag is set and the script
+   error is kept in `status_message` (and audited). The booking row shows a "⚠ configuration
+   failed" indicator and an Audit-log link even though the status is `READY`.
+
+So the lifecycle for a scripted VM is `PROVISIONING → CONFIGURING → READY` (clean) or
+`→ READY (config_failed)` (script failed) or `→ FAILED` (unreachable). A VM **without** a script
+still gets the reachability wait, then `READY`.
+
+- **`config_failed`**: new nullable/`false`-default boolean column — **Alembic `0019`**
+  (down_revision `0018`). Mapped on the `Booking` entity + repo; cleared (false) on a clean READY.
+- **Idempotency / Security** unchanged: scripts must be idempotent (a *provisioning* retry re-runs
+  apply + config); the script executes on the user's **own** VM.
 
 No change to teardown, pooled flows, or the namespace path.
 
@@ -66,9 +81,12 @@ POST /api/bookings
 - `CreateBookingUseCase`: `startup_script` is persisted on the created booking.
 - `POST /api/bookings`: accepts `startup_script` and threads it into the use case.
 - `_needs_configuration`: true iff `startup_script` is set.
-- `SshConfigRunner` with **paramiko mocked**: waits for SSH then runs `bash -s` with the script and
-  streams progress; a non-zero exit raises `ConfigError`; an unreachable host raises after the
-  timeout. `StubConfigRunner` is a no-op.
-- Provision task (stub): a booking with a `startup_script` enters `CONFIGURING` and invokes the
-  runner once with the script, then `READY` (reuses the #204 seam test harness).
-- Migration chain: head advances to `0018`, linear on `0017`.
+- `SshConfigRunner` with **paramiko mocked**: `connect` retries then succeeds and streams progress;
+  `connect` raises `VmUnreachableError` after the timeout; `run_script` raises `ConfigScriptError`
+  on a non-zero exit. `StubConfigRunner` is a no-op.
+- Provision task (with the runner stubbed): **unreachable VM → `FAILED`**; **reachable + script
+  fails → `READY` with `config_failed=True`** and the error in `status_message`; reachable + script
+  ok → clean `READY`; a script-less VM → reachability wait then clean `READY`.
+- `config_failed` persists/round-trips on the booking; the row shows the "configuration failed"
+  indicator + Audit-log link when `READY` and `config_failed`.
+- Migration chain: head advances to `0019`, linear on `0018`/`0017`.

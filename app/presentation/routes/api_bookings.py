@@ -84,6 +84,7 @@ def _summary(b: Booking) -> dict:
         "hw_config_id": str(b.hw_config_id) if b.hw_config_id else None,
         "hw_config_name": b.hw_config_name,
         "vm_ip": b.vm_ip,
+        "config_failed": b.config_failed,
         "namespace": b.namespace_name,
         "cluster": b.cluster_name,
         "api_url": b.api_url,

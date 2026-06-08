@@ -61,7 +61,8 @@ class Settings(BaseSettings):
     VM_SSH_USER: str = "root"
     VM_SSH_PORT: int = 22
     VM_SSH_PRIVATE_KEY: str = ""        # PEM key path; empty → password auth with the VM password
-    CONFIG_SSH_TIMEOUT: int = 300       # seconds to wait for the VM's SSH to come up
+    CONFIG_SSH_TIMEOUT: int = 300       # seconds to wait for the VM's SSH to come up (0 disables)
+    CONFIG_SSH_RETRY_INTERVAL: int = 30  # seconds between SSH connect attempts while waiting
 
 
 settings = Settings()

@@ -9,7 +9,9 @@ from uuid import uuid4
 
 import pytest
 
-from app.infrastructure.config.runner import ConfigError, SshConfigRunner, StubConfigRunner
+from app.infrastructure.config.runner import (
+    ConfigScriptError, SshConfigRunner, StubConfigRunner, VmUnreachableError,
+)
 
 
 # ── ConfigRunner logic ────────────────────────────────────────────────────────
@@ -31,7 +33,7 @@ def _fake_client(stdout_lines, exit_code, stderr=b""):
 def test_run_script_streams_and_succeeds():
     client = _fake_client(["installing\n", "done\n"], exit_code=0)
     progress = []
-    SshConfigRunner._run_script(client, "echo hi", on_progress=progress.append)
+    SshConfigRunner.run_script(client, "echo hi", on_progress=progress.append)
     # bash -s was fed the script over stdin.
     client.exec_command.assert_called_once_with("bash -s")
     stdin = client.exec_command.return_value[0]
@@ -41,35 +43,46 @@ def test_run_script_streams_and_succeeds():
 
 def test_run_script_nonzero_exit_raises():
     client = _fake_client(["boom\n"], exit_code=2, stderr=b"permission denied")
-    with pytest.raises(ConfigError) as exc:
-        SshConfigRunner._run_script(client, "false", on_progress=None)
+    with pytest.raises(ConfigScriptError) as exc:
+        SshConfigRunner.run_script(client, "false", on_progress=None)
     assert "exit 2" in str(exc.value)
 
 
-def test_ssh_runner_skips_when_no_script():
-    runner = SshConfigRunner()
-    booking = SimpleNamespace(id=uuid4(), startup_script=None)
-    with patch.object(runner, "_connect") as connect:
-        runner.run(booking, ip="10.0.0.5", password="pw")
-    connect.assert_not_called()
-
-
-def test_ssh_runner_connects_then_runs_then_closes():
-    runner = SshConfigRunner()
-    booking = SimpleNamespace(id=uuid4(), startup_script="echo hi")
-    client = _fake_client(["ok\n"], exit_code=0)
-    with patch.object(runner, "_connect", return_value=client) as connect:
-        runner.run(booking, ip="10.0.0.5", password="pw", on_progress=None)
-    connect.assert_called_once()
-    client.close.assert_called_once()
-
-
 def test_stub_runner_is_noop():
-    StubConfigRunner().run(SimpleNamespace(id=uuid4(), startup_script="echo hi"), ip="x", password="y")
+    runner = StubConfigRunner()
+    client = runner.connect("10.0.0.5", "pw")
+    runner.run_script(client, "echo hi")
+    runner.close(client)
 
 
-def test_connect_times_out_to_config_error():
-    """_connect raises ConfigError when SSH never comes up within the timeout."""
+def test_connect_retries_then_succeeds():
+    """connect retries on failure and returns the client once SSH answers."""
+    import sys
+    fake_paramiko = MagicMock()
+    good = MagicMock()
+    # First two SSHClient()s fail to connect, the third succeeds.
+    bad1, bad2 = MagicMock(), MagicMock()
+    bad1.connect.side_effect = OSError("refused")
+    bad2.connect.side_effect = OSError("refused")
+    good.connect.return_value = None
+    fake_paramiko.SSHClient.side_effect = [bad1, bad2, good]
+    runner = SshConfigRunner()
+    with patch.dict(sys.modules, {"paramiko": fake_paramiko}), \
+         patch("app.infrastructure.config.runner.settings") as s, \
+         patch("app.infrastructure.config.runner.time.sleep") as sleep, \
+         patch("app.infrastructure.config.runner.time.monotonic", side_effect=[0, 0, 30, 60, 90, 120]):
+        s.VM_SSH_PRIVATE_KEY = ""
+        s.VM_SSH_PORT = 22
+        s.VM_SSH_USER = "root"
+        s.CONFIG_SSH_TIMEOUT = 300
+        s.CONFIG_SSH_RETRY_INTERVAL = 30
+        client = runner.connect("10.0.0.5", "pw", on_progress=None)
+    assert client is good
+    assert sleep.call_count == 2  # waited between the two failures
+
+
+def test_connect_times_out_to_vm_unreachable():
+    """connect raises VmUnreachableError when SSH never comes up within the timeout."""
     import sys
     fake_paramiko = MagicMock()
     fake_paramiko.SSHClient.return_value.connect.side_effect = OSError("connection refused")
@@ -80,9 +93,10 @@ def test_connect_times_out_to_config_error():
         s.VM_SSH_PRIVATE_KEY = ""
         s.VM_SSH_PORT = 22
         s.VM_SSH_USER = "root"
-        s.CONFIG_SSH_TIMEOUT = 0  # deadline already passed → immediate ConfigError
-        with pytest.raises(ConfigError):
-            runner._connect("10.0.0.5", "pw", on_progress=None)
+        s.CONFIG_SSH_TIMEOUT = 0  # deadline already passed → immediate failure
+        s.CONFIG_SSH_RETRY_INTERVAL = 30
+        with pytest.raises(VmUnreachableError):
+            runner.connect("10.0.0.5", "pw", on_progress=None)
 
 
 # ── _needs_configuration + selection ──────────────────────────────────────────
@@ -98,6 +112,73 @@ def test_stub_mode_selects_stub_runner():
         assert isinstance(build_config_runner(), StubConfigRunner)
     with patch("app.infrastructure.config.runner.settings.USE_STUB_TERRAFORM", False):
         assert isinstance(build_config_runner(), SshConfigRunner)
+
+
+# ── Provision orchestration: reachability vs config outcomes ──────────────────
+def _provision_in_real_mode(startup_script, *, connect_exc=None, script_exc=None):
+    """Run provision_vm_task in real mode with a stubbed config runner; return the status calls."""
+    bid, iid, hid = str(uuid4()), str(uuid4()), str(uuid4())
+    mock_repo = MagicMock()
+    mock_repo.sync_get = MagicMock(return_value=SimpleNamespace(startup_script=startup_script))
+    img = MagicMock(sync_get=MagicMock(return_value=SimpleNamespace(
+        id=iid, name="Ubuntu", vapp_template_id="t")))
+    hw = MagicMock(sync_get=MagicMock(return_value=SimpleNamespace(
+        id=hid, name="medium", cpus=2, memory_mb=4096, disk_mb=26624, drive_type="HDD")))
+    runner = MagicMock()
+    if connect_exc:
+        runner.connect.side_effect = connect_exc
+    else:
+        runner.connect.return_value = MagicMock()
+    if script_exc:
+        runner.run_script.side_effect = script_exc
+
+    with (
+        patch("app.tasks.provision.SyncSessionLocal") as sf,
+        patch("app.tasks.provision.repo", mock_repo),
+        patch("app.tasks.provision.image_repo", img),
+        patch("app.tasks.provision.hw_config_repo", hw),
+        patch("app.tasks.provision.asyncio.run", return_value={"ip": "10.0.0.5"}),
+        patch("app.tasks.provision.settings.USE_STUB_TERRAFORM", False),
+        patch("app.tasks.provision.config_runner", runner),
+    ):
+        sf.return_value.__enter__ = MagicMock(return_value=MagicMock())
+        sf.return_value.__exit__ = MagicMock(return_value=False)
+        from app.tasks.provision import provision_vm_task
+        provision_vm_task.apply(args=[bid, iid, hid])
+    return mock_repo.sync_update_status.call_args_list, runner
+
+
+def test_unreachable_vm_marks_failed_not_ready():
+    from app.domain.enums import BookingStatus
+    calls, _ = _provision_in_real_mode("echo hi", connect_exc=VmUnreachableError("no ssh"))
+    statuses = [c.args[2] for c in calls]
+    assert BookingStatus.READY not in statuses
+    assert statuses[-1] == BookingStatus.FAILED  # retries exhausted eagerly under .apply()
+
+
+def test_reachable_script_failure_is_ready_but_config_failed():
+    from app.domain.enums import BookingStatus
+    calls, runner = _provision_in_real_mode("bad", script_exc=ConfigScriptError("exit 1"))
+    runner.run_script.assert_called_once()
+    ready = next(c for c in calls if c.args[2] == BookingStatus.READY)
+    assert ready.kwargs.get("config_failed") is True
+
+
+def test_reachable_script_success_is_clean_ready():
+    from app.domain.enums import BookingStatus
+    calls, runner = _provision_in_real_mode("echo hi")
+    runner.run_script.assert_called_once()
+    ready = next(c for c in calls if c.args[2] == BookingStatus.READY)
+    assert ready.kwargs.get("config_failed") is False
+
+
+def test_script_less_vm_still_waits_for_reachability():
+    from app.domain.enums import BookingStatus
+    calls, runner = _provision_in_real_mode(None)
+    runner.connect.assert_called_once()      # reachability checked
+    runner.run_script.assert_not_called()    # nothing to run
+    ready = next(c for c in calls if c.args[2] == BookingStatus.READY)
+    assert ready.kwargs.get("config_failed") is False
 
 
 # ── Persistence + order API ───────────────────────────────────────────────────

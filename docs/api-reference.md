@@ -420,9 +420,10 @@ Create a new booking. A booking is one of:
 > Supplying only one of the pair → `400`; an unknown/inactive/already-booked pair → `409`.
 
 > **Startup script (VM).** Provide a `startup_script` to run a bash script on the VM after it's
-> provisioned. The worker SSHes in (state `CONFIGURING`) and runs it via `bash -s`; the booking
-> reaches `READY` only after the script exits `0`. A non-zero exit or an unreachable VM marks the
-> booking `FAILED` (see its audit log). **The script must be idempotent** — a provisioning retry
+> provisioned. In state `CONFIGURING` the worker waits for the VM to become reachable (retrying SSH)
+> and runs the script via `bash -s`. Outcomes: an **unreachable** VM → `FAILED`; a **reachable VM
+> whose script fails** → `READY` but flagged `config_failed` (the VM is usable; see the booking's
+> audit log); a clean run → `READY`. **The script must be idempotent** — a provisioning retry
 > re-runs it. It executes on your own VM. Requires the VM template to allow SSH for the configured
 > `VM_SSH_USER`; see the admin guide.
 

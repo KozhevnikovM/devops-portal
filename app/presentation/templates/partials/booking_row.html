@@ -32,6 +32,9 @@
             {% endif %}
             {{ booking.status.value }}
         </span>
+        {% if booking.config_failed %}
+        <span class="text-xs px-2 py-1 rounded font-semibold bg-amber-900 text-amber-300 border border-amber-700 ml-1" title="The VM is up, but its configuration script failed">⚠ config failed</span>
+        {% endif %}
         {% if booking.status_message %}
         <pre class="text-xs text-gray-500 mt-1 whitespace-pre-wrap break-all">{{ booking.status_message }}</pre>
         {% endif %}
@@ -115,7 +118,7 @@
                         </form>
                         <div class="border-t border-gray-800"></div>
                         {% endif %}
-                        {% if booking.status.value == 'FAILED' %}
+                        {% if booking.status.value == 'FAILED' or booking.config_failed %}
                         <a
                             href="/bookings/{{ booking.id }}/audit"
                             class="block px-3 py-2 text-sm text-gray-300 hover:bg-gray-800 transition-colors"
