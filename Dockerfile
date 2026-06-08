@@ -55,9 +55,38 @@ ENV PYTHONPATH=/app
 ARG PIP_INDEX_URL
 ARG PIP_TRUSTED_HOST
 
+# Optional local apt mirror for isolated/air-gapped builds. Set APT_MIRROR (and APT_SECURITY_MIRROR)
+# to a deb URI; the repo password (if any) is a BuildKit secret (id=apt_password) — never a build
+# arg/layer. Empty → the base image's default apt sources are used unchanged.
+ARG APT_MIRROR
+ARG APT_SECURITY_MIRROR
+ARG APT_SUITE=bookworm
+ARG APT_COMPONENTS="main contrib"
+ARG APT_REPO_HOST
+ARG APT_REPO_USER=token
+
 # SSH client + sshpass let the worker run Ansible (control node) against provisioned VMs over SSH,
 # including password auth. ansible-core itself comes from requirements.txt.
-RUN apt-get update && apt-get install -y --no-install-recommends openssh-client sshpass \
+RUN --mount=type=secret,id=apt_password \
+    if [ -n "$APT_MIRROR" ]; then \
+        if [ -n "$APT_REPO_HOST" ] && [ -s /run/secrets/apt_password ]; then \
+            printf 'machine %s\nlogin %s\npassword %s\n' \
+                "$APT_REPO_HOST" "$APT_REPO_USER" "$(cat /run/secrets/apt_password)" \
+                > /etc/apt/auth.conf.d/portal-mirror.conf; \
+            chmod 600 /etc/apt/auth.conf.d/portal-mirror.conf; \
+        fi; \
+        echo 'Acquire { https::Verify-Peer "false"; };' > /etc/apt/apt.conf.d/99verify-peer.conf; \
+        rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*.sources /etc/apt/sources.list.d/*.list; \
+        { \
+            printf 'Types: deb\nURIs: %s\nSuites: %s %s-updates\nComponents: %s\nTrusted: yes\n\n' \
+                "$APT_MIRROR" "$APT_SUITE" "$APT_SUITE" "$APT_COMPONENTS"; \
+            if [ -n "$APT_SECURITY_MIRROR" ]; then \
+                printf 'Types: deb\nURIs: %s\nSuites: %s-security\nComponents: %s\nTrusted: yes\n' \
+                    "$APT_SECURITY_MIRROR" "$APT_SUITE" "$APT_COMPONENTS"; \
+            fi; \
+        } > /etc/apt/sources.list.d/debian.sources; \
+    fi && \
+    apt-get update && apt-get install -y --no-install-recommends openssh-client sshpass \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .

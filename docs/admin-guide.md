@@ -85,6 +85,17 @@ behaviour.
 | `NPM_REGISTRY` | Private npm registry URL for the frontend build |
 | `NPM_REGISTRY_TOKEN` | Auth token for `NPM_REGISTRY` (authenticated registries) |
 | `NPM_CA_CERT_FILE` | Path to a PEM CA bundle if the registry uses an internal/self-signed CA |
+| `APT_MIRROR` | Local **apt** mirror (deb URI) for OS packages installed in the image build |
+| `APT_SECURITY_MIRROR` | Local apt mirror for the `-security` suite |
+| `APT_REPO_HOST` / `APT_REPO_USER` / `APT_REPO_PASSWORD` | Auth for the apt mirror (only if it needs login); the password is a BuildKit secret |
+
+**Local apt mirror.** Set `APT_MIRROR` (and `APT_SECURITY_MIRROR`) when the build host can't reach
+the public Debian repos. The build then replaces the base image's apt sources with the mirror
+(deb822 format, `Trusted: yes`, `https::Verify-Peer "false"` for self-signed mirrors) before
+installing OS packages (`openssh-client`, `sshpass`). If the mirror needs auth, set `APT_REPO_HOST`
++ `APT_REPO_USER` and the **`APT_REPO_PASSWORD`** secret — the build writes
+`/etc/apt/auth.conf.d/portal-mirror.conf`. Tune `APT_SUITE` (default `bookworm`) / `APT_COMPONENTS`
+if your base image differs. Empty `APT_MIRROR` → the base image's default repos are used unchanged.
 
 **Private npm registry.** Set `NPM_REGISTRY` (and `NPM_REGISTRY_TOKEN` if it needs auth):
 
