@@ -60,7 +60,7 @@ ARG PIP_TRUSTED_HOST
 # arg/layer. Empty → the base image's default apt sources are used unchanged.
 ARG APT_MIRROR
 ARG APT_SECURITY_MIRROR
-ARG APT_SUITE=bookworm
+ARG APT_SUITE
 ARG APT_COMPONENTS="main contrib"
 ARG APT_REPO_HOST
 ARG APT_REPO_USER=token
@@ -69,6 +69,10 @@ ARG APT_REPO_USER=token
 # including password auth. ansible-core itself comes from requirements.txt.
 RUN --mount=type=secret,id=apt_password \
     if [ -n "$APT_MIRROR" ]; then \
+        # Default the suite to the *base image's own* codename so the mirror always matches the
+        # image (mixing suites pulls conflicting libssl/apt — see issue #217). Override via APT_SUITE.
+        suite="${APT_SUITE:-$(. /etc/os-release && echo "$VERSION_CODENAME")}"; \
+        if [ -z "$suite" ]; then echo "APT_SUITE unset and no codename in /etc/os-release" >&2; exit 1; fi; \
         if [ -n "$APT_REPO_HOST" ] && [ -s /run/secrets/apt_password ]; then \
             printf 'machine %s\nlogin %s\npassword %s\n' \
                 "$APT_REPO_HOST" "$APT_REPO_USER" "$(cat /run/secrets/apt_password)" \
@@ -79,10 +83,10 @@ RUN --mount=type=secret,id=apt_password \
         rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*.sources /etc/apt/sources.list.d/*.list; \
         { \
             printf 'Types: deb\nURIs: %s\nSuites: %s %s-updates\nComponents: %s\nTrusted: yes\n\n' \
-                "$APT_MIRROR" "$APT_SUITE" "$APT_SUITE" "$APT_COMPONENTS"; \
+                "$APT_MIRROR" "$suite" "$suite" "$APT_COMPONENTS"; \
             if [ -n "$APT_SECURITY_MIRROR" ]; then \
                 printf 'Types: deb\nURIs: %s\nSuites: %s-security\nComponents: %s\nTrusted: yes\n' \
-                    "$APT_SECURITY_MIRROR" "$APT_SUITE" "$APT_COMPONENTS"; \
+                    "$APT_SECURITY_MIRROR" "$suite" "$APT_COMPONENTS"; \
             fi; \
         } > /etc/apt/sources.list.d/debian.sources; \
     fi && \

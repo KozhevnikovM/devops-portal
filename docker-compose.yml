@@ -43,7 +43,7 @@ services:
         PORTAL_GID: ${PORTAL_GID:-1000}
         APT_MIRROR: ${APT_MIRROR:-}
         APT_SECURITY_MIRROR: ${APT_SECURITY_MIRROR:-}
-        APT_SUITE: ${APT_SUITE:-bookworm}
+        APT_SUITE: ${APT_SUITE:-}
         APT_COMPONENTS: ${APT_COMPONENTS:-main contrib}
         APT_REPO_HOST: ${APT_REPO_HOST:-}
         APT_REPO_USER: ${APT_REPO_USER:-token}
@@ -75,7 +75,7 @@ services:
         PORTAL_GID: ${PORTAL_GID:-1000}
         APT_MIRROR: ${APT_MIRROR:-}
         APT_SECURITY_MIRROR: ${APT_SECURITY_MIRROR:-}
-        APT_SUITE: ${APT_SUITE:-bookworm}
+        APT_SUITE: ${APT_SUITE:-}
         APT_COMPONENTS: ${APT_COMPONENTS:-main contrib}
         APT_REPO_HOST: ${APT_REPO_HOST:-}
         APT_REPO_USER: ${APT_REPO_USER:-token}
@@ -110,7 +110,7 @@ services:
         PORTAL_GID: ${PORTAL_GID:-1000}
         APT_MIRROR: ${APT_MIRROR:-}
         APT_SECURITY_MIRROR: ${APT_SECURITY_MIRROR:-}
-        APT_SUITE: ${APT_SUITE:-bookworm}
+        APT_SUITE: ${APT_SUITE:-}
         APT_COMPONENTS: ${APT_COMPONENTS:-main contrib}
         APT_REPO_HOST: ${APT_REPO_HOST:-}
         APT_REPO_USER: ${APT_REPO_USER:-token}
@@ -143,7 +143,7 @@ services:
         PORTAL_GID: ${PORTAL_GID:-1000}
         APT_MIRROR: ${APT_MIRROR:-}
         APT_SECURITY_MIRROR: ${APT_SECURITY_MIRROR:-}
-        APT_SUITE: ${APT_SUITE:-bookworm}
+        APT_SUITE: ${APT_SUITE:-}
         APT_COMPONENTS: ${APT_COMPONENTS:-main contrib}
         APT_REPO_HOST: ${APT_REPO_HOST:-}
         APT_REPO_USER: ${APT_REPO_USER:-token}

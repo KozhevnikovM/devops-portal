@@ -94,8 +94,12 @@ the public Debian repos. The build then replaces the base image's apt sources wi
 (deb822 format, `Trusted: yes`, `https::Verify-Peer "false"` for self-signed mirrors) before
 installing OS packages (`openssh-client`, `sshpass`). If the mirror needs auth, set `APT_REPO_HOST`
 + `APT_REPO_USER` and the **`APT_REPO_PASSWORD`** secret — the build writes
-`/etc/apt/auth.conf.d/portal-mirror.conf`. Tune `APT_SUITE` (default `bookworm`) / `APT_COMPONENTS`
-if your base image differs. Empty `APT_MIRROR` → the base image's default repos are used unchanged.
+`/etc/apt/auth.conf.d/portal-mirror.conf`. `APT_SUITE` **defaults to the base image's own codename**
+(read from `/etc/os-release`), so the mirror always matches the image — your mirror must serve that
+suite (e.g. `trixie` for the current `python:3.11-slim`). If your mirror only has a different suite,
+either set `APT_SUITE` and point `PYTHON_IMAGE` at a matching base tag (e.g.
+`python:3.11-slim-bookworm`), or mirror the right release. Empty `APT_MIRROR` → the base image's
+default repos are used unchanged.
 
 **Private npm registry.** Set `NPM_REGISTRY` (and `NPM_REGISTRY_TOKEN` if it needs auth):
 
