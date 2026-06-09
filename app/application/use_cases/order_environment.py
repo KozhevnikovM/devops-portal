@@ -1,4 +1,3 @@
-from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -45,11 +44,12 @@ class OrderEnvironmentUseCase:
         # ── Resolve every item's names up front — a bad name creates nothing ──
         resolved = [await self._resolve_item(session, it) for it in blueprint.items]
 
-        now = datetime.now(timezone.utc)
-        expires_at = PERMANENT_EXPIRES_AT if ttl_minutes == 0 else now + timedelta(minutes=ttl_minutes)
+        # The lease starts when the whole stack is READY (#223). Until then the environment's
+        # expires_at is a far-future placeholder so a short TTL can't tear the stack down
+        # mid-provision; it's stamped with the real deadline once every child is READY.
         env = await self._env_repo.create(
             session, name=blueprint.name, blueprint_name=blueprint.name,
-            user_id=user_id, ttl_minutes=ttl_minutes, expires_at=expires_at,
+            user_id=user_id, ttl_minutes=ttl_minutes, expires_at=PERMANENT_EXPIRES_AT,
         )
 
         created_ids: list[UUID] = []
@@ -63,6 +63,10 @@ class OrderEnvironmentUseCase:
         except Exception:
             await self._rollback(session, env.id, created_ids)
             raise
+
+        # An all-pooled environment is fully READY at once — start its lease immediately. One with
+        # VMs is stamped later, when the last child reaches READY in the provision task.
+        await self._env_repo.start_lease_if_ready(session, env.id)
 
         # All children created — now dispatch VM provisioning (nothing dispatched before this point).
         for booking_id, image_id, hw_config_id in vm_dispatch:

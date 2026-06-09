@@ -12,6 +12,7 @@ from app.domain.enums import BookingStatus
 from app.infrastructure.celery_app import celery_app
 from app.infrastructure.database.session import SyncSessionLocal
 from app.infrastructure.repositories.booking_repo import BookingRepository
+from app.infrastructure.repositories.environment_repo import EnvironmentRepository
 from app.infrastructure.repositories.image_repo import ImageRepository
 from app.infrastructure.repositories.hw_config_repo import HWConfigRepository
 from app.infrastructure.config.ansible import AnsibleConfigError, build_ansible_runner
@@ -22,6 +23,7 @@ from app.infrastructure.terraform.vcd_adapter import TerraformVcdAdapter
 logger = logging.getLogger(__name__)
 
 repo = BookingRepository()
+env_repo = EnvironmentRepository()
 image_repo = ImageRepository()
 hw_config_repo = HWConfigRepository()
 terraform = StubTerraformAdapter() if settings.USE_STUB_TERRAFORM else TerraformVcdAdapter()
@@ -164,7 +166,11 @@ def provision_vm_task(self, booking_id: str, image_id: str, hw_config_id: str) -
             _run(lambda s: repo.sync_update_status(
                 s, booking_uuid, BookingStatus.READY,
                 vm_ip=ip, vm_password=vm_password, config_failed=config_failed,
+                start_lease=True,  # #223 — the lease starts now that the VM is usable
             ))
+            # If this VM is part of an environment, the lease for the whole stack starts once every
+            # child is READY — the last one to finish stamps the environment + all its children.
+            _run(lambda s: env_repo.sync_start_lease_if_ready_for_booking(s, booking_uuid))
             logger.info(
                 "Provisioning complete for booking %s — IP: %s (config_failed=%s)",
                 booking_id, ip, config_failed,

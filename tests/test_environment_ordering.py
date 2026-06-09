@@ -41,6 +41,7 @@ def _make_use_case(blueprint, create_returns=None, static_returns=None, ns_retur
     env_repo.create = AsyncMock(return_value=env)
     env_repo.get = AsyncMock(return_value=env)
     env_repo.delete = AsyncMock()
+    env_repo.start_lease_if_ready = AsyncMock(return_value=False)
     blueprint_repo = MagicMock()
     blueprint_repo.get_by_name = AsyncMock(return_value=blueprint)
     booking_repo = MagicMock()

@@ -1,14 +1,37 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
 from sqlalchemy import String, cast, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
+from app.domain.constants import PERMANENT_EXPIRES_AT
 from app.domain.entities import Environment
 from app.domain.enums import BookingStatus
 from app.infrastructure.database.models import BookingModel, EnvironmentModel, UserModel
 from app.infrastructure.repositories.booking_repo import _to_entity as _booking_to_entity
+
+
+def _lease_until(ttl_minutes: int) -> datetime:
+    """The deadline for a lease of ttl_minutes starting now (permanent when ttl is 0)."""
+    if ttl_minutes == 0:
+        return PERMANENT_EXPIRES_AT
+    return datetime.now(timezone.utc) + timedelta(minutes=ttl_minutes)
+
+
+def _stamp_lease_if_all_ready(session: Session, env: EnvironmentModel) -> bool:
+    """If every child of `env` is READY, start the whole stack's lease now (env + each child share
+    one deadline). No-op (returns False) if there are no children or any child isn't READY yet."""
+    children = list(session.execute(
+        select(BookingModel).where(BookingModel.environment_id == env.id)
+    ).scalars().all())
+    if not children or any(c.status != BookingStatus.READY.value for c in children):
+        return False
+    deadline = _lease_until(env.ttl_minutes)
+    env.expires_at = deadline
+    for c in children:
+        c.expires_at = deadline
+    return True
 
 # Child statuses still worth releasing (everything but the terminal/already-tearing-down ones).
 _LIVE_CHILD_STATUSES = [
@@ -112,3 +135,35 @@ class EnvironmentRepository:
             )
         )
         return [_booking_to_entity(m) for m in result.scalars().all()]
+
+    # ── Lease start: whole-stack TTL begins once every child is READY (#223) ────
+    async def start_lease_if_ready(self, session: AsyncSession, environment_id: UUID) -> bool:
+        """Async path (ordering): stamp the lease if the environment is already fully READY."""
+        env = await session.get(EnvironmentModel, environment_id)
+        if env is None:
+            return False
+        children = (await session.execute(
+            select(BookingModel).where(BookingModel.environment_id == environment_id)
+        )).scalars().all()
+        if not children or any(c.status != BookingStatus.READY.value for c in children):
+            return False
+        deadline = _lease_until(env.ttl_minutes)
+        env.expires_at = deadline
+        for c in children:
+            c.expires_at = deadline
+        await session.commit()
+        return True
+
+    def sync_start_lease_if_ready_for_booking(self, session: Session, booking_id: UUID) -> bool:
+        """Sync path (provision task): if this booking belongs to an environment whose children are
+        now all READY, start the whole stack's lease. No-op for a standalone booking."""
+        booking = session.get(BookingModel, booking_id)
+        if booking is None or booking.environment_id is None:
+            return False
+        env = session.get(EnvironmentModel, booking.environment_id)
+        if env is None:
+            return False
+        stamped = _stamp_lease_if_all_ready(session, env)
+        if stamped:
+            session.commit()
+        return stamped

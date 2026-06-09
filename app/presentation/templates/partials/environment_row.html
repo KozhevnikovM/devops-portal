@@ -40,7 +40,9 @@
         </div>
     </td>
     <td class="px-4 py-3 text-gray-400 text-xs">
-        {% if environment.ttl_minutes == 0 %}Never
+        {% if environment.derived_status == 'PROVISIONING' %}
+        <span class="text-gray-600 italic">starts when ready</span>
+        {% elif environment.ttl_minutes == 0 %}Never
         {% else %}{{ environment.expires_at | as_tz(current_user.timezone) }}{% endif %}
     </td>
     <td class="px-4 py-3">

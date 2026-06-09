@@ -53,7 +53,9 @@
         {% else %}{{ booking.ttl_minutes // 1440 }} d{% endif %}
     </td>
     <td class="px-4 py-3 text-gray-400 text-xs">
-        {% if booking.ttl_minutes == 0 %}Never
+        {% if booking.status.value in ('PENDING', 'PROVISIONING', 'CONFIGURING', 'RETRY') %}
+        <span class="text-gray-600 italic">starts when ready</span>
+        {% elif booking.ttl_minutes == 0 %}Never
         {% else %}{{ booking.expires_at | as_tz(current_user.timezone) }}{% endif %}
     </td>
     <td class="px-4 py-3 text-gray-300">
