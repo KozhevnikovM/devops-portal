@@ -383,6 +383,25 @@ curl -s http://localhost:8000/api/users \
      -H "Authorization: Bearer dp_<api_key>" | python3 -m json.tool
 ```
 
+### Dispatcher role (order on behalf of others)
+
+A user whose role is **`dispatcher`** can order resources **for another user** — a CI pipeline holds
+one dispatcher API key and names the target user, and the booking is owned by (and counts against the
+quota of) that user. Create a dispatcher user, give it an API key, and have the pipeline pass
+`on_behalf_of` (the target's username):
+
+```bash
+# Create the dispatcher user (role "dispatcher") + an API key, then in the pipeline:
+curl -s -X POST http://localhost:8000/api/bookings \
+     -H "Authorization: Bearer dp_<dispatcher_key>" -H "Content-Type: application/json" \
+     -d '{"resource_type":"VM","ttl_minutes":240,"image_name":"Ubuntu 22.04",
+          "hw_config_name":"medium","on_behalf_of":"john@example.com"}'
+```
+
+The target user must already exist and be active (else `400`); a non-dispatcher using `on_behalf_of`
+gets `403`. The acting dispatcher is recorded in the booking's `created_by`. (A fuller setup walkthrough
+and the dispatcher's view of resources it ordered land with the rest of v0.9.0.)
+
 ---
 
 ## VM Resource Quotas

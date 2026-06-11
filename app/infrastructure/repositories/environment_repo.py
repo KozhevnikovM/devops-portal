@@ -44,18 +44,18 @@ def _to_entity(m: EnvironmentModel, bookings=None, owner_username=None) -> Envir
     return Environment(
         id=m.id, name=m.name, blueprint_name=m.blueprint_name, user_id=m.user_id,
         ttl_minutes=m.ttl_minutes, expires_at=m.expires_at, created_at=m.created_at,
-        bookings=bookings or [], owner_username=owner_username,
+        bookings=bookings or [], owner_username=owner_username, created_by=m.created_by,
     )
 
 
 class EnvironmentRepository:
     async def create(
         self, session: AsyncSession, name: str, blueprint_name: str | None,
-        user_id: str, ttl_minutes: int, expires_at,
+        user_id: str, ttl_minutes: int, expires_at, created_by: str | None = None,
     ) -> Environment:
         model = EnvironmentModel(
             id=uuid4(), name=name, blueprint_name=blueprint_name, user_id=user_id,
-            ttl_minutes=ttl_minutes, expires_at=expires_at,
+            ttl_minutes=ttl_minutes, expires_at=expires_at, created_by=created_by,
         )
         session.add(model)
         await session.flush()  # need the id for child bookings before commit

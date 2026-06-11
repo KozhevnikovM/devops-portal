@@ -13,6 +13,7 @@ from app.application.use_cases.release_environment import (
     EnvironmentNotFoundError, ReleaseEnvironmentUseCase,
 )
 from app.application.use_cases.reserve_static_vm import ReserveStaticVMUseCase
+from app.presentation.routes._dispatch import resolve_owner
 from app.domain.entities import Environment, User
 from app.domain.enums import BookingStatus
 from app.domain.exceptions import (
@@ -62,6 +63,8 @@ _IN_FLIGHT = {
 class OrderEnvironmentRequest(BaseModel):
     blueprint_name: str
     ttl_minutes: int
+    # Dispatcher only: order on behalf of this user (username); the environment is owned by them.
+    on_behalf_of: str | None = None
 
 
 def _derived_status(env: Environment) -> str:
@@ -85,6 +88,7 @@ def _serialize(env: Environment) -> dict:
         "blueprint_name": env.blueprint_name,
         "status": _derived_status(env),
         "owner_username": env.owner_username,
+        "created_by": env.created_by,
         "ttl_minutes": env.ttl_minutes,
         "expires_at": env.expires_at.isoformat(),
         "created_at": env.created_at.isoformat(),
@@ -113,9 +117,10 @@ async def order_environment(
     session: AsyncSession = Depends(get_async_session),
     current_user: User = Depends(require_user),
 ):
+    owner_id, created_by = await resolve_owner(session, current_user, body.on_behalf_of)
     try:
         env = await _order_use_case.execute(
-            session, body.blueprint_name, body.ttl_minutes, user_id=str(current_user.id)
+            session, body.blueprint_name, body.ttl_minutes, user_id=owner_id, created_by=created_by,
         )
     except BlueprintNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
@@ -123,7 +128,7 @@ async def order_environment(
         raise HTTPException(status_code=400, detail=str(exc))
     except (QuotaExceededError, NamespaceUnavailableError, StaticVMUnavailableError) as exc:
         raise HTTPException(status_code=409, detail=str(exc))
-    env.owner_username = current_user.username
+    env.owner_username = body.on_behalf_of or current_user.username
     return _serialize(env)
 
 

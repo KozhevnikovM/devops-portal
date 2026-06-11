@@ -46,7 +46,13 @@
       "Bash(git -c commit.gpgsign=false commit -q -m 'fix: start the lease \\(TTL\\) when a resource is READY \\(#223\\) *)",
       "Bash(cd ~/.claude/projects *)",
       "Read(//home/mike/.claude/projects/**)",
-      "Bash(python3 -c \"import json; json.load\\(open\\('.claude/settings.json'\\)\\); print\\('valid JSON'\\)\")"
+      "Bash(python3 -c \"import json; json.load\\(open\\('.claude/settings.json'\\)\\); print\\('valid JSON'\\)\")",
+      "Bash(grep -rn \"role\\\\|UserCreate\\\\|def create_user\\\\|valid_role\\\\|\\\\\"admin\\\\\", \\\\\"user\\\\\"\\\\|{'admin'\" app/presentation/routes/users.py app/presentation/routes/api.py)",
+      "Bash(grep -n \"on_behalf_of\\\\|### \\\\`POST /api/bookings\\\\`\\\\|static_vm_name\\\\` | string\\\\|JSON body fields\\\\|Order a VM by\" docs/api-reference.md)",
+      "Bash(sed -n '405,412p' docs/api-reference.md)",
+      "Bash(sed -n '578,590p' docs/api-reference.md)",
+      "Bash(grep -n \"Ordering by name instead of id\\\\|### \\\\`POST /api/environments\\\\`\\\\|blueprint_name\\\\`.*string\\\\|ttl_minutes\\\\`.*integer\" docs/api-reference.md)",
+      "Bash(git -c commit.gpgsign=false commit -q -m 'feat: dispatcher role + on-behalf ordering \\(#229\\) *)"
     ]
   }
 }

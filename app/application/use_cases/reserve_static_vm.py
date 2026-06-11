@@ -43,8 +43,9 @@ class ReserveStaticVMUseCase(ReservePooledResourceUseCase):
         static_vm_id: UUID | None = None,
         environment_id: UUID | None = None,
         environment_label: str | None = None,
+        created_by: str | None = None,
     ) -> Booking:
         return await super().execute(
             session, ttl_minutes, user_id=user_id, resource_id=static_vm_id,
-            environment_id=environment_id, environment_label=environment_label,
+            environment_id=environment_id, environment_label=environment_label, created_by=created_by,
         )

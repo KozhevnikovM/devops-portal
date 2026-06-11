@@ -407,6 +407,7 @@ Create a new booking. A booking is one of:
 | `cluster_name` | string | No | The cluster the named namespace lives on |
 | `static_vm_id` | UUID | No | A specific static VM by id; omit for "Any available" |
 | `static_vm_name` | string | No | A specific static VM by name (alternative to `static_vm_id`) |
+| `on_behalf_of` | string | No | **Dispatcher/admin only.** Order for this user (username); the booking is owned by them. See *Ordering on behalf of a user* below. |
 
 > **Ordering by name instead of id.** VM image, hardware-config, and static-VM names are unique, so
 > you can order by name and skip the id lookup: a **VM** needs an image **and** a hardware config,
@@ -434,6 +435,16 @@ Create a new booking. A booking is one of:
 > VM). An unknown/inactive role name → `400`. A role run that fails (VM reachable) → `READY` flagged
 > `config_failed`, like a failed script; an unreachable VM → `FAILED`. Roles must be idempotent.
 > The applied role names appear in the `roles` field of `GET /api/bookings`.
+
+> **Ordering on behalf of a user (dispatcher).** A caller whose role is `dispatcher` or `admin` may
+> add **`on_behalf_of`** (a target **username**) to order a resource *for that user*: the booking's
+> owner (`user_id`) becomes the target and it counts against **their** quota, while the acting
+> dispatcher is recorded in **`created_by`**. The create response (including one-time credentials) is
+> returned to the dispatcher so a pipeline can hand them to the user. The target must be an
+> **existing, active** user → otherwise `400 no such active user '<name>'`; a non-dispatcher supplying
+> `on_behalf_of` → `403`. Omitting it orders for yourself (`created_by` is `null`). Applies to both
+> `POST /api/bookings` and `POST /api/environments`. (A dispatcher token is created like any API key,
+> on a user whose role is `dispatcher` — see the admin guide.)
 
 **VM response:** `201`
 
@@ -1070,7 +1081,9 @@ Order an environment blueprint — creates one parent **Environment** plus its c
 (VMs provision, namespaces/static VMs reserve), all under one shared TTL. **Auth:** any
 authenticated user.
 
-**Request body:** `{ "blueprint_name": "dev-stack", "ttl_minutes": 240 }`
+**Request body:** `{ "blueprint_name": "dev-stack", "ttl_minutes": 240 }`. A **dispatcher/admin** may
+add **`on_behalf_of`** (username) to order the environment for another user — see *Ordering on behalf
+of a user* under `POST /api/bookings`.
 
 Blueprint item names are resolved up front, so a bad name creates nothing. A child quota failure
 rolls the whole environment back. **Responses:** `201` (the environment + its children); `404`

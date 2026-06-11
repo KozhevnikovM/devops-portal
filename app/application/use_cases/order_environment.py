@@ -36,6 +36,7 @@ class OrderEnvironmentUseCase:
 
     async def execute(
         self, session: AsyncSession, blueprint_name: str, ttl_minutes: int, user_id: str,
+        created_by: str | None = None,
     ) -> Environment:
         blueprint = await self._blueprint_repo.get_by_name(session, blueprint_name)
         if blueprint is None:
@@ -50,13 +51,14 @@ class OrderEnvironmentUseCase:
         env = await self._env_repo.create(
             session, name=blueprint.name, blueprint_name=blueprint.name,
             user_id=user_id, ttl_minutes=ttl_minutes, expires_at=PERMANENT_EXPIRES_AT,
+            created_by=created_by,
         )
 
         created_ids: list[UUID] = []
         vm_dispatch: list[tuple[str, str, str]] = []  # (booking_id, image_id, hw_config_id)
         try:
             for item, res in zip(blueprint.items, resolved):
-                booking = await self._create_child(session, item, res, ttl_minutes, user_id, env.id)
+                booking = await self._create_child(session, item, res, ttl_minutes, user_id, env.id, created_by)
                 created_ids.append(booking.id)
                 if item.resource_type == ResourceType.VM.value:
                     vm_dispatch.append((str(booking.id), str(res["image_id"]), str(res["hw_config_id"])))
@@ -105,24 +107,25 @@ class OrderEnvironmentUseCase:
         # NAMESPACE — resolved by the use case from name+cluster (or any-available)
         return {"namespace_name": spec.get("namespace_name"), "cluster_name": spec.get("cluster_name")}
 
-    async def _create_child(self, session, item, res, ttl_minutes, user_id, env_id):
+    async def _create_child(self, session, item, res, ttl_minutes, user_id, env_id, created_by=None):
         rt = item.resource_type
         label = item.label
         if rt == ResourceType.VM.value:
             return await self._create.execute(
                 session, ttl_minutes, res["image_id"], res["hw_config_id"], user_id=user_id,
                 startup_script=res["startup_script"], config_roles=res["config_roles"],
-                environment_id=env_id, environment_label=label, dispatch=False,
+                environment_id=env_id, environment_label=label, created_by=created_by, dispatch=False,
             )
         if rt == ResourceType.STATIC_VM.value:
             return await self._reserve_static.execute(
                 session, ttl_minutes, user_id=user_id,
                 static_vm_id=res["static_vm_id"], environment_id=env_id, environment_label=label,
+                created_by=created_by,
             )
         return await self._book_namespace.execute(
             session, ttl_minutes, user_id=user_id,
             namespace_name=res["namespace_name"], cluster_name=res["cluster_name"],
-            environment_id=env_id, environment_label=label,
+            environment_id=env_id, environment_label=label, created_by=created_by,
         )
 
     async def _rollback(self, session, env_id, booking_ids) -> None:

@@ -48,6 +48,7 @@ class CreateBookingUseCase:
         config_roles: list | None = None,
         environment_id: UUID | None = None,
         environment_label: str | None = None,
+        created_by: str | None = None,
         dispatch: bool = True,
     ) -> Booking:
         image = await self._image_repo.get(session, image_id)
@@ -107,6 +108,7 @@ class CreateBookingUseCase:
             config_roles=config_roles or [],
             environment_id=environment_id,
             environment_label=environment_label,
+            created_by=created_by,
         )
         booking = await self._repo.create(session, booking)
         # Ordering an environment defers dispatch until all children are created (clean rollback).

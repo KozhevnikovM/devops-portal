@@ -41,7 +41,8 @@ async def test_order_passes_item_label_to_children():
     env = Environment(id=uuid4(), name="dev-stack", blueprint_name="dev-stack", user_id="u",
                       ttl_minutes=240, expires_at=datetime.now(timezone.utc),
                       created_at=datetime.now(timezone.utc))
-    env_repo = MagicMock(create=AsyncMock(return_value=env), get=AsyncMock(return_value=env))
+    env_repo = MagicMock(create=AsyncMock(return_value=env), get=AsyncMock(return_value=env),
+                         start_lease_if_ready=AsyncMock(return_value=False))
     blueprint_repo = MagicMock(get_by_name=AsyncMock(return_value=bp))
     create_uc = MagicMock(execute=AsyncMock(return_value=_booking()))
     ns_uc = MagicMock(execute=AsyncMock(return_value=_booking(ResourceType.NAMESPACE, BookingStatus.READY)))
