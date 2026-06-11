@@ -452,6 +452,16 @@ Create a new booking. A booking is one of:
 > resources. The **owner** retains full control of their resource regardless of who created it, and
 > an **admin** can manage everything. An unrelated user can neither see nor manage a resource → `403`.
 
+**Permission rules (bookings & environments).** "Creating dispatcher" = the dispatcher whose id is in
+the resource's `created_by`.
+
+| Action | Owner | Creating dispatcher | Admin | Anyone else |
+|--------|:-----:|:-------------------:|:-----:|:-----------:|
+| List (resource appears in `GET`) | ✅ | ✅ | ✅ (all) | ❌ |
+| Read / audit (`GET …/{id}`) | ✅ | ✅ | ✅ | ❌ `403` |
+| Release (`DELETE …/{id}`) | ✅ | ✅ | ✅ | ❌ `403` |
+| Extend (`PUT …/{id}/extend`) | ✅ | ✅ | ✅ | ❌ `403` |
+
 **VM response:** `201`
 
 ```json
