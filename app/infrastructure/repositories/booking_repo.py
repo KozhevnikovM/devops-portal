@@ -329,6 +329,7 @@ class BookingRepository:
         vm_ip: str | None = None,
         vm_password: str | None = None,
         config_failed: bool | None = None,
+        start_lease: bool = False,
         actor_id: str = "system",
     ) -> None:
         model = session.get(BookingModel, booking_id)
@@ -342,6 +343,13 @@ class BookingRepository:
             model.vm_password = vm_password
         if config_failed is not None:
             model.config_failed = config_failed
+        if start_lease and status == BookingStatus.READY:
+            # The lease grants usable time: start the TTL clock now that the VM is ready (#223),
+            # rather than at creation when provisioning/configuration time would be deducted.
+            model.expires_at = (
+                PERMANENT_EXPIRES_AT if model.ttl_minutes == 0
+                else datetime.now(timezone.utc) + timedelta(minutes=model.ttl_minutes)
+            )
         session.add(BookingAuditModel(
             booking_id=booking_id,
             actor_id=actor_id,

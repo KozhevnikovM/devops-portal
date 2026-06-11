@@ -908,6 +908,13 @@ Two Celery Beat tasks run on a schedule to enforce booking lifecycle rules
 automatically. They require the `beat` service to be running (included in
 `docker-compose.yml`).
 
+> **The lease starts when the resource is READY**, not when the booking is created — so
+> provisioning and configuration time is never deducted from a VM's lease. A booking shows
+> *"starts when ready"* in place of a countdown while it is `PENDING`/`PROVISIONING`/`CONFIGURING`,
+> then `expires_at` is set to `now + ttl_minutes` at the `READY` transition. For an **environment**,
+> the whole stack shares one lease that starts when **all** its resources are READY (a permanent
+> lease, `ttl_minutes = 0`, never expires).
+
 ### `enforce_ttl` — every `ENFORCE_TTL_INTERVAL_SECONDS` (default 60s)
 
 Finds all `READY` bookings whose `expires_at` is in the past, transitions each
