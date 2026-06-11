@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
-from sqlalchemy import cast, func, select, String
+from sqlalchemy import cast, func, or_, select, String
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
@@ -252,12 +252,15 @@ class BookingRepository:
         include_released: bool = False,
         resource_type: str | list[str] | None = None,
     ) -> list[Booking]:
+        # "Visible to user": bookings they own, plus any they dispatched on someone's behalf
+        # (created_by). created_by is only ever a dispatcher/admin id, so for an ordinary user
+        # this is just their own bookings.
         stmt = (
             select(BookingModel, UserModel.username, NamespaceModel, StaticVMModel)
             .join(UserModel, cast(UserModel.id, String) == BookingModel.user_id, isouter=True)
             .outerjoin(NamespaceModel, NamespaceModel.id == BookingModel.namespace_id)
             .outerjoin(StaticVMModel, StaticVMModel.id == BookingModel.static_vm_id)
-            .where(BookingModel.user_id == user_id)
+            .where(or_(BookingModel.user_id == user_id, BookingModel.created_by == user_id))
             .order_by(BookingModel.created_at.desc())
         )
         if not include_released:

@@ -30,6 +30,7 @@ from app.infrastructure.repositories.image_repo import ImageRepository
 from app.infrastructure.repositories.namespace_repo import NamespaceRepository
 from app.infrastructure.repositories.role_repo import RoleRepository
 from app.infrastructure.repositories.static_vm_repo import StaticVMRepository
+from app.application.use_cases._permissions import can_manage
 from app.presentation.routes._dispatch import resolve_owner
 
 router = APIRouter(prefix="/api/bookings", tags=["bookings"])
@@ -308,7 +309,7 @@ async def get_booking_audit(
     except BookingNotFoundError:
         raise HTTPException(status_code=404, detail="Booking not found")
 
-    if booking.user_id != str(current_user.id) and current_user.role != "admin":
+    if not can_manage(owner_id=booking.user_id, created_by=booking.created_by, user=current_user):
         raise HTTPException(status_code=403, detail="Not the booking owner")
 
     entries = await _repo.list_audit(session, booking_id)

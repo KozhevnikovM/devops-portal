@@ -445,6 +445,12 @@ Create a new booking. A booking is one of:
 > `on_behalf_of` → `403`. Omitting it orders for yourself (`created_by` is `null`). Applies to both
 > `POST /api/bookings` and `POST /api/environments`. (A dispatcher token is created like any API key,
 > on a user whose role is `dispatcher` — see the admin guide.)
+>
+> **Visibility & management.** A dispatcher keeps sight of what it dispatched: `GET /api/bookings`
+> and `GET /api/environments` return its **own** resources **plus** any it created for others
+> (`created_by` = the dispatcher), and it may **release / extend / read the audit of** those same
+> resources. The **owner** retains full control of their resource regardless of who created it, and
+> an **admin** can manage everything. An unrelated user can neither see nor manage a resource → `403`.
 
 **VM response:** `201`
 

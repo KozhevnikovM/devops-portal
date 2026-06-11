@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.entities import Booking, User
 from app.domain.enums import BookingStatus, ResourceType
+from app.application.use_cases._permissions import can_manage
 from app.domain.exceptions import BookingError, BookingPermissionError
 from app.infrastructure.celery_dispatcher import CeleryTaskDispatcher
 from app.infrastructure.repositories.booking_repo import BookingRepository
@@ -37,7 +38,7 @@ class ReleaseBookingUseCase:
     ) -> Booking:
         booking = await self._repo.get(session, booking_id)  # raises BookingNotFoundError
 
-        if booking.user_id != str(current_user.id) and current_user.role != "admin":
+        if not can_manage(owner_id=booking.user_id, created_by=booking.created_by, user=current_user):
             raise BookingPermissionError("Not the booking owner")
 
         # `force` (used when releasing a whole environment) tears down any non-terminal child

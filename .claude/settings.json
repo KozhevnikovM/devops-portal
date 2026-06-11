@@ -52,7 +52,8 @@
       "Bash(sed -n '405,412p' docs/api-reference.md)",
       "Bash(sed -n '578,590p' docs/api-reference.md)",
       "Bash(grep -n \"Ordering by name instead of id\\\\|### \\\\`POST /api/environments\\\\`\\\\|blueprint_name\\\\`.*string\\\\|ttl_minutes\\\\`.*integer\" docs/api-reference.md)",
-      "Bash(git -c commit.gpgsign=false commit -q -m 'feat: dispatcher role + on-behalf ordering \\(#229\\) *)"
+      "Bash(git -c commit.gpgsign=false commit -q -m 'feat: dispatcher role + on-behalf ordering \\(#229\\) *)",
+      "Bash(python3 -c \"import app.presentation.routes.bookings, app.presentation.routes.environments, app.presentation.routes.api_bookings, app.presentation.routes.api_environments, app.application.use_cases.release_booking, app.application.use_cases.extend_booking, app.application.use_cases.release_environment; print\\('imports ok'\\)\")"
     ]
   }
 }

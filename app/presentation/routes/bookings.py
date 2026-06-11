@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.application.use_cases._permissions import can_manage
 from app.application.use_cases.create_booking import CreateBookingUseCase
 from app.application.use_cases.extend_booking import ExtendBookingUseCase
 from app.application.use_cases.book_namespace import BookNamespaceUseCase
@@ -201,7 +202,7 @@ async def booking_row(
     except BookingNotFoundError:
         raise HTTPException(status_code=404, detail="Booking not found")
 
-    if booking.user_id != str(current_user.id) and current_user.role != "admin":
+    if not can_manage(owner_id=booking.user_id, created_by=booking.created_by, user=current_user):
         raise HTTPException(status_code=403, detail="Not the booking owner")
 
     await _attach_queue_position(session, booking)
@@ -266,7 +267,7 @@ async def booking_audit_page(
     except BookingNotFoundError:
         raise HTTPException(status_code=404, detail="Booking not found")
 
-    if booking.user_id != str(current_user.id) and current_user.role != "admin":
+    if not can_manage(owner_id=booking.user_id, created_by=booking.created_by, user=current_user):
         raise HTTPException(status_code=403, detail="Not the booking owner")
 
     entries = await _repo.list_audit(session, booking_id)

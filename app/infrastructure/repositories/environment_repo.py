@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
-from sqlalchemy import String, cast, select
+from sqlalchemy import String, cast, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
@@ -102,7 +102,10 @@ class EnvironmentRepository:
             .order_by(EnvironmentModel.created_at.desc())
         )
         if user_id is not None:
-            stmt = stmt.where(EnvironmentModel.user_id == user_id)
+            # Visible to user: owned, plus any dispatched on someone's behalf (created_by).
+            stmt = stmt.where(
+                or_(EnvironmentModel.user_id == user_id, EnvironmentModel.created_by == user_id)
+            )
         result = await session.execute(stmt)
         envs = []
         for model, owner in result.all():
