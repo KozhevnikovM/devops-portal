@@ -7,8 +7,10 @@ from sqlalchemy.orm import Session, aliased
 
 from app.domain.constants import PERMANENT_EXPIRES_AT
 from app.domain.entities import Environment
-from app.domain.enums import BookingStatus
-from app.infrastructure.database.models import BookingModel, EnvironmentModel, UserModel
+from app.domain.enums import BookingStatus, ResourceType
+from app.infrastructure.database.models import (
+    BookingModel, EnvironmentModel, NamespaceModel, UserModel,
+)
 from app.infrastructure.repositories.booking_repo import _to_entity as _booking_to_entity
 
 # Second alias of users to resolve created_by (the dispatcher) → username, distinct from the owner.
@@ -93,6 +95,33 @@ class EnvironmentRepository:
         model, owner, creator = row
         children = await self._children(session, environment_id)
         return _to_entity(model, bookings=children, owner_username=owner, created_by_username=creator)
+
+    async def get_by_namespace(
+        self, session: AsyncSession, namespace_name: str, cluster_name: str | None = None,
+    ) -> list[Environment]:
+        """Environments currently holding a namespace named `namespace_name` via a live child.
+
+        Matches only namespace bookings that belong to an environment and aren't terminal
+        (RELEASED/FAILED); QUEUED children hold no namespace so the join excludes them. Returns the
+        distinct environments — 0, 1, or (the same name on different clusters) several.
+        """
+        stmt = (
+            select(BookingModel.environment_id)
+            .join(NamespaceModel, NamespaceModel.id == BookingModel.namespace_id)
+            .where(
+                BookingModel.resource_type == ResourceType.NAMESPACE.value,
+                BookingModel.environment_id.is_not(None),
+                BookingModel.status.notin_(
+                    [BookingStatus.RELEASED.value, BookingStatus.FAILED.value]
+                ),
+                NamespaceModel.name == namespace_name,
+            )
+            .distinct()
+        )
+        if cluster_name is not None:
+            stmt = stmt.where(NamespaceModel.cluster_name == cluster_name)
+        env_ids = (await session.execute(stmt)).scalars().all()
+        return [await self.get(session, env_id) for env_id in env_ids]
 
     async def list_all(self, session: AsyncSession) -> list[Environment]:
         return await self._list(session, None)

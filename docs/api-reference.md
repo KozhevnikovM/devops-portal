@@ -1129,6 +1129,28 @@ also appear in `GET /api/bookings`, carrying their `environment_id`.
 List environments (owner-scoped; admins see all) / fetch one (owner or admin; `403`/`404` otherwise),
 each with the derived status + child summaries.
 
+### `GET /api/environments/by-namespace/{namespace_name}`
+
+Locate the **live environment whose namespace child is named `namespace_name`** — so a pipeline can
+find the stack it owns by namespace instead of environment id. Optional query param **`cluster`**
+disambiguates a name reused across clusters (namespace names are unique only *per cluster*).
+
+**Auth & responses:**
+
+| Outcome | Status |
+|---------|--------|
+| Caller owns / dispatched the environment, or is admin | `200` — same body as `GET …/{id}` |
+| It belongs to another user | `409` `namespace '<name>' is in use by another user's environment` (the owner is **not** disclosed) |
+| No active environment holds that namespace (unknown, free, or a standalone non-environment namespace booking) | `404` |
+| The name is held on **multiple clusters** and no `cluster` given | `400` — specify `?cluster=` |
+
+This is a **read-only lookup** — it does not reserve, lock, or claim the environment.
+
+```bash
+curl -s "http://localhost:8000/api/environments/by-namespace/dev1?cluster=prod-cluster" \
+     -H "Authorization: Bearer dp_<key>"
+```
+
 ### `DELETE /api/environments/{id}`
 
 Release a whole environment — tears down **all** its child resources together (provisioned VMs →
