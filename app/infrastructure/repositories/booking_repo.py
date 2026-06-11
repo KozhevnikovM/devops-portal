@@ -3,7 +3,7 @@ from uuid import UUID
 
 from sqlalchemy import cast, func, or_, select, String
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 
 from app.domain.constants import PERMANENT_EXPIRES_AT
 from app.domain.entities import Booking, BookingAuditEntry
@@ -12,6 +12,10 @@ from app.domain.exceptions import BookingNotFoundError
 from app.infrastructure.database.models import (
     BookingAuditModel, BookingModel, NamespaceModel, StaticVMModel, UserModel,
 )
+
+# Second alias of users to resolve created_by (the dispatcher) → username, distinct from the
+# owner join on user_id.
+_CreatorUser = aliased(UserModel)
 
 
 def _to_audit_entity(m: BookingAuditModel) -> BookingAuditEntry:
@@ -32,6 +36,7 @@ def _to_entity(
     owner_username: str | None = None,
     namespace: NamespaceModel | None = None,
     static_vm: StaticVMModel | None = None,
+    created_by_username: str | None = None,
 ) -> Booking:
     return Booking(
         id=m.id,
@@ -59,6 +64,7 @@ def _to_entity(
         environment_id=m.environment_id,
         environment_label=m.environment_label,
         created_by=m.created_by,
+        created_by_username=created_by_username,
         namespace_id=m.namespace_id,
         namespace_name=namespace.name if namespace else None,
         cluster_name=namespace.cluster_name if namespace else None,
@@ -186,16 +192,19 @@ class BookingRepository:
 
     async def get(self, session: AsyncSession, booking_id: UUID) -> Booking:
         result = await session.execute(
-            select(BookingModel, NamespaceModel, StaticVMModel)
+            select(BookingModel, UserModel.username, NamespaceModel, StaticVMModel, _CreatorUser.username)
+            .join(UserModel, cast(UserModel.id, String) == BookingModel.user_id, isouter=True)
             .outerjoin(NamespaceModel, NamespaceModel.id == BookingModel.namespace_id)
             .outerjoin(StaticVMModel, StaticVMModel.id == BookingModel.static_vm_id)
+            .outerjoin(_CreatorUser, cast(_CreatorUser.id, String) == BookingModel.created_by)
             .where(BookingModel.id == booking_id)
         )
         row = result.first()
         if row is None:
             raise BookingNotFoundError(booking_id)
-        model, namespace, static_vm = row
-        return _to_entity(model, namespace=namespace, static_vm=static_vm)
+        model, owner, namespace, static_vm, creator = row
+        return _to_entity(model, owner_username=owner, namespace=namespace, static_vm=static_vm,
+                          created_by_username=creator)
 
     async def update_status(
         self,
@@ -233,17 +242,19 @@ class BookingRepository:
         resource_type: str | list[str] | None = None,
     ) -> list[Booking]:
         stmt = (
-            select(BookingModel, UserModel.username, NamespaceModel, StaticVMModel)
+            select(BookingModel, UserModel.username, NamespaceModel, StaticVMModel, _CreatorUser.username)
             .join(UserModel, cast(UserModel.id, String) == BookingModel.user_id, isouter=True)
             .outerjoin(NamespaceModel, NamespaceModel.id == BookingModel.namespace_id)
             .outerjoin(StaticVMModel, StaticVMModel.id == BookingModel.static_vm_id)
+            .outerjoin(_CreatorUser, cast(_CreatorUser.id, String) == BookingModel.created_by)
             .order_by(BookingModel.created_at.desc())
         )
         if not include_released:
             stmt = stmt.where(BookingModel.status != BookingStatus.RELEASED.value)
         stmt = _apply_resource_type_filter(stmt, resource_type)
         result = await session.execute(stmt)
-        return [_to_entity(m, username, ns, svm) for m, username, ns, svm in result.all()]
+        return [_to_entity(m, username, ns, svm, created_by_username=creator)
+                for m, username, ns, svm, creator in result.all()]
 
     async def list_by_user(
         self,
@@ -256,10 +267,11 @@ class BookingRepository:
         # (created_by). created_by is only ever a dispatcher/admin id, so for an ordinary user
         # this is just their own bookings.
         stmt = (
-            select(BookingModel, UserModel.username, NamespaceModel, StaticVMModel)
+            select(BookingModel, UserModel.username, NamespaceModel, StaticVMModel, _CreatorUser.username)
             .join(UserModel, cast(UserModel.id, String) == BookingModel.user_id, isouter=True)
             .outerjoin(NamespaceModel, NamespaceModel.id == BookingModel.namespace_id)
             .outerjoin(StaticVMModel, StaticVMModel.id == BookingModel.static_vm_id)
+            .outerjoin(_CreatorUser, cast(_CreatorUser.id, String) == BookingModel.created_by)
             .where(or_(BookingModel.user_id == user_id, BookingModel.created_by == user_id))
             .order_by(BookingModel.created_at.desc())
         )
@@ -267,7 +279,8 @@ class BookingRepository:
             stmt = stmt.where(BookingModel.status != BookingStatus.RELEASED.value)
         stmt = _apply_resource_type_filter(stmt, resource_type)
         result = await session.execute(stmt)
-        return [_to_entity(m, username, ns, svm) for m, username, ns, svm in result.all()]
+        return [_to_entity(m, username, ns, svm, created_by_username=creator)
+                for m, username, ns, svm, creator in result.all()]
 
     async def list_audit(self, session: AsyncSession, booking_id: UUID) -> list[BookingAuditEntry]:
         result = await session.execute(
