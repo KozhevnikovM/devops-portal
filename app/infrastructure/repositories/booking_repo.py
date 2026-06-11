@@ -58,6 +58,7 @@ def _to_entity(
         config_failed=m.config_failed,
         environment_id=m.environment_id,
         environment_label=m.environment_label,
+        created_by=m.created_by,
         namespace_id=m.namespace_id,
         namespace_name=namespace.name if namespace else None,
         cluster_name=namespace.cluster_name if namespace else None,
@@ -170,6 +171,7 @@ class BookingRepository:
             config_roles=booking.config_roles or [],
             environment_id=booking.environment_id,
             environment_label=booking.environment_label,
+            created_by=booking.created_by,
         )
         session.add(model)
         await session.flush()  # INSERT booking before audit to satisfy FK constraint

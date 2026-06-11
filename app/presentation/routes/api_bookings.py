@@ -30,6 +30,7 @@ from app.infrastructure.repositories.image_repo import ImageRepository
 from app.infrastructure.repositories.namespace_repo import NamespaceRepository
 from app.infrastructure.repositories.role_repo import RoleRepository
 from app.infrastructure.repositories.static_vm_repo import StaticVMRepository
+from app.presentation.routes._dispatch import resolve_owner
 
 router = APIRouter(prefix="/api/bookings", tags=["bookings"])
 
@@ -66,6 +67,8 @@ class CreateBookingRequest(BaseModel):
     static_vm_id: UUID | None = None
     # Order a specific static VM by name instead of static_vm_id.
     static_vm_name: str | None = None
+    # Dispatcher only: order on behalf of this user (username); the booking is owned by them.
+    on_behalf_of: str | None = None
 
 
 class ExtendBookingRequest(BaseModel):
@@ -78,6 +81,7 @@ def _summary(b: Booking) -> dict:
     return {
         "id": str(b.id),
         "user_id": b.user_id,
+        "created_by": b.created_by,
         "status": b.status.value,
         "resource_type": b.resource_type.value,
         "ttl_minutes": b.ttl_minutes,
@@ -179,6 +183,9 @@ async def create_booking(
     session: AsyncSession = Depends(get_async_session),
     current_user: User = Depends(require_user),
 ):
+    # Who the resource is *for* (owner) and who placed it (a dispatcher, when on behalf of someone).
+    owner_id, created_by = await resolve_owner(session, current_user, body.on_behalf_of)
+
     # ── Namespace — reserve from the pool (pick-specific or any), else queue ──
     if body.resource_type == ResourceType.NAMESPACE.value:
         # A (name, cluster) pair identifies a namespace; both must be given together.
@@ -189,7 +196,7 @@ async def create_booking(
             )
         try:
             booking = await _book_namespace_use_case.execute(
-                session, body.ttl_minutes, user_id=str(current_user.id),
+                session, body.ttl_minutes, user_id=owner_id, created_by=created_by,
                 namespace_id=body.namespace_id,
                 namespace_name=body.namespace_name,
                 cluster_name=body.cluster_name,
@@ -207,7 +214,8 @@ async def create_booking(
             static_vm_id = static_vm.id
         try:
             booking = await _reserve_static_vm_use_case.execute(
-                session, body.ttl_minutes, user_id=str(current_user.id), static_vm_id=static_vm_id
+                session, body.ttl_minutes, user_id=owner_id, created_by=created_by,
+                static_vm_id=static_vm_id,
             )
         except StaticVMUnavailableError as exc:
             raise HTTPException(status_code=409, detail=str(exc))
@@ -237,13 +245,14 @@ async def create_booking(
         try:
             booking = await _create_use_case.execute(
                 session, body.ttl_minutes, image_id, hw_config_id,
-                user_id=str(current_user.id), startup_script=body.startup_script,
+                user_id=owner_id, created_by=created_by, startup_script=body.startup_script,
                 config_roles=config_roles,
             )
         except QuotaExceededError as exc:
             raise HTTPException(status_code=409, detail=str(exc))
 
-    booking.owner_username = current_user.username
+    # The owner is the target (when on behalf of) or the caller.
+    booking.owner_username = body.on_behalf_of or current_user.username
     await _attach_queue_position(session, booking)
     return _created(booking)
 

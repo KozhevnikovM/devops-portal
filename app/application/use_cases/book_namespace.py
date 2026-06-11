@@ -43,6 +43,7 @@ class BookNamespaceUseCase(ReservePooledResourceUseCase):
         cluster_name: str | None = None,
         environment_id: UUID | None = None,
         environment_label: str | None = None,
+        created_by: str | None = None,
     ) -> Booking:
         # An explicit namespace_id wins; otherwise resolve the (name, cluster) pair to one.
         # When none are given, fall through to the pool's any-available / queue path.
@@ -57,5 +58,5 @@ class BookNamespaceUseCase(ReservePooledResourceUseCase):
             namespace_id = namespace.id
         return await super().execute(
             session, ttl_minutes, user_id=user_id, resource_id=namespace_id,
-            environment_id=environment_id, environment_label=environment_label,
+            environment_id=environment_id, environment_label=environment_label, created_by=created_by,
         )
