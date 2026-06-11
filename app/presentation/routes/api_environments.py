@@ -177,6 +177,34 @@ async def get_environment_by_namespace(
     return _serialize(env)
 
 
+@router.get("/by-namespace/{namespace_name}/allowed-to-user", status_code=202)
+async def namespace_allowed_to_user(
+    namespace_name: str,
+    user: str,
+    cluster: str | None = None,
+    session: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(require_user),
+):
+    """Check whether the environment holding `namespace_name` belongs to `user`.
+
+    `202` if it does (that user may use it); `423 Locked` if not — owned by someone else, or no
+    active environment holds the namespace. The actual owner is never disclosed. Any authenticated
+    user may ask; optional `cluster` disambiguates a name reused across clusters.
+    """
+    envs = await _env_repo.get_by_namespace(session, namespace_name, cluster_name=cluster)
+    if len(envs) > 1:
+        raise HTTPException(
+            status_code=400,
+            detail=f"namespace '{namespace_name}' is ambiguous across clusters; specify ?cluster=",
+        )
+    if envs and envs[0].owner_username == user:
+        return {"namespace": namespace_name, "user": user, "match": True}
+    raise HTTPException(
+        status_code=423,
+        detail=f"namespace '{namespace_name}' is not available to user '{user}'",
+    )
+
+
 @router.get("/{environment_id}")
 async def get_environment(
     environment_id: UUID,

@@ -1151,6 +1151,29 @@ curl -s "http://localhost:8000/api/environments/by-namespace/dev1?cluster=prod-c
      -H "Authorization: Bearer dp_<key>"
 ```
 
+### `GET /api/environments/by-namespace/{namespace_name}/allowed-to-user`
+
+Check whether the live environment holding a namespace belongs to a **named user** — a one-call
+yes/no, e.g. a dispatcher verifying "can `john` use the environment on namespace `dev1`?". Required
+query param **`user`** (username); optional **`cluster`** disambiguates a name across clusters.
+
+| Outcome | Status |
+|---------|--------|
+| The namespace's environment is owned by `user` | `202` — body `{ "namespace": "...", "user": "...", "match": true }` |
+| Owned by someone else, **or** no active environment holds the namespace | `423 Locked` (the real owner is **not** disclosed) |
+| `user` omitted | `422` |
+| Name held on **multiple clusters** with no `cluster` | `400` — specify `?cluster=` |
+
+**Auth:** any authenticated user. Read-only equality check — it reveals only `true`/`false` for the
+(namespace, user) pair you name and never vends the environment or its secrets.
+
+```bash
+curl -s -o /dev/null -w "%{http_code}\n" \
+  "http://localhost:8000/api/environments/by-namespace/dev1/allowed-to-user?user=john" \
+  -H "Authorization: Bearer <key>"
+# 202 → dev1's environment is john's   |   423 → it isn't (or dev1 isn't in any environment)
+```
+
 ### `DELETE /api/environments/{id}`
 
 Release a whole environment — tears down **all** its child resources together (provisioned VMs →
