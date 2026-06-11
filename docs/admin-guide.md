@@ -441,6 +441,18 @@ curl -s -X POST http://localhost:8000/api/environments \
           "on_behalf_of":"john@example.com"}'
 ```
 
+To make the environment use a **specific** namespace, add `namespace_name` (and `cluster_name` if the
+name exists on several clusters). The blueprint must have exactly one namespace item; if that
+namespace is already **busy** the order returns `409` (`namespace '<name>' is already booked`) and
+nothing is created:
+
+```bash
+curl -s -X POST http://localhost:8000/api/environments \
+     -H "Authorization: Bearer dp_<dispatcher_key>" -H "Content-Type: application/json" \
+     -d '{"blueprint_name":"dev-stack","ttl_minutes":240,
+          "on_behalf_of":"john@example.com","namespace_name":"dev1"}'
+```
+
 The target user must already **exist and be active** (else `400`); a non-dispatcher using
 `on_behalf_of` gets `403`. The owner (`user_id`) is the target and it counts against **their** quota —
 for an environment, the parent **and every child booking** are owned by the target. The acting

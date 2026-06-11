@@ -50,6 +50,7 @@ _book_namespace_use_case = BookNamespaceUseCase(_repo, _namespace_repo)
 _order_use_case = OrderEnvironmentUseCase(
     _env_repo, _blueprint_repo, _repo, _create_use_case, _reserve_static_vm_use_case,
     _book_namespace_use_case, _image_repo, _hw_config_repo, _role_repo, _static_vm_repo, _dispatcher,
+    namespace_repo=_namespace_repo,
 )
 _release_booking_use_case = ReleaseBookingUseCase(_repo, _dispatcher)
 _release_use_case = ReleaseEnvironmentUseCase(_env_repo, _release_booking_use_case)
@@ -66,6 +67,10 @@ class OrderEnvironmentRequest(BaseModel):
     ttl_minutes: int
     # Dispatcher only: order on behalf of this user (username); the environment is owned by them.
     on_behalf_of: str | None = None
+    # Pin the environment's (single) namespace to a specific pooled one by name; 409 if it's busy.
+    namespace_name: str | None = None
+    # Optional cluster to disambiguate a namespace name reused across clusters.
+    cluster_name: str | None = None
 
 
 def _derived_status(env: Environment) -> str:
@@ -122,6 +127,7 @@ async def order_environment(
     try:
         env = await _order_use_case.execute(
             session, body.blueprint_name, body.ttl_minutes, user_id=owner_id, created_by=created_by,
+            namespace_name=body.namespace_name, cluster_name=body.cluster_name,
         )
     except BlueprintNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))

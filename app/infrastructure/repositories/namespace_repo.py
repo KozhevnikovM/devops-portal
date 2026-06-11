@@ -90,6 +90,13 @@ class NamespaceRepository:
         model = result.scalar_one_or_none()
         return _to_entity(model) if model is not None else None
 
+    async def get_by_name(self, session: AsyncSession, name: str) -> list[Namespace]:
+        """Namespaces with this name across all clusters (names are unique only per cluster)."""
+        result = await session.execute(
+            select(NamespaceModel).where(NamespaceModel.name == name).order_by(NamespaceModel.cluster_name)
+        )
+        return [_to_entity(m) for m in result.scalars().all()]
+
     async def create(
         self, session: AsyncSession, name: str, cluster_name: str, api_url: str | None
     ) -> Namespace:

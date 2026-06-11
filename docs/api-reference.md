@@ -1101,10 +1101,18 @@ authenticated user.
 add **`on_behalf_of`** (username) to order the environment for another user — see *Ordering on behalf
 of a user* under `POST /api/bookings`.
 
+**Pin a specific namespace.** Add **`namespace_name`** (optional **`cluster_name`** to disambiguate a
+name reused across clusters) to make the environment use that exact pooled namespace instead of any
+free one. The blueprint must contain **exactly one** namespace item. If the namespace is **busy**
+(held by a live booking) the order fails with **`409`** (`namespace '<name>' is already booked`) and
+nothing is created. An unknown name, an ambiguous name with no `cluster_name`, or a blueprint with no
+/ multiple namespace items → **`400`**.
+
 Blueprint item names are resolved up front, so a bad name creates nothing. A child quota failure
 rolls the whole environment back. **Responses:** `201` (the environment + its children); `404`
-unknown blueprint; `400` a blueprint item references an unknown catalog entry; `409` quota exceeded
-or a specific pooled resource unavailable.
+unknown blueprint; `400` a blueprint item (or a pinned `namespace_name`) references an unknown catalog
+entry, or the blueprint has no/multiple namespaces to pin; `409` quota exceeded or a specific pooled
+resource (incl. a pinned namespace) is unavailable.
 
 ```json
 {

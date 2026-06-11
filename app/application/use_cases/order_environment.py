@@ -21,6 +21,7 @@ class OrderEnvironmentUseCase:
         self, env_repo, blueprint_repo, booking_repo, create_use_case,
         reserve_static_vm_use_case, book_namespace_use_case,
         image_repo, hw_config_repo, role_repo, static_vm_repo, dispatcher,
+        namespace_repo=None,
     ) -> None:
         self._env_repo = env_repo
         self._blueprint_repo = blueprint_repo
@@ -33,10 +34,12 @@ class OrderEnvironmentUseCase:
         self._role_repo = role_repo
         self._static_vm_repo = static_vm_repo
         self._dispatcher = dispatcher
+        self._namespace_repo = namespace_repo
 
     async def execute(
         self, session: AsyncSession, blueprint_name: str, ttl_minutes: int, user_id: str,
         created_by: str | None = None,
+        namespace_name: str | None = None, cluster_name: str | None = None,
     ) -> Environment:
         blueprint = await self._blueprint_repo.get_by_name(session, blueprint_name)
         if blueprint is None:
@@ -44,6 +47,11 @@ class OrderEnvironmentUseCase:
 
         # ── Resolve every item's names up front — a bad name creates nothing ──
         resolved = [await self._resolve_item(session, it) for it in blueprint.items]
+
+        # Order-time namespace pin: point the (single) namespace item at a specific namespace.
+        # Resolved here, in the up-front phase, so an unknown/ambiguous name creates nothing.
+        if namespace_name:
+            await self._pin_namespace(session, blueprint, resolved, namespace_name, cluster_name)
 
         # The lease starts when the whole stack is READY (#223). Until then the environment's
         # expires_at is a far-future placeholder so a short TTL can't tear the stack down
@@ -75,6 +83,42 @@ class OrderEnvironmentUseCase:
             self._dispatcher.dispatch_provision(booking_id, image_id, hw_config_id)
 
         return await self._env_repo.get(session, env.id)
+
+    async def _pin_namespace(self, session, blueprint, resolved, namespace_name, cluster_name) -> None:
+        """Override the blueprint's single namespace item with a specific namespace by name.
+
+        The blueprint must have exactly one NAMESPACE item; the name must resolve to exactly one
+        pooled namespace (unknown/ambiguous → EnvironmentItemError → 400). Whether that namespace is
+        *busy* is decided later, when the child is reserved (→ NamespaceUnavailableError → 409)."""
+        ns_indexes = [
+            i for i, it in enumerate(blueprint.items)
+            if it.resource_type == ResourceType.NAMESPACE.value
+        ]
+        if not ns_indexes:
+            raise EnvironmentItemError(
+                f"blueprint '{blueprint.name}' has no namespace to assign"
+            )
+        if len(ns_indexes) > 1:
+            raise EnvironmentItemError(
+                f"blueprint '{blueprint.name}' has multiple namespaces; cannot pin a single namespace_name"
+            )
+        ns = await self._resolve_namespace(session, namespace_name, cluster_name)
+        resolved[ns_indexes[0]] = {"namespace_name": ns.name, "cluster_name": ns.cluster_name}
+
+    async def _resolve_namespace(self, session, namespace_name, cluster_name):
+        if cluster_name:
+            ns = await self._namespace_repo.get_by_name_and_cluster(session, namespace_name, cluster_name)
+            if ns is None:
+                raise EnvironmentItemError(f"no namespace '{namespace_name}' on cluster '{cluster_name}'")
+            return ns
+        matches = await self._namespace_repo.get_by_name(session, namespace_name)
+        if not matches:
+            raise EnvironmentItemError(f"no namespace '{namespace_name}'")
+        if len(matches) > 1:
+            raise EnvironmentItemError(
+                f"namespace '{namespace_name}' is ambiguous across clusters; specify cluster_name"
+            )
+        return matches[0]
 
     async def _resolve_item(self, session, item) -> dict:
         spec = item.spec or {}
