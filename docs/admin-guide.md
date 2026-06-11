@@ -399,20 +399,58 @@ badge in the user table.
 *API keys* above). Store it as the pipeline secret, e.g. `dp_…`.
 
 **3. Order on behalf of a target.** Have the pipeline pass `on_behalf_of` (the target's username,
-which may be an email):
+which may be an email). The same field works on every order endpoint; the dispatcher's key
+authenticates, while the resource is owned by — and counts against the quota of — the target.
+
+*Order a VM* (provisioned; image + hardware by catalog name, or by `image_id`/`hw_config_id`):
 
 ```bash
 curl -s -X POST http://localhost:8000/api/bookings \
      -H "Authorization: Bearer dp_<dispatcher_key>" -H "Content-Type: application/json" \
-     -d '{"resource_type":"VM","ttl_minutes":240,"image_name":"Ubuntu 22.04",
-          "hw_config_name":"medium","on_behalf_of":"john@example.com"}'
+     -d '{"resource_type":"VM","ttl_minutes":240,
+          "image_name":"Ubuntu 22.04","hw_config_name":"medium",
+          "on_behalf_of":"john@example.com"}'
+```
+
+*Order a namespace* (reserved from the pool — any free one, or pick a specific `namespace_name` +
+`cluster_name` pair; if none is free the booking is `QUEUED`):
+
+```bash
+curl -s -X POST http://localhost:8000/api/bookings \
+     -H "Authorization: Bearer dp_<dispatcher_key>" -H "Content-Type: application/json" \
+     -d '{"resource_type":"NAMESPACE","ttl_minutes":240,
+          "on_behalf_of":"john@example.com"}'
+```
+
+*Order a static VM* (reserved from the pool; `static_vm_name` optional to pick a specific one):
+
+```bash
+curl -s -X POST http://localhost:8000/api/bookings \
+     -H "Authorization: Bearer dp_<dispatcher_key>" -H "Content-Type: application/json" \
+     -d '{"resource_type":"STATIC_VM","ttl_minutes":240,
+          "on_behalf_of":"john@example.com"}'
+```
+
+*Order an environment* (a whole stack from a blueprint — namespace + VMs created together as one
+order, all owned by the target):
+
+```bash
+curl -s -X POST http://localhost:8000/api/environments \
+     -H "Authorization: Bearer dp_<dispatcher_key>" -H "Content-Type: application/json" \
+     -d '{"blueprint_name":"dev-stack","ttl_minutes":240,
+          "on_behalf_of":"john@example.com"}'
 ```
 
 The target user must already **exist and be active** (else `400`); a non-dispatcher using
-`on_behalf_of` gets `403`. The booking's owner (`user_id`) is the target and it counts against **their**
-quota; the acting dispatcher is recorded in `created_by`. The response — including any one-time
-credentials — is returned to the dispatcher so the pipeline can hand them to the user. The same applies
-to `POST /api/environments`.
+`on_behalf_of` gets `403`. The owner (`user_id`) is the target and it counts against **their** quota —
+for an environment, the parent **and every child booking** are owned by the target. The acting
+dispatcher is recorded in `created_by`. The response — including any one-time credentials (VM password,
+static-VM SSH details) — is returned to the dispatcher so the pipeline can hand them to the user; for
+an environment, child credentials appear on the children as they reach `READY` (poll
+`GET /api/environments/{id}`).
+
+> **Self-ordering.** Omit `on_behalf_of` and the dispatcher orders for **itself** (a normal
+> self-order, `created_by` stays `null`) — the same as any `user`.
 
 **Visibility & management.** The dispatcher keeps sight of what it dispatched: its booking/environment
 lists (API and the browser pages) return its **own** resources **plus** everything it created for

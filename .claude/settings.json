@@ -56,7 +56,9 @@
       "Bash(python3 -c \"import app.presentation.routes.bookings, app.presentation.routes.environments, app.presentation.routes.api_bookings, app.presentation.routes.api_environments, app.application.use_cases.release_booking, app.application.use_cases.extend_booking, app.application.use_cases.release_environment; print\\('imports ok'\\)\")",
       "Bash(git -c commit.gpgsign=false commit -q -m 'feat: dispatcher visibility & management \\(#230\\) *)",
       "Bash(git -c commit.gpgsign=false commit -q -m \"chore: allowlist #230 commit command in settings\" .claude/settings.json)",
-      "Bash(python3 -c \"import app.infrastructure.repositories.booking_repo, app.infrastructure.repositories.environment_repo; print\\('repos ok'\\)\")"
+      "Bash(python3 -c \"import app.infrastructure.repositories.booking_repo, app.infrastructure.repositories.environment_repo; print\\('repos ok'\\)\")",
+      "Bash(git -c commit.gpgsign=false commit -q -m 'feat: dispatcher UI & docs \\(#231\\) *)",
+      "Bash(git -c commit.gpgsign=false commit -q -m 'docs: dispatcher ordering examples for VM, namespace, static VM, environment *)"
     ]
   }
 }
