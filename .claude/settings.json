@@ -55,7 +55,9 @@
       "Bash(git -c commit.gpgsign=false commit -q -m 'feat: dispatcher role + on-behalf ordering \\(#229\\) *)",
       "Bash(python3 -c \"import app.presentation.routes.bookings, app.presentation.routes.environments, app.presentation.routes.api_bookings, app.presentation.routes.api_environments, app.application.use_cases.release_booking, app.application.use_cases.extend_booking, app.application.use_cases.release_environment; print\\('imports ok'\\)\")",
       "Bash(python3 -c \"import app.presentation.routes.api_environments, app.infrastructure.repositories.environment_repo; print\\('ok'\\)\")",
-      "Bash(grep -n \"GET /api/environments\\\\|## Environments\\\\|### \\\\`GET /api/environments\\\\|### \\\\`POST /api/environments\\\\|by-namespace\" docs/api-reference.md)"
+      "Bash(grep -n \"GET /api/environments\\\\|## Environments\\\\|### \\\\`GET /api/environments\\\\|### \\\\`POST /api/environments\\\\|by-namespace\" docs/api-reference.md)",
+      "Bash(git merge *)",
+      "Bash(git -c commit.gpgsign=false commit -q -m \"chore: allowlist commands in settings\" .claude/settings.json)"
     ]
   }
 }
