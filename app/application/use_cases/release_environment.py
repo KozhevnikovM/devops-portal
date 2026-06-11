@@ -2,6 +2,7 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.application.use_cases._permissions import can_manage
 from app.domain.entities import Environment, User
 from app.domain.enums import BookingStatus
 from app.domain.exceptions import BookingPermissionError, EnvironmentError
@@ -31,7 +32,7 @@ class ReleaseEnvironmentUseCase:
         except ValueError:
             raise EnvironmentNotFoundError(f"Environment {environment_id} not found")
 
-        if env.user_id != str(current_user.id) and current_user.role != "admin":
+        if not can_manage(owner_id=env.user_id, created_by=env.created_by, user=current_user):
             raise BookingPermissionError("Not the environment owner")
 
         for child in env.bookings:

@@ -16,6 +16,7 @@ from app.infrastructure.database.session import get_async_session
 from app.presentation.routes.api_environments import (
     _blueprint_repo, _derived_status, _env_repo, _order_use_case, _release_use_case,
 )
+from app.application.use_cases._permissions import can_manage
 from app.application.use_cases.release_environment import EnvironmentNotFoundError
 from app.presentation.templating import templates
 
@@ -98,7 +99,7 @@ async def environment_row(
         env = await _env_repo.get(session, environment_id)
     except ValueError:
         raise HTTPException(status_code=404, detail="Environment not found")
-    if env.user_id != str(current_user.id) and current_user.role != "admin":
+    if not can_manage(owner_id=env.user_id, created_by=env.created_by, user=current_user):
         raise HTTPException(status_code=403, detail="Not the environment owner")
     return templates.TemplateResponse(
         request, "partials/environment_row.html",

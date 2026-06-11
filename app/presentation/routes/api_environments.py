@@ -13,6 +13,7 @@ from app.application.use_cases.release_environment import (
     EnvironmentNotFoundError, ReleaseEnvironmentUseCase,
 )
 from app.application.use_cases.reserve_static_vm import ReserveStaticVMUseCase
+from app.application.use_cases._permissions import can_manage
 from app.presentation.routes._dispatch import resolve_owner
 from app.domain.entities import Environment, User
 from app.domain.enums import BookingStatus
@@ -154,7 +155,7 @@ async def get_environment(
         env = await _env_repo.get(session, environment_id)
     except ValueError:
         raise HTTPException(status_code=404, detail="Environment not found")
-    if env.user_id != str(current_user.id) and current_user.role != "admin":
+    if not can_manage(owner_id=env.user_id, created_by=env.created_by, user=current_user):
         raise HTTPException(status_code=403, detail="Not the environment owner")
     return _serialize(env)
 
