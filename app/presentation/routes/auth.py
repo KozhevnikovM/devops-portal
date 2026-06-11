@@ -13,7 +13,7 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.infrastructure.auth import require_admin, require_user
+from app.infrastructure.auth import VALID_ROLES, require_admin, require_user
 from app.infrastructure.database.session import get_async_session
 from app.infrastructure.repositories.user_repo import UserRepository
 from app.infrastructure.repositories.quota_repo import QuotaRepository
@@ -137,6 +137,8 @@ async def create_user(
     session: AsyncSession = Depends(get_async_session),
     _: User = Depends(require_admin),
 ):
+    if body.role not in VALID_ROLES:
+        raise HTTPException(status_code=400, detail=f"invalid role '{body.role}'")
     pw_hash = bcrypt.hashpw(body.password.encode(), bcrypt.gensalt()).decode()
     user = await _user_repo.create(session, body.username, pw_hash, body.role)
     return UserResponse(id=user.id, username=user.username, role=user.role, is_active=user.is_active)
@@ -231,6 +233,11 @@ async def admin_create_user(
     session: AsyncSession = Depends(get_async_session),
     current_user: User = Depends(require_admin),
 ):
+    if role not in VALID_ROLES:
+        return HTMLResponse(
+            content=f'<span class="text-red-400 text-xs">Invalid role "{escape(role)}".</span>',
+            headers={"HX-Retarget": "#user-create-error", "HX-Reswap": "innerHTML"},
+        )
     pw_hash = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
     try:
         await _user_repo.create(session, username, pw_hash, role)

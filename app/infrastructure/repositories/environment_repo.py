@@ -3,7 +3,7 @@ from uuid import UUID, uuid4
 
 from sqlalchemy import String, cast, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 
 from app.domain.constants import PERMANENT_EXPIRES_AT
 from app.domain.entities import Environment
@@ -12,6 +12,9 @@ from app.infrastructure.database.models import (
     BookingModel, EnvironmentModel, NamespaceModel, UserModel,
 )
 from app.infrastructure.repositories.booking_repo import _to_entity as _booking_to_entity
+
+# Second alias of users to resolve created_by (the dispatcher) → username, distinct from the owner.
+_CreatorUser = aliased(UserModel)
 
 
 def _lease_until(ttl_minutes: int) -> datetime:
@@ -42,11 +45,12 @@ _LIVE_CHILD_STATUSES = [
 ]
 
 
-def _to_entity(m: EnvironmentModel, bookings=None, owner_username=None) -> Environment:
+def _to_entity(m: EnvironmentModel, bookings=None, owner_username=None, created_by_username=None) -> Environment:
     return Environment(
         id=m.id, name=m.name, blueprint_name=m.blueprint_name, user_id=m.user_id,
         ttl_minutes=m.ttl_minutes, expires_at=m.expires_at, created_at=m.created_at,
         bookings=bookings or [], owner_username=owner_username, created_by=m.created_by,
+        created_by_username=created_by_username,
     )
 
 
@@ -80,16 +84,17 @@ class EnvironmentRepository:
 
     async def get(self, session: AsyncSession, environment_id: UUID) -> Environment:
         result = await session.execute(
-            select(EnvironmentModel, UserModel.username)
+            select(EnvironmentModel, UserModel.username, _CreatorUser.username)
             .join(UserModel, cast(UserModel.id, String) == EnvironmentModel.user_id, isouter=True)
+            .outerjoin(_CreatorUser, cast(_CreatorUser.id, String) == EnvironmentModel.created_by)
             .where(EnvironmentModel.id == environment_id)
         )
         row = result.first()
         if row is None:
             raise ValueError(f"Environment {environment_id} not found")
-        model, owner = row
+        model, owner, creator = row
         children = await self._children(session, environment_id)
-        return _to_entity(model, bookings=children, owner_username=owner)
+        return _to_entity(model, bookings=children, owner_username=owner, created_by_username=creator)
 
     async def get_by_namespace(
         self, session: AsyncSession, namespace_name: str, cluster_name: str | None = None,
@@ -126,8 +131,9 @@ class EnvironmentRepository:
 
     async def _list(self, session: AsyncSession, user_id: str | None) -> list[Environment]:
         stmt = (
-            select(EnvironmentModel, UserModel.username)
+            select(EnvironmentModel, UserModel.username, _CreatorUser.username)
             .join(UserModel, cast(UserModel.id, String) == EnvironmentModel.user_id, isouter=True)
+            .outerjoin(_CreatorUser, cast(_CreatorUser.id, String) == EnvironmentModel.created_by)
             .order_by(EnvironmentModel.created_at.desc())
         )
         if user_id is not None:
@@ -137,9 +143,9 @@ class EnvironmentRepository:
             )
         result = await session.execute(stmt)
         envs = []
-        for model, owner in result.all():
+        for model, owner, creator in result.all():
             children = await self._children(session, model.id)
-            envs.append(_to_entity(model, bookings=children, owner_username=owner))
+            envs.append(_to_entity(model, bookings=children, owner_username=owner, created_by_username=creator))
         return envs
 
     # ── Sync helpers (Celery beat — env-aware TTL enforcement) ──────────────────

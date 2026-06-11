@@ -1,5 +1,8 @@
 {% set is_terminal = environment.derived_status in ('READY', 'FAILED', 'RELEASED') %}
 {% set is_owner = environment.owner_username == current_user.username %}
+{# Owner, the creating dispatcher (#229/#230) and admins may manage the environment. #}
+{% set can_manage = is_owner or current_user.role == 'admin'
+    or (environment.created_by and environment.created_by == (current_user.id | string)) %}
 <tr
     id="environment-{{ environment.id }}"
     class="border-b border-gray-800 last:border-0 align-top hover:bg-gray-800/40 transition-colors"
@@ -13,6 +16,9 @@
         {{ environment.name }}
         {% if environment.blueprint_name %}
         <div class="text-xs text-gray-500">from {{ environment.blueprint_name }}</div>
+        {% endif %}
+        {% if environment.created_by_username %}
+        <div class="text-[10px] text-purple-400/80" title="Ordered on behalf of {{ environment.owner_username }} by a dispatcher">via {{ environment.created_by_username }}</div>
         {% endif %}
     </td>
     <td class="px-4 py-3">
@@ -46,7 +52,7 @@
         {% else %}{{ environment.expires_at | as_tz(current_user.timezone) }}{% endif %}
     </td>
     <td class="px-4 py-3">
-        {% if (is_owner or current_user.role == 'admin') and environment.derived_status != 'RELEASED' %}
+        {% if can_manage and environment.derived_status != 'RELEASED' %}
         <details class="relative">
             <summary class="list-none cursor-pointer w-7 h-7 flex items-center justify-center rounded text-gray-400 hover:text-gray-200 hover:bg-gray-700 transition-colors select-none text-lg leading-none">⋮</summary>
             <div class="absolute right-0 bottom-full mb-1 w-48 bg-gray-900 border border-gray-700 rounded shadow-lg z-50 py-1">

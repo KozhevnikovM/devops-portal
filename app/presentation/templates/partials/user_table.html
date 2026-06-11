@@ -90,6 +90,8 @@
                 <td class="px-4 py-3">
                     {% if user.role == 'admin' %}
                     <span class="text-xs px-2 py-1 rounded font-semibold bg-orange-900 text-orange-300 border border-orange-700">admin</span>
+                    {% elif user.role == 'dispatcher' %}
+                    <span class="text-xs px-2 py-1 rounded font-semibold bg-purple-900 text-purple-300 border border-purple-700">dispatcher</span>
                     {% else %}
                     <span class="text-xs px-2 py-1 rounded font-semibold bg-blue-900 text-blue-300 border border-blue-700">user</span>
                     {% endif %}

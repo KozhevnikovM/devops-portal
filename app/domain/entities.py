@@ -109,6 +109,7 @@ class Environment:
     bookings: list = field(default_factory=list)  # list[Booking] — the children
     owner_username: str | None = None
     created_by: str | None = None  # acting dispatcher's id when ordered on behalf of the owner
+    created_by_username: str | None = None  # resolved username of created_by (display only)
 
 
 @dataclass
@@ -152,6 +153,7 @@ class Booking:
     environment_id: UUID | None = None  # parent Environment, when ordered as part of a stack
     environment_label: str | None = None  # blueprint item label (e.g. "web") within the stack
     created_by: str | None = None  # acting dispatcher's id when ordered on behalf of the owner
+    created_by_username: str | None = None  # resolved username of created_by (display only)
     namespace_id: UUID | None = None
     namespace_name: str | None = None
     cluster_name: str | None = None
