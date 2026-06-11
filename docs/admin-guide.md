@@ -472,6 +472,22 @@ release/extend controls the owner does. Credentials are only re-displayed to the
 the dispatcher already received them in the order response. The **owner** always retains full control
 of their own resource, and **admins** can manage everything.
 
+### Find an environment by its namespace
+
+A pipeline can locate the environment it owns by the **name of a namespace inside it**, rather than
+hard-coding an environment id:
+
+```bash
+curl -s "http://localhost:8000/api/environments/by-namespace/dev1" \
+     -H "Authorization: Bearer <key>"
+```
+
+It returns the environment (with its children) if you **own or dispatched** it (admins: any). If the
+namespace belongs to **someone else's** environment you get `409` ("in use by another user's
+environment", without naming them); an unknown/free namespace gives `404`. Add `?cluster=<name>` when
+the same namespace name exists on more than one cluster. This is a read-only lookup — it doesn't
+reserve or lock anything.
+
 ---
 
 ## VM Resource Quotas

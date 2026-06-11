@@ -151,6 +151,38 @@ async def list_environments(
     return [_serialize(e) for e in envs]
 
 
+@router.get("/by-namespace/{namespace_name}")
+async def get_environment_by_namespace(
+    namespace_name: str,
+    cluster: str | None = None,
+    session: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(require_user),
+):
+    """Locate the live environment whose namespace child is named `namespace_name`.
+
+    Lets a pipeline find the stack it owns by namespace instead of environment id. Optional `cluster`
+    disambiguates a name reused across clusters. Owned/dispatched/admin → 200; owned by someone else
+    → 409 (the other owner is not disclosed); not found / free / standalone namespace → 404.
+    """
+    envs = await _env_repo.get_by_namespace(session, namespace_name, cluster_name=cluster)
+    if not envs:
+        raise HTTPException(
+            status_code=404, detail=f"no active environment with namespace '{namespace_name}'",
+        )
+    if len(envs) > 1:
+        raise HTTPException(
+            status_code=400,
+            detail=f"namespace '{namespace_name}' is ambiguous across clusters; specify ?cluster=",
+        )
+    env = envs[0]
+    if not can_manage(owner_id=env.user_id, created_by=env.created_by, user=current_user):
+        raise HTTPException(
+            status_code=409,
+            detail=f"namespace '{namespace_name}' is in use by another user's environment",
+        )
+    return _serialize(env)
+
+
 @router.get("/{environment_id}")
 async def get_environment(
     environment_id: UUID,
