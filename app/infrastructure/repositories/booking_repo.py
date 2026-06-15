@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
@@ -5,6 +6,7 @@ from sqlalchemy import cast, func, or_, select, String
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session, aliased
 
+from app.domain.booking_status import can_transition
 from app.domain.entities import Booking, BookingAuditEntry
 from app.domain.enums import BookingStatus, ResourceType
 from app.domain.exceptions import BookingNotFoundError
@@ -16,6 +18,24 @@ from app.infrastructure.database.models import (
 # Second alias of users to resolve created_by (the dispatcher) → username, distinct from the
 # owner join on user_id.
 _CreatorUser = aliased(UserModel)
+
+
+logger = logging.getLogger(__name__)
+
+
+def _observe_transition(old_value: str, new: BookingStatus, booking_id: UUID) -> None:
+    """Observe-only status-invariant check (#238 Phase 1): log a warning on a disallowed transition,
+    but never raise. A no-op (old == new) is ignored. Enforcement (raising) is a later phase, once
+    the transition map is confirmed against booking_audit history."""
+    try:
+        old = BookingStatus(old_value)
+    except ValueError:
+        return
+    if old != new and not can_transition(old, new):
+        logger.warning(
+            "Disallowed booking status transition %s -> %s for booking %s",
+            old.value, new.value, booking_id,
+        )
 
 
 def _to_audit_entity(m: BookingAuditModel) -> BookingAuditEntry:
@@ -217,6 +237,7 @@ class BookingRepository:
         if model is None:
             raise BookingNotFoundError(booking_id)
         old_status = model.status
+        _observe_transition(old_status, status, booking_id)
         model.status = status.value
         if vm_ip is not None:
             model.vm_ip = vm_ip
@@ -348,6 +369,7 @@ class BookingRepository:
         if model is None:
             raise BookingNotFoundError(booking_id)
         old_status = model.status
+        _observe_transition(old_status, status, booking_id)
         model.status = status.value
         if vm_ip is not None:
             model.vm_ip = vm_ip

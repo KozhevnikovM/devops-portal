@@ -73,7 +73,11 @@
       "Bash(git -c commit.gpgsign=false commit -q -m 'refactor: add application-layer repository ports \\(#239 PR 1\\) *)",
       "Bash(python3 -c \"import app.application.use_cases.create_booking, app.application.use_cases.reserve_pooled_resource, app.application.use_cases.book_namespace, app.application.use_cases.reserve_static_vm, app.application.use_cases.extend_booking, app.application.use_cases.release_booking, app.application.use_cases.release_environment, app.application.use_cases.order_environment; print\\('use cases import ok'\\)\")",
       "Bash(python3 -c \"import app.presentation.routes.api_bookings, app.presentation.routes.api_environments, app.presentation.routes.bookings; print\\('routes import ok'\\)\")",
-      "Bash(git -c commit.gpgsign=false commit -q -m 'refactor: type use cases against repository ports, not concrete repos \\(#239 PR 2\\) *)"
+      "Bash(git -c commit.gpgsign=false commit -q -m 'refactor: type use cases against repository ports, not concrete repos \\(#239 PR 2\\) *)",
+      "Bash(sed -n '1,12p' app/infrastructure/repositories/booking_repo.py)",
+      "Bash(sed -n '200,230p' app/infrastructure/repositories/booking_repo.py)",
+      "Bash(sed -n '340,360p' app/infrastructure/repositories/booking_repo.py)",
+      "Bash(git -c commit.gpgsign=false commit -q -m 'refactor: BookingStatus transition invariant in observe-only mode \\(#238 PR 2\\) *)"
     ]
   }
 }
