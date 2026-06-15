@@ -130,7 +130,7 @@ async def test_create_booking_sets_correct_expiry(mock_repo, mock_image_repo, mo
 async def test_create_booking_raises_for_inactive_image(mock_repo, mock_hw_repo, mock_hw, mock_session):
     image_repo = MagicMock(spec=ImageRepository)
     image_repo.get = AsyncMock(side_effect=ValueError("inactive"))
-    use_case = CreateBookingUseCase(mock_repo, image_repo, mock_hw_repo)
+    use_case = CreateBookingUseCase(mock_repo, image_repo, mock_hw_repo, MagicMock())
 
     with pytest.raises(ValueError):
         await use_case.execute(mock_session, ttl_minutes=240, image_id=uuid4(), hw_config_id=mock_hw.id)
@@ -140,7 +140,7 @@ async def test_create_booking_raises_for_inactive_image(mock_repo, mock_hw_repo,
 async def test_create_booking_raises_for_inactive_hw(mock_repo, mock_image_repo, mock_image, mock_session):
     hw_repo = MagicMock(spec=HWConfigRepository)
     hw_repo.get = AsyncMock(side_effect=ValueError("inactive"))
-    use_case = CreateBookingUseCase(mock_repo, mock_image_repo, hw_repo)
+    use_case = CreateBookingUseCase(mock_repo, mock_image_repo, hw_repo, MagicMock())
 
     with pytest.raises(ValueError):
         await use_case.execute(mock_session, ttl_minutes=240, image_id=mock_image.id, hw_config_id=uuid4())

@@ -12,9 +12,6 @@ from app.domain.entities import Booking
 from app.domain.lease import Lease
 from app.domain.enums import BookingStatus, DriveType
 from app.domain.exceptions import QuotaExceededError
-# Concrete QuotaRepository is imported only for the lazy default below; dropping that default in
-# favour of a composition root is the follow-up PR (see docs/refactor/repository-interfaces.md §4).
-from app.infrastructure.repositories.quota_repo import QuotaRepository
 
 
 class CreateBookingUseCase:
@@ -23,13 +20,13 @@ class CreateBookingUseCase:
         repo: BookingRepositoryPort,
         image_repo: ImageRepositoryPort,
         hw_config_repo: HWConfigRepositoryPort,
-        quota_repo: QuotaRepositoryPort | None = None,
+        quota_repo: QuotaRepositoryPort,
         dispatcher: TaskDispatcher | None = None,
     ) -> None:
         self._repo = repo
         self._image_repo = image_repo
         self._hw_config_repo = hw_config_repo
-        self._quota_repo = quota_repo or QuotaRepository()
+        self._quota_repo = quota_repo
         self._dispatcher = dispatcher
 
     def _dispatch(self) -> TaskDispatcher:
