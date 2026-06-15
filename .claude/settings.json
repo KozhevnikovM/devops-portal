@@ -77,7 +77,8 @@
       "Bash(sed -n '1,12p' app/infrastructure/repositories/booking_repo.py)",
       "Bash(sed -n '200,230p' app/infrastructure/repositories/booking_repo.py)",
       "Bash(sed -n '340,360p' app/infrastructure/repositories/booking_repo.py)",
-      "Bash(git -c commit.gpgsign=false commit -q -m 'refactor: BookingStatus transition invariant in observe-only mode \\(#238 PR 2\\) *)"
+      "Bash(git -c commit.gpgsign=false commit -q -m 'refactor: BookingStatus transition invariant in observe-only mode \\(#238 PR 2\\) *)",
+      "Bash(git -c commit.gpgsign=false commit -q -m 'refactor: enforce the BookingStatus transition invariant \\(#238 PR 3\\) *)"
     ]
   }
 }

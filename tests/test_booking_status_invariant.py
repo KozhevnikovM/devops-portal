@@ -43,19 +43,21 @@ def test_released_is_terminal():
     assert ALLOWED_TRANSITIONS[BookingStatus.RELEASED] == set()
 
 
-# ── observe-only wiring logs (never raises) ──────────────────────────────────────
-def test_observe_transition_warns_on_disallowed(caplog):
-    from app.infrastructure.repositories.booking_repo import _observe_transition
-    bid = uuid4()
-    with caplog.at_level(logging.WARNING):
-        _observe_transition("RELEASED", BookingStatus.READY, bid)  # disallowed → warns, no raise
-    assert any("Disallowed booking status transition" in r.message for r in caplog.records)
+# ── enforce wiring raises on disallowed, allows legit + no-op (#238 Phase 2) ─────
+def test_guard_transition_raises_on_disallowed():
+    from app.infrastructure.repositories.booking_repo import _guard_transition
+    from app.domain.exceptions import IllegalStatusTransitionError
+    with pytest.raises(IllegalStatusTransitionError):
+        _guard_transition("RELEASED", BookingStatus.READY, uuid4())  # terminal can't revive
 
 
-def test_observe_transition_silent_on_allowed_and_noop(caplog):
-    from app.infrastructure.repositories.booking_repo import _observe_transition
-    bid = uuid4()
-    with caplog.at_level(logging.WARNING):
-        _observe_transition("PENDING", BookingStatus.PROVISIONING, bid)  # allowed
-        _observe_transition("READY", BookingStatus.READY, bid)           # no-op
-    assert caplog.records == []
+def test_guard_transition_allows_legit_and_noop():
+    from app.infrastructure.repositories.booking_repo import _guard_transition
+    _guard_transition("PENDING", BookingStatus.PROVISIONING, uuid4())  # allowed → no raise
+    _guard_transition("READY", BookingStatus.READY, uuid4())           # no-op → no raise
+
+
+def test_illegal_transition_is_a_booking_error():
+    """So API routes that catch BookingError surface it as 409, not a 500."""
+    from app.domain.exceptions import BookingError, IllegalStatusTransitionError
+    assert issubclass(IllegalStatusTransitionError, BookingError)
