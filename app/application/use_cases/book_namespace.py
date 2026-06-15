@@ -8,8 +8,7 @@ from app.domain.exceptions import NamespaceUnavailableError
 from app.application.use_cases.reserve_pooled_resource import (
     PooledResourceConfig, ReservePooledResourceUseCase,
 )
-from app.infrastructure.repositories.booking_repo import BookingRepository
-from app.infrastructure.repositories.namespace_repo import NamespaceRepository
+from app.application.ports import BookingRepositoryPort, NamespaceRepositoryPort
 
 
 def _attach_namespace(booking: Booking, ns) -> None:
@@ -30,7 +29,7 @@ _NAMESPACE_CONFIG = PooledResourceConfig(
 class BookNamespaceUseCase(ReservePooledResourceUseCase):
     """Reserve a namespace from the pool (specific or any-available, else enqueue)."""
 
-    def __init__(self, repo: BookingRepository, namespace_repo: NamespaceRepository) -> None:
+    def __init__(self, repo: BookingRepositoryPort, namespace_repo: NamespaceRepositoryPort) -> None:
         super().__init__(repo, namespace_repo, _NAMESPACE_CONFIG)
 
     async def execute(

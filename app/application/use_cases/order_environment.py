@@ -2,6 +2,10 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.application.ports import (
+    BlueprintRepositoryPort, BookingRepositoryPort, EnvironmentRepositoryPort, HWConfigRepositoryPort,
+    ImageRepositoryPort, RoleRepositoryPort, StaticVMRepositoryPort, TaskDispatcher,
+)
 from app.domain.entities import Environment
 from app.domain.enums import BookingStatus, ResourceType
 from app.domain.exceptions import BlueprintNotFoundError, EnvironmentItemError
@@ -18,9 +22,12 @@ class OrderEnvironmentUseCase:
     """
 
     def __init__(
-        self, env_repo, blueprint_repo, booking_repo, create_use_case,
+        self, env_repo: EnvironmentRepositoryPort, blueprint_repo: BlueprintRepositoryPort,
+        booking_repo: BookingRepositoryPort, create_use_case,
         reserve_static_vm_use_case, book_namespace_use_case,
-        image_repo, hw_config_repo, role_repo, static_vm_repo, dispatcher,
+        image_repo: ImageRepositoryPort, hw_config_repo: HWConfigRepositoryPort,
+        role_repo: RoleRepositoryPort, static_vm_repo: StaticVMRepositoryPort,
+        dispatcher: TaskDispatcher,
     ) -> None:
         self._env_repo = env_repo
         self._blueprint_repo = blueprint_repo

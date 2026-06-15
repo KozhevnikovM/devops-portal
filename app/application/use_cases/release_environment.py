@@ -2,6 +2,7 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.application.ports import EnvironmentRepositoryPort
 from app.application.use_cases._permissions import can_manage
 from app.domain.entities import Environment, User
 from app.domain.enums import BookingStatus
@@ -22,7 +23,7 @@ class ReleaseEnvironmentUseCase:
     its derived status becomes RELEASED once the children settle.
     """
 
-    def __init__(self, env_repo, release_booking_use_case) -> None:
+    def __init__(self, env_repo: EnvironmentRepositoryPort, release_booking_use_case) -> None:
         self._env_repo = env_repo
         self._release = release_booking_use_case
 

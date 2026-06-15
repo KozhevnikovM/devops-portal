@@ -4,13 +4,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.entities import Booking, User
 from app.domain.enums import BookingStatus
+from app.application.ports import BookingRepositoryPort
 from app.application.use_cases._permissions import can_manage
 from app.domain.exceptions import BookingError, BookingNotFoundError, BookingPermissionError
-from app.infrastructure.repositories.booking_repo import BookingRepository
 
 
 class ExtendBookingUseCase:
-    def __init__(self, repo: BookingRepository) -> None:
+    def __init__(self, repo: BookingRepositoryPort) -> None:
         self._repo = repo
 
     async def execute(
