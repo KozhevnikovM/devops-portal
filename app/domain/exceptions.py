@@ -18,6 +18,11 @@ class StaticVMUnavailableError(BookingError):
     pass
 
 
+class IllegalStatusTransitionError(BookingError):
+    """A booking status move that the transition machine forbids (#238)."""
+    pass
+
+
 class EnvironmentError(Exception):
     pass
 
