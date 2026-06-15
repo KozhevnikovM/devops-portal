@@ -476,6 +476,19 @@ environment", without naming them); an unknown/free namespace gives `404`. Add `
 the same namespace name exists on more than one cluster. This is a read-only lookup — it doesn't
 reserve or lock anything.
 
+To just **check ownership** without pulling the environment back, use the `allowed-to-user` variant —
+a one-call yes/no that any user can ask (e.g. "does `dev1` belong to `john`?"):
+
+```bash
+curl -s -o /dev/null -w "%{http_code}\n" \
+  "http://localhost:8000/api/environments/by-namespace/dev1/allowed-to-user?user=john" \
+  -H "Authorization: Bearer <key>"
+# 202 → dev1's environment is john's   |   423 → it isn't (or dev1 isn't in any environment)
+```
+
+It returns **`202`** when the namespace's environment is owned by `user`, and **`423`** otherwise
+(owned by someone else, or not in any active environment) — never naming the real owner.
+
 ---
 
 ## VM Resource Quotas
