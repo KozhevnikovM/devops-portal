@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session, aliased
 from app.domain.booking_status import can_transition
 from app.domain.entities import Booking, BookingAuditEntry
 from app.domain.enums import BookingStatus, ResourceType
-from app.domain.exceptions import BookingNotFoundError
+from app.domain.exceptions import BookingNotFoundError, IllegalStatusTransitionError
 from app.domain.lease import Lease
 from app.infrastructure.database.models import (
     BookingAuditModel, BookingModel, NamespaceModel, StaticVMModel, UserModel,
@@ -23,10 +23,11 @@ _CreatorUser = aliased(UserModel)
 logger = logging.getLogger(__name__)
 
 
-def _observe_transition(old_value: str, new: BookingStatus, booking_id: UUID) -> None:
-    """Observe-only status-invariant check (#238 Phase 1): log a warning on a disallowed transition,
-    but never raise. A no-op (old == new) is ignored. Enforcement (raising) is a later phase, once
-    the transition map is confirmed against booking_audit history."""
+def _guard_transition(old_value: str, new: BookingStatus, booking_id: UUID) -> None:
+    """Enforce the status-invariant (#238 Phase 2): raise IllegalStatusTransitionError on a
+    disallowed move. A no-op (old == new) is allowed — the recovery/retry paths can legitimately
+    re-write the same status. The map was validated in observe-only mode (#243) against the real
+    transitions; this flips it from logging to enforcing."""
     try:
         old = BookingStatus(old_value)
     except ValueError:
@@ -35,6 +36,9 @@ def _observe_transition(old_value: str, new: BookingStatus, booking_id: UUID) ->
         logger.warning(
             "Disallowed booking status transition %s -> %s for booking %s",
             old.value, new.value, booking_id,
+        )
+        raise IllegalStatusTransitionError(
+            f"Cannot move booking {booking_id} from {old.value} to {new.value}"
         )
 
 
@@ -237,7 +241,7 @@ class BookingRepository:
         if model is None:
             raise BookingNotFoundError(booking_id)
         old_status = model.status
-        _observe_transition(old_status, status, booking_id)
+        _guard_transition(old_status, status, booking_id)
         model.status = status.value
         if vm_ip is not None:
             model.vm_ip = vm_ip
@@ -369,7 +373,7 @@ class BookingRepository:
         if model is None:
             raise BookingNotFoundError(booking_id)
         old_status = model.status
-        _observe_transition(old_status, status, booking_id)
+        _guard_transition(old_status, status, booking_id)
         model.status = status.value
         if vm_ip is not None:
             model.vm_ip = vm_ip
