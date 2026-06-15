@@ -77,7 +77,12 @@
       "Bash(sed -n '1,12p' app/infrastructure/repositories/booking_repo.py)",
       "Bash(sed -n '200,230p' app/infrastructure/repositories/booking_repo.py)",
       "Bash(sed -n '340,360p' app/infrastructure/repositories/booking_repo.py)",
-      "Bash(git -c commit.gpgsign=false commit -q -m 'refactor: BookingStatus transition invariant in observe-only mode \\(#238 PR 2\\) *)"
+      "Bash(git -c commit.gpgsign=false commit -q -m 'refactor: BookingStatus transition invariant in observe-only mode \\(#238 PR 2\\) *)",
+      "Bash(sed -n '35,50p' app/presentation/routes/api_bookings.py)",
+      "Bash(sed -n '28,42p' app/presentation/routes/bookings.py)",
+      "Bash(sed -n '36,56p' app/presentation/routes/api_environments.py)",
+      "Bash(python3 -c \"import app.main; import app.presentation.deps; print\\('app + deps import ok'\\)\")",
+      "Bash(git -c commit.gpgsign=false commit -q -m 'refactor: composition root; drop the QuotaRepository lazy default \\(#239 PR 3\\) *)"
     ]
   }
 }
