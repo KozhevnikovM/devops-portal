@@ -1,13 +1,13 @@
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Callable
 from uuid import UUID, uuid4
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.domain.constants import PERMANENT_EXPIRES_AT
 from app.domain.entities import Booking
+from app.domain.lease import Lease
 from app.domain.enums import BookingStatus, ResourceType
 from app.infrastructure.repositories.booking_repo import BookingRepository
 
@@ -64,7 +64,7 @@ class ReservePooledResourceUseCase:
                 return await self._enqueue(session, uid, ttl_minutes, now, environment_id,
                                            environment_label, created_by)
 
-        expires_at = PERMANENT_EXPIRES_AT if ttl_minutes == 0 else now + timedelta(minutes=ttl_minutes)
+        lease = Lease.starting_now(ttl_minutes, now=now)
 
         booking = Booking(
             id=uuid4(),
@@ -72,7 +72,7 @@ class ReservePooledResourceUseCase:
             status=BookingStatus.READY,  # nothing to provision — ready immediately
             resource_type=cfg.resource_type,
             ttl_minutes=ttl_minutes,
-            expires_at=expires_at,
+            expires_at=lease.expires_at,
             created_at=now,
             environment_id=environment_id,
             environment_label=environment_label,
@@ -95,7 +95,8 @@ class ReservePooledResourceUseCase:
             status=BookingStatus.QUEUED,
             resource_type=self._cfg.resource_type,
             ttl_minutes=ttl_minutes,
-            expires_at=now,  # placeholder until promotion; enforce_ttl ignores QUEUED
+            # Far-future placeholder until promotion; enforce_ttl ignores QUEUED by status anyway.
+            expires_at=Lease.pending(ttl_minutes).expires_at,
             created_at=now,
             environment_id=environment_id,
             environment_label=environment_label,

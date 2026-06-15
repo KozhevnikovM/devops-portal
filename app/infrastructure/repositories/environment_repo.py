@@ -1,13 +1,13 @@
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
 from sqlalchemy import String, cast, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session, aliased
 
-from app.domain.constants import PERMANENT_EXPIRES_AT
 from app.domain.entities import Environment
 from app.domain.enums import BookingStatus, ResourceType
+from app.domain.lease import Lease
 from app.infrastructure.database.models import (
     BookingModel, EnvironmentModel, NamespaceModel, UserModel,
 )
@@ -19,9 +19,7 @@ _CreatorUser = aliased(UserModel)
 
 def _lease_until(ttl_minutes: int) -> datetime:
     """The deadline for a lease of ttl_minutes starting now (permanent when ttl is 0)."""
-    if ttl_minutes == 0:
-        return PERMANENT_EXPIRES_AT
-    return datetime.now(timezone.utc) + timedelta(minutes=ttl_minutes)
+    return Lease.starting_now(ttl_minutes).expires_at
 
 
 def _stamp_lease_if_all_ready(session: Session, env: EnvironmentModel) -> bool:

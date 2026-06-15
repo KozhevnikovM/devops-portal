@@ -1,12 +1,12 @@
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.ports import TaskDispatcher
 from app.config import settings
-from app.domain.constants import PERMANENT_EXPIRES_AT
 from app.domain.entities import Booking
+from app.domain.lease import Lease
 from app.domain.enums import BookingStatus, DriveType
 from app.domain.exceptions import QuotaExceededError
 from app.infrastructure.repositories.booking_repo import BookingRepository
@@ -84,17 +84,14 @@ class CreateBookingUseCase:
             raise QuotaExceededError("Quota exceeded: " + ", ".join(violations))
 
         now = datetime.now(timezone.utc)
-        if ttl_minutes == 0:
-            expires_at = PERMANENT_EXPIRES_AT
-        else:
-            expires_at = now + timedelta(minutes=ttl_minutes)
+        lease = Lease.starting_now(ttl_minutes, now=now)
 
         booking = Booking(
             id=uuid4(),
             user_id=uid,
             status=BookingStatus.PENDING,
             ttl_minutes=ttl_minutes,
-            expires_at=expires_at,
+            expires_at=lease.expires_at,
             created_at=now,
             image_id=image.id,
             image_name=image.name,
