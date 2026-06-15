@@ -3,25 +3,27 @@ from uuid import UUID, uuid4
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.application.ports import TaskDispatcher
+from app.application.ports import (
+    BookingRepositoryPort, HWConfigRepositoryPort, ImageRepositoryPort, QuotaRepositoryPort,
+    TaskDispatcher,
+)
 from app.config import settings
 from app.domain.entities import Booking
 from app.domain.lease import Lease
 from app.domain.enums import BookingStatus, DriveType
 from app.domain.exceptions import QuotaExceededError
-from app.infrastructure.repositories.booking_repo import BookingRepository
-from app.infrastructure.repositories.image_repo import ImageRepository
-from app.infrastructure.repositories.hw_config_repo import HWConfigRepository
+# Concrete QuotaRepository is imported only for the lazy default below; dropping that default in
+# favour of a composition root is the follow-up PR (see docs/refactor/repository-interfaces.md §4).
 from app.infrastructure.repositories.quota_repo import QuotaRepository
 
 
 class CreateBookingUseCase:
     def __init__(
         self,
-        repo: BookingRepository,
-        image_repo: ImageRepository,
-        hw_config_repo: HWConfigRepository,
-        quota_repo: QuotaRepository | None = None,
+        repo: BookingRepositoryPort,
+        image_repo: ImageRepositoryPort,
+        hw_config_repo: HWConfigRepositoryPort,
+        quota_repo: QuotaRepositoryPort | None = None,
         dispatcher: TaskDispatcher | None = None,
     ) -> None:
         self._repo = repo

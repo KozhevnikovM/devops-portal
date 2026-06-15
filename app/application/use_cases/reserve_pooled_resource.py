@@ -5,11 +5,11 @@ from uuid import UUID, uuid4
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.application.ports import BookingRepositoryPort, PooledResourceRepositoryPort
 from app.config import settings
 from app.domain.entities import Booking
 from app.domain.lease import Lease
 from app.domain.enums import BookingStatus, ResourceType
-from app.infrastructure.repositories.booking_repo import BookingRepository
 
 
 @dataclass(frozen=True)
@@ -30,7 +30,8 @@ class ReservePooledResourceUseCase:
     per-type differences live in ``PooledResourceConfig``.
     """
 
-    def __init__(self, repo: BookingRepository, pool_repo, config: PooledResourceConfig) -> None:
+    def __init__(self, repo: BookingRepositoryPort, pool_repo: PooledResourceRepositoryPort,
+                 config: PooledResourceConfig) -> None:
         self._repo = repo
         self._pool_repo = pool_repo
         self._cfg = config

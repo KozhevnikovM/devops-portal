@@ -8,8 +8,7 @@ from app.domain.exceptions import StaticVMUnavailableError
 from app.application.use_cases.reserve_pooled_resource import (
     PooledResourceConfig, ReservePooledResourceUseCase,
 )
-from app.infrastructure.repositories.booking_repo import BookingRepository
-from app.infrastructure.repositories.static_vm_repo import StaticVMRepository
+from app.application.ports import BookingRepositoryPort, StaticVMRepositoryPort
 
 
 def _attach_static_vm(booking: Booking, vm) -> None:
@@ -32,7 +31,7 @@ _STATIC_VM_CONFIG = PooledResourceConfig(
 class ReserveStaticVMUseCase(ReservePooledResourceUseCase):
     """Reserve a static VM from the pool (specific or any-available, else enqueue)."""
 
-    def __init__(self, repo: BookingRepository, static_vm_repo: StaticVMRepository) -> None:
+    def __init__(self, repo: BookingRepositoryPort, static_vm_repo: StaticVMRepositoryPort) -> None:
         super().__init__(repo, static_vm_repo, _STATIC_VM_CONFIG)
 
     async def execute(

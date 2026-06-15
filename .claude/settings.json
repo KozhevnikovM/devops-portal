@@ -70,7 +70,10 @@
       "Bash(sed -n '206,214p;290,298p;312p;325p' app/infrastructure/repositories/booking_repo.py)",
       "Bash(sed -n '56,68p;176p' app/infrastructure/repositories/environment_repo.py)",
       "Bash(sed -n '135,145p' app/infrastructure/repositories/namespace_repo.py)",
-      "Bash(git -c commit.gpgsign=false commit -q -m 'refactor: add application-layer repository ports \\(#239 PR 1\\) *)"
+      "Bash(git -c commit.gpgsign=false commit -q -m 'refactor: add application-layer repository ports \\(#239 PR 1\\) *)",
+      "Bash(python3 -c \"import app.application.use_cases.create_booking, app.application.use_cases.reserve_pooled_resource, app.application.use_cases.book_namespace, app.application.use_cases.reserve_static_vm, app.application.use_cases.extend_booking, app.application.use_cases.release_booking, app.application.use_cases.release_environment, app.application.use_cases.order_environment; print\\('use cases import ok'\\)\")",
+      "Bash(python3 -c \"import app.presentation.routes.api_bookings, app.presentation.routes.api_environments, app.presentation.routes.bookings; print\\('routes import ok'\\)\")",
+      "Bash(git -c commit.gpgsign=false commit -q -m 'refactor: type use cases against repository ports, not concrete repos \\(#239 PR 2\\) *)"
     ]
   }
 }
