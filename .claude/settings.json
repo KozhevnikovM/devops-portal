@@ -66,7 +66,11 @@
       "Bash(sed -n '60,105p' app/application/use_cases/reserve_pooled_resource.py)",
       "Bash(sed -n '300,312p' app/infrastructure/repositories/booking_repo.py)",
       "Bash(sed -n '355,380p' app/infrastructure/repositories/booking_repo.py)",
-      "Bash(python3 -c \"import app.application.use_cases.create_booking, app.application.use_cases.reserve_pooled_resource, app.application.use_cases.order_environment, app.infrastructure.repositories.booking_repo, app.infrastructure.repositories.environment_repo, app.domain.lease; print\\('imports ok'\\)\")"
+      "Bash(python3 -c \"import app.application.use_cases.create_booking, app.application.use_cases.reserve_pooled_resource, app.application.use_cases.order_environment, app.infrastructure.repositories.booking_repo, app.infrastructure.repositories.environment_repo, app.domain.lease; print\\('imports ok'\\)\")",
+      "Bash(sed -n '206,214p;290,298p;312p;325p' app/infrastructure/repositories/booking_repo.py)",
+      "Bash(sed -n '56,68p;176p' app/infrastructure/repositories/environment_repo.py)",
+      "Bash(sed -n '135,145p' app/infrastructure/repositories/namespace_repo.py)",
+      "Bash(git -c commit.gpgsign=false commit -q -m 'refactor: add application-layer repository ports \\(#239 PR 1\\) *)"
     ]
   }
 }
