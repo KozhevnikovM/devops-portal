@@ -5,10 +5,10 @@ from sqlalchemy import cast, func, or_, select, String
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session, aliased
 
-from app.domain.constants import PERMANENT_EXPIRES_AT
 from app.domain.entities import Booking, BookingAuditEntry
 from app.domain.enums import BookingStatus, ResourceType
 from app.domain.exceptions import BookingNotFoundError
+from app.domain.lease import Lease
 from app.infrastructure.database.models import (
     BookingAuditModel, BookingModel, NamespaceModel, StaticVMModel, UserModel,
 )
@@ -140,10 +140,7 @@ def _assign_resource_and_ready(session, booking_model, resource_type: str, resou
     setattr(booking_model, fk.key, resource.id)
     old_status = booking_model.status
     booking_model.status = BookingStatus.READY.value
-    if booking_model.ttl_minutes == 0:
-        booking_model.expires_at = PERMANENT_EXPIRES_AT
-    else:
-        booking_model.expires_at = datetime.now(timezone.utc) + timedelta(minutes=booking_model.ttl_minutes)
+    booking_model.expires_at = Lease.starting_now(booking_model.ttl_minutes).expires_at
     session.add(BookingAuditModel(
         booking_id=booking_model.id,
         actor_id="system",
@@ -301,12 +298,9 @@ class BookingRepository:
         model = result.scalar_one_or_none()
         if model is None:
             raise BookingNotFoundError(booking_id)
-        if extend_minutes == 0:
-            model.ttl_minutes = 0
-            model.expires_at = PERMANENT_EXPIRES_AT
-        else:
-            model.expires_at = model.expires_at + timedelta(minutes=extend_minutes)
-            model.ttl_minutes = model.ttl_minutes + extend_minutes
+        extended = Lease(model.ttl_minutes, model.expires_at).extended_by(extend_minutes)
+        model.ttl_minutes = extended.ttl_minutes
+        model.expires_at = extended.expires_at
         session.add(BookingAuditModel(
             booking_id=booking_id,
             actor_id=actor_id,
@@ -364,10 +358,7 @@ class BookingRepository:
         if start_lease and status == BookingStatus.READY:
             # The lease grants usable time: start the TTL clock now that the VM is ready (#223),
             # rather than at creation when provisioning/configuration time would be deducted.
-            model.expires_at = (
-                PERMANENT_EXPIRES_AT if model.ttl_minutes == 0
-                else datetime.now(timezone.utc) + timedelta(minutes=model.ttl_minutes)
-            )
+            model.expires_at = Lease.starting_now(model.ttl_minutes).expires_at
         session.add(BookingAuditModel(
             booking_id=booking_id,
             actor_id=actor_id,

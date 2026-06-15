@@ -2,10 +2,10 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.constants import PERMANENT_EXPIRES_AT
 from app.domain.entities import Environment
 from app.domain.enums import BookingStatus, ResourceType
 from app.domain.exceptions import BlueprintNotFoundError, EnvironmentItemError
+from app.domain.lease import Lease
 
 
 class OrderEnvironmentUseCase:
@@ -50,7 +50,7 @@ class OrderEnvironmentUseCase:
         # mid-provision; it's stamped with the real deadline once every child is READY.
         env = await self._env_repo.create(
             session, name=blueprint.name, blueprint_name=blueprint.name,
-            user_id=user_id, ttl_minutes=ttl_minutes, expires_at=PERMANENT_EXPIRES_AT,
+            user_id=user_id, ttl_minutes=ttl_minutes, expires_at=Lease.pending(ttl_minutes).expires_at,
             created_by=created_by,
         )
 

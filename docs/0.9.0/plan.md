@@ -70,6 +70,22 @@ actor (owner / admin / creating-dispatcher allowed; unrelated dispatcher/user de
 
 ---
 
+## Phase 4 — Domain / architecture refactors
+
+With the dispatcher feature shipped, two foundational refactors clean up debt the feature work
+surfaced. Both are **independent** of each other and carry no API or behaviour change; they make the
+later "de-anemic `Booking` / `Resource` polymorphism" work tractable.
+
+| # | Item |
+|---|------|
+| 4 | **`Lease` value object + status-transition invariant** (#238, [`docs/refactor/lease-value-object.md`](../refactor/lease-value-object.md)). Consolidate the lease/TTL rule duplicated in five places into a `Lease` value object; turn the documented `BookingStatus` transition rule into an enforced `can_transition` guard (staged: observe → enforce). No migration. |
+| 5 | **Repository interface ports** (#239, [`docs/refactor/repository-interfaces.md`](../refactor/repository-interfaces.md)). Give the application layer `Protocol` ports so use cases depend on abstractions, not concrete SQLAlchemy repositories — closing the `application → infrastructure` import leak. Pure structural refactor. |
+
+Each ships as its own staged PR sequence (see the linked spec). Same CLAUDE.md flow: branch from fresh
+`main`, implement with tests, one PR per step.
+
+---
+
 ## Data / API summary
 - **Schema**: `bookings.created_by` (nullable str), `environments.created_by` (nullable str) — one
   migration. No change to `user_id` semantics (still the owner).

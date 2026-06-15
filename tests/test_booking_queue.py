@@ -58,6 +58,23 @@ async def test_namespace_use_case_queues_when_empty():
     booking = await BookNamespaceUseCase(repo, ns_repo).execute(AsyncMock(), 240, user_id="u1")
 
     assert booking.status == BookingStatus.QUEUED
+
+
+@pytest.mark.asyncio
+async def test_queued_booking_carries_far_future_placeholder():
+    """#238: a QUEUED booking's expires_at is the far-future placeholder (not `now`); the clock
+    starts on promotion. enforce_ttl ignores QUEUED by status, so this is never enforced."""
+    from app.application.use_cases.book_namespace import BookNamespaceUseCase
+    from app.domain.constants import PERMANENT_EXPIRES_AT
+
+    repo = MagicMock()
+    repo.create = AsyncMock(side_effect=lambda session, booking: booking)
+    ns_repo = MagicMock(lock_next_available=AsyncMock(return_value=None))
+
+    booking = await BookNamespaceUseCase(repo, ns_repo).execute(AsyncMock(), 240, user_id="u1")
+
+    assert booking.status == BookingStatus.QUEUED
+    assert booking.expires_at == PERMANENT_EXPIRES_AT
     assert booking.resource_type == ResourceType.NAMESPACE
     assert booking.namespace_id is None
     repo.create.assert_awaited_once()
