@@ -17,6 +17,11 @@
         {% if environment.blueprint_name %}
         <div class="text-xs text-gray-500">from {{ environment.blueprint_name }}</div>
         {% endif %}
+        {% set ns = namespace(name=None) %}
+        {% for b in environment.bookings %}{% if b.resource_type.value == 'NAMESPACE' and b.namespace_name %}{% set ns.name = b.namespace_name %}{% endif %}{% endfor %}
+        {% if ns.name %}
+        <div class="text-xs text-cyan-400/80 font-mono" title="Namespace">ns: {{ ns.name }}</div>
+        {% endif %}
         {% if environment.created_by_username %}
         <div class="text-[10px] text-purple-400/80" title="Ordered on behalf of {{ environment.owner_username }} by a dispatcher">via {{ environment.created_by_username }}</div>
         {% endif %}
