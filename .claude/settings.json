@@ -82,8 +82,10 @@
       "Bash(sed -n '28,42p' app/presentation/routes/bookings.py)",
       "Bash(sed -n '36,56p' app/presentation/routes/api_environments.py)",
       "Bash(python3 -c \"import app.main; import app.presentation.deps; print\\('app + deps import ok'\\)\")",
-      "Bash(git -c commit.gpgsign=false commit -q -m 'refactor: composition root; drop the QuotaRepository lazy default \\(#239 PR 3\\) *)"
-      "Bash(git -c commit.gpgsign=false commit -q -m 'refactor: enforce the BookingStatus transition invariant \\(#238 PR 3\\) *)"
+      "Bash(git -c commit.gpgsign=false commit -q -m 'refactor: composition root; drop the QuotaRepository lazy default \\(#239 PR 3\\) *)",
+      "Bash(git -c commit.gpgsign=false commit -q -m 'refactor: enforce the BookingStatus transition invariant \\(#238 PR 3\\) *)",
+      "Bash(git -c commit.gpgsign=false commit -q -F -)",
+      "Bash(echo \"---EXIT $?---\")"
     ]
   }
 }

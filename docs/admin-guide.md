@@ -1153,3 +1153,147 @@ Scale workers to match the total slot count (`tokens × max_parallel`):
 ```bash
 docker compose up -d --scale worker=4
 ```
+
+---
+
+## MCP server
+
+The portal ships an optional **MCP (Model Context Protocol) server** (`mcp_server/`) that exposes the
+self-service operations — catalog discovery plus booking/environment create/list/extend/release/audit
+— as MCP tools. Agentic coding tools such as **opencode** and **qwen-cli** (including ones backed by
+self-hosted models like Qwen Coder) can then book and release resources conversationally instead of
+hand-writing `curl` calls.
+
+It is a **thin, stateless proxy** over the JSON API in the API reference: each tool maps to one
+`/api/*` call and reuses the portal's auth, quota, and permission rules. It performs **no admin
+catalog/user mutation** — an LLM cannot deactivate catalog entries or delete users through it.
+
+### Authentication — bring your own API key
+
+The server stores **no** credentials. Each MCP client sends the user's portal API key as an
+`Authorization: Bearer dp_<key>` header, and every tool forwards that same key to the portal. So a
+booking made through MCP is owned by, and counts against the quota of, whoever owns the key —
+identical to calling the API directly. Mint a key the usual way (`POST /api/users/{id}/api-keys`).
+
+> **Serve it over TLS or on a trusted network.** Because API keys ride in the `Authorization` header,
+> treat the MCP endpoint with the same care as the portal's own API — terminate TLS at a reverse
+> proxy in production, or keep it on loopback/a private network for local use.
+
+### Running it
+
+**With docker compose** (the `mcp` service is opt-in — it isn't started by a bare `docker compose
+up`):
+
+```bash
+docker compose up -d mcp
+# listens on http://<host>:8765/mcp ; PORTAL_BASE_URL defaults to http://app:8000 (in-network)
+```
+
+**Standalone** (shares the project venv):
+
+```bash
+pip install -r requirements.txt
+PORTAL_BASE_URL=http://localhost:8000 python -m mcp_server
+```
+
+Environment variables:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PORTAL_BASE_URL` | `http://localhost:8000` | Where the portal's JSON API lives |
+| `MCP_HOST` | `0.0.0.0` | Bind address for the MCP HTTP listener |
+| `MCP_PORT` | `8765` | Bind port; the endpoint path is `/mcp` |
+| `PORTAL_TIMEOUT` | `30` | Seconds to wait on a portal call before reporting it unreachable |
+
+### Behind nginx (TLS termination)
+
+The recommended production setup is to terminate TLS at nginx and proxy to the MCP server on the
+loopback/private network — that satisfies the "serve over TLS" note above (API keys ride in the
+`Authorization` header). Bind the MCP server to localhost (`MCP_HOST=127.0.0.1`) so only nginx can
+reach it.
+
+The transport is **Streamable HTTP**, whose responses may stream as Server-Sent Events
+(`text/event-stream`). So the proxy must **disable response buffering**, speak **HTTP/1.1**, and use a
+**long read timeout** — a plain `proxy_pass` will buffer the stream and break long-lived connections.
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name portal.example.com;
+
+    ssl_certificate     /etc/ssl/certs/portal.crt;
+    ssl_certificate_key /etc/ssl/private/portal.key;
+
+    # MCP server — Streamable HTTP / SSE.
+    location /mcp {
+        proxy_pass http://127.0.0.1:8765;   # path preserved → backend /mcp
+
+        proxy_http_version 1.1;             # required for keep-alive / SSE
+        proxy_set_header Connection "";      # clear "close"; keep the upstream connection open
+        proxy_buffering off;                 # stream SSE through immediately (critical)
+        proxy_cache off;
+        proxy_read_timeout 3600s;            # SSE streams stay open; don't cut them at 60s
+
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        # nginx forwards Authorization by default — no extra config needed to pass the API key.
+    }
+
+    # (Optionally proxy the portal UI/API itself here too, e.g. location / { proxy_pass http://127.0.0.1:8000; })
+}
+```
+
+Clients then connect to `https://portal.example.com/mcp` (see below). To expose it under a different
+external path — e.g. `https://portal.example.com/devops-mcp` — proxy that location to the backend's
+`/mcp`:
+
+```nginx
+location /devops-mcp/ {
+    proxy_pass http://127.0.0.1:8765/mcp/;
+    # ...same proxy_http_version / Connection / proxy_buffering off / proxy_read_timeout as above
+}
+```
+
+The MCP endpoint is a single URL (it builds no absolute links), so rewriting the public path this way
+is safe.
+
+### Connecting a client
+
+The transport is **Streamable HTTP**; the endpoint is `http://<host>:8765/mcp` direct, or
+`https://<host>/mcp` behind the nginx config above. Configure your tool to send your portal key in
+the `Authorization` header.
+
+**opencode** (`opencode.json` / `~/.config/opencode/config.json`):
+
+```json
+{
+  "mcp": {
+    "devops-portal": {
+      "type": "remote",
+      "url": "http://localhost:8765/mcp",
+      "headers": { "Authorization": "Bearer dp_<your_api_key>" }
+    }
+  }
+}
+```
+
+**qwen-cli** (`~/.qwen/settings.json`, `mcpServers` block):
+
+```json
+{
+  "mcpServers": {
+    "devops-portal": {
+      "httpUrl": "http://localhost:8765/mcp",
+      "headers": { "Authorization": "Bearer dp_<your_api_key>" }
+    }
+  }
+}
+```
+
+Once connected the model sees the 15 tools listed under **MCP server** in the API reference. VM
+bookings provision asynchronously, so `create_booking` returns `PENDING`/`PROVISIONING` (or `QUEUED`
+for an empty pool) — the model polls `list_bookings` until the booking reaches `READY`/`FAILED`. Any
+portal error (e.g. `409 Quota exceeded: CPU (18/16 cores)`) is passed back to the model verbatim so
+it can adjust and retry.
