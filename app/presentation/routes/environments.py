@@ -14,7 +14,7 @@ from app.domain.exceptions import (
 from app.infrastructure.auth import require_user
 from app.infrastructure.database.session import get_async_session
 from app.presentation.routes.api_environments import (
-    _blueprint_repo, _derived_status, _env_repo, _order_use_case, _release_use_case,
+    _blueprint_repo, _derived_status, _env_repo, _namespace_repo, _order_use_case, _release_use_case,
 )
 from app.application.use_cases._permissions import can_manage
 from app.application.use_cases.release_environment import EnvironmentNotFoundError
@@ -45,21 +45,24 @@ async def environments_page(
 ):
     environments = await _list_for(session, current_user)
     blueprints = await _blueprint_repo.list_active(session)
+    available_namespaces = await _namespace_repo.list_available(session)
     return templates.TemplateResponse(
         request, "environments.html",
         {
             "environments": environments,
             "blueprints": blueprints,
+            "available_namespaces": available_namespaces,
             "current_user": current_user,
             "active_nav": "environment",
         },
     )
 
 
-def _order_error(request, current_user, blueprints, message: str) -> HTMLResponse:
+def _order_error(request, current_user, blueprints, available_namespaces, message: str) -> HTMLResponse:
     return templates.TemplateResponse(
         request, "partials/environment_order_form.html",
-        {"blueprints": blueprints, "current_user": current_user, "order_error": message},
+        {"blueprints": blueprints, "available_namespaces": available_namespaces,
+         "current_user": current_user, "order_error": message},
         headers={"HX-Retarget": "#environment-order-form", "HX-Reswap": "outerHTML"},
     )
 
@@ -69,17 +72,20 @@ async def order_environment(
     request: Request,
     blueprint_name: str = Form(...),
     ttl_minutes: int = Form(...),
+    namespace_id: UUID | None = Form(None),
     session: AsyncSession = Depends(get_async_session),
     current_user: User = Depends(require_user),
 ):
     try:
         env = await _order_use_case.execute(
-            session, blueprint_name, ttl_minutes, user_id=str(current_user.id)
+            session, blueprint_name, ttl_minutes, user_id=str(current_user.id),
+            namespace_id=namespace_id,
         )
     except (BlueprintNotFoundError, EnvironmentItemError,
             QuotaExceededError, NamespaceUnavailableError, StaticVMUnavailableError) as exc:
         blueprints = await _blueprint_repo.list_active(session)
-        return _order_error(request, current_user, blueprints, str(exc))
+        available_namespaces = await _namespace_repo.list_available(session)
+        return _order_error(request, current_user, blueprints, available_namespaces, str(exc))
 
     env.owner_username = current_user.username
     return templates.TemplateResponse(

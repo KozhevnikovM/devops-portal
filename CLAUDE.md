@@ -2,6 +2,10 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Working
+
+Whenever possible, use subagents to perform new tasks — delegate to the most specific agent type that fits (e.g. Explore for searches, Plan for design work, general-purpose for multi-step jobs). Handle trivial single-step actions inline where spawning an agent would only add overhead.
+
 ## Commands
 
 ```bash

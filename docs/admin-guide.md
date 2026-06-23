@@ -728,6 +728,14 @@ checked here — a blueprint may reference a catalog entry created later, and na
 it's **ordered**.
 **Add** / **Edit** / **Deactivate** / **Activate** / **Delete** behave as for the other panels.
 
+> **Choosing the namespace at order time.** A user can override the blueprint's single namespace
+> when ordering — the **Environments** order form has an optional **Namespace** dropdown (default
+> *"Blueprint default"*, otherwise the available namespaces by `name (cluster)`), and the JSON API
+> accepts `namespace_name` + `cluster_name` (both together). The override applies only when the
+> blueprint has **exactly one** namespace item; a blueprint with none or more than one rejects the
+> override (`400`, nothing created). This lets a user order a stack against a specific namespace
+> (e.g. `dev1`) and later find it via `GET /api/environments/by-namespace/dev1`.
+
 #### Adding a blueprint
 
 1. Open **Catalog** (admin menu → Catalog) and scroll to the **Environment Blueprints** panel.

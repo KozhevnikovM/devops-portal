@@ -86,6 +86,19 @@ Each ships as its own staged PR sequence (see the linked spec). Same CLAUDE.md f
 
 ---
 
+## Phase 5 — Choose the namespace when ordering an environment
+
+| # | Item |
+|---|------|
+| 6 | **Order-time namespace override** ([`docs/features/environment-order-choose-namespace.md`](../features/environment-order-choose-namespace.md)). Let a user pick which namespace an environment uses at order time instead of the blueprint default. Browser order form gains a **namespace dropdown** (active + free namespaces); `POST /api/environments` gains **`namespace_name` + `cluster_name`** (both-together, else `400`). The override targets the blueprint's single namespace item — a blueprint with 0 or >1 namespace items + an override → `400`, nothing created; an unknown/held namespace → `409` with full rollback. No migration — reuses the existing `BookNamespaceUseCase` resolution. |
+
+Complements the by-namespace lookup (#235): order an environment against a chosen namespace, then
+locate it later via `GET /api/environments/by-namespace/{name}`. Same CLAUDE.md flow: branch from
+fresh `main`, a `docs/features/` doc + approval, implement with tests, update
+`docs/admin-guide.md` + `docs/api-reference.md`.
+
+---
+
 ## Data / API summary
 - **Schema**: `bookings.created_by` (nullable str), `environments.created_by` (nullable str) — one
   migration. No change to `user_id` semantics (still the owner).

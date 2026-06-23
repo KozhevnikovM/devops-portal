@@ -12,7 +12,9 @@ import pytest
 
 from app.domain.entities import Booking, Environment, EnvironmentBlueprint, EnvironmentBlueprintItem
 from app.domain.enums import BookingStatus, ResourceType
-from app.domain.exceptions import BlueprintNotFoundError, EnvironmentItemError, QuotaExceededError
+from app.domain.exceptions import (
+    BlueprintNotFoundError, EnvironmentItemError, NamespaceUnavailableError, QuotaExceededError,
+)
 
 
 def _bp_item(rt, spec, label=None, pos=0):
@@ -123,6 +125,83 @@ async def test_order_quota_failure_rolls_back():
     m.dispatcher.dispatch_provision.assert_not_called()
 
 
+# ── Namespace override (#235) ────────────────────────────────────────────────────
+@pytest.mark.asyncio
+async def test_order_override_by_namespace_id():
+    bp = _blueprint([
+        _bp_item("NAMESPACE", {}, "ns", 0),
+        _bp_item("VM", {"image_name": "Ubuntu", "hw_config_name": "medium"}, "web", 1),
+    ])
+    uc, m = _make_use_case(bp)
+    chosen = uuid4()
+    await uc.execute(MagicMock(), "dev-stack", 240, user_id="u", namespace_id=chosen)
+    # The chosen namespace id is threaded through to BookNamespaceUseCase.
+    assert m.ns_uc.execute.call_args.kwargs["namespace_id"] == chosen
+    m.create_uc.execute.assert_awaited_once()   # other children unaffected
+    m.env_repo.create.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_order_override_by_name_and_cluster():
+    bp = _blueprint([
+        _bp_item("NAMESPACE", {}, "ns", 0),
+        _bp_item("VM", {"image_name": "Ubuntu", "hw_config_name": "medium"}, "web", 1),
+    ])
+    uc, m = _make_use_case(bp)
+    await uc.execute(MagicMock(), "dev-stack", 240, user_id="u",
+                     namespace_name="dev1", cluster_name="prod-cluster")
+    kwargs = m.ns_uc.execute.call_args.kwargs
+    assert kwargs["namespace_name"] == "dev1"
+    assert kwargs["cluster_name"] == "prod-cluster"
+
+
+@pytest.mark.asyncio
+async def test_order_override_no_namespace_item_creates_nothing():
+    bp = _blueprint([_bp_item("VM", {"image_name": "Ubuntu", "hw_config_name": "medium"}, "web", 0)])
+    uc, m = _make_use_case(bp)
+    with pytest.raises(EnvironmentItemError):
+        await uc.execute(MagicMock(), "dev-stack", 240, user_id="u", namespace_name="dev1",
+                         cluster_name="prod-cluster")
+    m.env_repo.create.assert_not_called()   # guard runs before creating the env
+    m.create_uc.execute.assert_not_called()
+    m.ns_uc.execute.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_order_override_two_namespace_items_creates_nothing():
+    bp = _blueprint([
+        _bp_item("NAMESPACE", {}, "ns1", 0),
+        _bp_item("NAMESPACE", {}, "ns2", 1),
+    ])
+    uc, m = _make_use_case(bp)
+    with pytest.raises(EnvironmentItemError):
+        await uc.execute(MagicMock(), "dev-stack", 240, user_id="u", namespace_id=uuid4())
+    m.env_repo.create.assert_not_called()
+    m.ns_uc.execute.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_order_override_unknown_namespace_rolls_back():
+    bp = _blueprint([_bp_item("NAMESPACE", {}, "ns", 0)])
+    uc, m = _make_use_case(bp, ns_returns=NamespaceUnavailableError("no such namespace"))
+    with pytest.raises(NamespaceUnavailableError):
+        await uc.execute(MagicMock(), "dev-stack", 240, user_id="u",
+                         namespace_name="ghost", cluster_name="prod-cluster")
+    m.env_repo.delete.assert_awaited_once()           # whole environment rolled back
+    m.dispatcher.dispatch_provision.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_order_without_override_unchanged():
+    bp = _blueprint([_bp_item("NAMESPACE", {}, "ns", 0)])
+    uc, m = _make_use_case(bp)
+    await uc.execute(MagicMock(), "dev-stack", 240, user_id="u")
+    kwargs = m.ns_uc.execute.call_args.kwargs
+    assert kwargs["namespace_id"] is None
+    assert kwargs["namespace_name"] is None
+    assert kwargs["cluster_name"] is None
+
+
 # ── Derived status ─────────────────────────────────────────────────────────────
 def test_derived_status():
     from app.presentation.routes.api_environments import _derived_status
@@ -177,6 +256,48 @@ def test_api_order_unknown_blueprint_404(client):
         uc.execute = AsyncMock(side_effect=BlueprintNotFoundError("nope"))
         resp = client.post("/api/environments", json={"blueprint_name": "nope", "ttl_minutes": 240})
     assert resp.status_code == 404
+
+
+def test_api_order_namespace_override_201(client):
+    env = Environment(id=uuid4(), name="dev-stack", blueprint_name="dev-stack", user_id="u",
+                      ttl_minutes=240, expires_at=datetime.now(timezone.utc), created_at=datetime.now(timezone.utc),
+                      bookings=[_booking(ResourceType.NAMESPACE, BookingStatus.READY)])
+    with patch("app.presentation.routes.api_environments._order_use_case") as uc:
+        uc.execute = AsyncMock(return_value=env)
+        resp = client.post("/api/environments", json={
+            "blueprint_name": "dev-stack", "ttl_minutes": 240,
+            "namespace_name": "dev1", "cluster_name": "prod-cluster"})
+    assert resp.status_code == 201
+    kwargs = uc.execute.call_args.kwargs
+    assert kwargs["namespace_name"] == "dev1"
+    assert kwargs["cluster_name"] == "prod-cluster"
+
+
+def test_api_order_one_of_pair_400(client):
+    with patch("app.presentation.routes.api_environments._order_use_case") as uc:
+        uc.execute = AsyncMock()
+        resp = client.post("/api/environments", json={
+            "blueprint_name": "dev-stack", "ttl_minutes": 240, "namespace_name": "dev1"})
+    assert resp.status_code == 400
+    uc.execute.assert_not_called()   # validated before reaching the use case
+
+
+def test_api_order_no_namespace_blueprint_override_400(client):
+    with patch("app.presentation.routes.api_environments._order_use_case") as uc:
+        uc.execute = AsyncMock(side_effect=EnvironmentItemError("this blueprint has no namespace to choose"))
+        resp = client.post("/api/environments", json={
+            "blueprint_name": "vm-only", "ttl_minutes": 240,
+            "namespace_name": "dev1", "cluster_name": "prod-cluster"})
+    assert resp.status_code == 400
+
+
+def test_api_order_unknown_pair_409(client):
+    with patch("app.presentation.routes.api_environments._order_use_case") as uc:
+        uc.execute = AsyncMock(side_effect=NamespaceUnavailableError("no such namespace"))
+        resp = client.post("/api/environments", json={
+            "blueprint_name": "dev-stack", "ttl_minutes": 240,
+            "namespace_name": "ghost", "cluster_name": "prod-cluster"})
+    assert resp.status_code == 409
 
 
 def test_api_get_environment_403_for_non_owner(client):

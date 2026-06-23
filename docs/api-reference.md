@@ -1101,10 +1101,25 @@ authenticated user.
 add **`on_behalf_of`** (username) to order the environment for another user — see *Ordering on behalf
 of a user* under `POST /api/bookings`.
 
+**Choosing the namespace (override).** Optionally add **`namespace_name`** + **`cluster_name`** to
+pick which namespace the environment uses, overriding the blueprint's default. Both must be given
+together (`bool(namespace_name) != bool(cluster_name)` → `400` *"namespace_name and cluster_name must
+be provided together"*, same rule as `POST /api/bookings`). The override targets the blueprint's
+**single** namespace item — if the blueprint has **0 or more than one** namespace item, the request
+is rejected with `400` and **nothing is created**. Omit both to keep the blueprint default
+(any-available) behaviour.
+
+```json
+{ "blueprint_name": "dev-stack", "ttl_minutes": 240,
+  "namespace_name": "dev1", "cluster_name": "prod-cluster" }
+```
+
 Blueprint item names are resolved up front, so a bad name creates nothing. A child quota failure
 rolls the whole environment back. **Responses:** `201` (the environment + its children); `404`
-unknown blueprint; `400` a blueprint item references an unknown catalog entry; `409` quota exceeded
-or a specific pooled resource unavailable.
+unknown blueprint; `400` a blueprint item references an unknown catalog entry, only one of the
+namespace pair was given, or the blueprint has no/more-than-one namespace to override; `409` quota
+exceeded or a specific pooled resource unavailable (including an unknown / held / inactive chosen
+namespace).
 
 ```json
 {
@@ -1184,8 +1199,10 @@ the same grouped teardown automatically.
 
 > **Browser UI:** the **Environments** page (`GET /environments`, in the top nav) lets users order a
 > blueprint, watch the stack come up (HTMX polling), and release it — the same operations as the JSON
-> API above. Those `/environments*` routes return HTML fragments and are intentionally absent from
-> the schema.
+> API above. The order form has an optional **Namespace** dropdown (default *"Blueprint default"*)
+> listing the available namespaces by `name (cluster)`; picking one overrides the blueprint's
+> namespace item (same single-namespace rule as the API — a bad choice renders the `400` inline).
+> Those `/environments*` routes return HTML fragments and are intentionally absent from the schema.
 
 ---
 
