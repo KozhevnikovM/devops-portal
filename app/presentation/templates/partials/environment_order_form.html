@@ -31,6 +31,16 @@
         </select>
     </div>
     <div class="flex flex-col gap-1.5">
+        <label class="text-xs text-gray-500" for="env-namespace">Namespace</label>
+        <select id="env-namespace" name="namespace_id"
+            class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-56">
+            <option value="">Blueprint default</option>
+            {% for ns in available_namespaces %}
+            <option value="{{ ns.id }}">{{ ns.name }} ({{ ns.cluster_name }})</option>
+            {% endfor %}
+        </select>
+    </div>
+    <div class="flex flex-col gap-1.5">
         <div class="text-xs text-red-400 h-4">{{ order_error or '' }}</div>
         <button type="submit" {% if not blueprints %}disabled{% endif %}
             class="px-4 py-2 bg-green-700 hover:bg-green-600 text-green-100 text-sm rounded transition-colors disabled:opacity-40 disabled:cursor-not-allowed">

@@ -48,6 +48,9 @@ class OrderEnvironmentRequest(BaseModel):
     ttl_minutes: int
     # Dispatcher only: order on behalf of this user (username); the environment is owned by them.
     on_behalf_of: str | None = None
+    # Order-time override of the blueprint's single namespace item (#235); both or neither.
+    namespace_name: str | None = None
+    cluster_name: str | None = None
 
 
 def _derived_status(env: Environment) -> str:
@@ -101,9 +104,16 @@ async def order_environment(
     current_user: User = Depends(require_user),
 ):
     owner_id, created_by = await resolve_owner(session, current_user, body.on_behalf_of)
+    # A (name, cluster) pair identifies a namespace; both must be given together.
+    if bool(body.namespace_name) != bool(body.cluster_name):
+        raise HTTPException(
+            status_code=400,
+            detail="namespace_name and cluster_name must be provided together",
+        )
     try:
         env = await _order_use_case.execute(
             session, body.blueprint_name, body.ttl_minutes, user_id=owner_id, created_by=created_by,
+            namespace_name=body.namespace_name, cluster_name=body.cluster_name,
         )
     except BlueprintNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))

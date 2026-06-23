@@ -44,6 +44,8 @@ class OrderEnvironmentUseCase:
     async def execute(
         self, session: AsyncSession, blueprint_name: str, ttl_minutes: int, user_id: str,
         created_by: str | None = None,
+        namespace_id: UUID | None = None, namespace_name: str | None = None,
+        cluster_name: str | None = None,
     ) -> Environment:
         blueprint = await self._blueprint_repo.get_by_name(session, blueprint_name)
         if blueprint is None:
@@ -51,6 +53,21 @@ class OrderEnvironmentUseCase:
 
         # ── Resolve every item's names up front — a bad name creates nothing ──
         resolved = [await self._resolve_item(session, it) for it in blueprint.items]
+
+        # ── Order-time namespace override (#235): target the blueprint's single namespace item ──
+        # Done before the environment row is created so a bad choice creates nothing (returns 400).
+        has_override = namespace_id is not None or namespace_name is not None or cluster_name is not None
+        if has_override:
+            ns_indexes = [i for i, it in enumerate(blueprint.items)
+                          if it.resource_type == ResourceType.NAMESPACE.value]
+            if not ns_indexes:
+                raise EnvironmentItemError("this blueprint has no namespace to choose")
+            if len(ns_indexes) > 1:
+                raise EnvironmentItemError("this blueprint has more than one namespace; cannot choose one")
+            res = resolved[ns_indexes[0]]
+            res["namespace_id"] = namespace_id
+            res["namespace_name"] = namespace_name
+            res["cluster_name"] = cluster_name
 
         # The lease starts when the whole stack is READY (#223). Until then the environment's
         # expires_at is a far-future placeholder so a short TTL can't tear the stack down
@@ -111,8 +128,9 @@ class OrderEnvironmentUseCase:
                     raise EnvironmentItemError(f"no static VM named '{spec['static_vm_name']}'")
                 static_vm_id = vm.id
             return {"static_vm_id": static_vm_id}
-        # NAMESPACE — resolved by the use case from name+cluster (or any-available)
-        return {"namespace_name": spec.get("namespace_name"), "cluster_name": spec.get("cluster_name")}
+        # NAMESPACE — resolved by the use case from id / name+cluster (or any-available)
+        return {"namespace_id": None, "namespace_name": spec.get("namespace_name"),
+                "cluster_name": spec.get("cluster_name")}
 
     async def _create_child(self, session, item, res, ttl_minutes, user_id, env_id, created_by=None):
         rt = item.resource_type
@@ -131,6 +149,7 @@ class OrderEnvironmentUseCase:
             )
         return await self._book_namespace.execute(
             session, ttl_minutes, user_id=user_id,
+            namespace_id=res.get("namespace_id"),
             namespace_name=res["namespace_name"], cluster_name=res["cluster_name"],
             environment_id=env_id, environment_label=label, created_by=created_by,
         )

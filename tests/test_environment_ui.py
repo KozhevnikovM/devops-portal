@@ -1,5 +1,6 @@
 """Tests for the Environments browser page (v0.8.0 P3.4, #211)."""
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 from uuid import UUID, uuid4
 
@@ -49,23 +50,34 @@ def client():
     app.dependency_overrides.clear()
 
 
+def _ns(name="dev1", cluster="prod-cluster"):
+    return SimpleNamespace(id=uuid4(), name=name, cluster_name=cluster)
+
+
 def test_environments_page_renders(client):
     with patch("app.presentation.routes.environments._env_repo") as er, \
-         patch("app.presentation.routes.environments._blueprint_repo") as br:
+         patch("app.presentation.routes.environments._blueprint_repo") as br, \
+         patch("app.presentation.routes.environments._namespace_repo") as nr:
         er.list_all = AsyncMock(return_value=[_env()])
         br.list_active = AsyncMock(return_value=[_blueprint()])
+        nr.list_available = AsyncMock(return_value=[_ns()])
         resp = client.get("/environments")
     assert resp.status_code == 200
     assert "Order an Environment" in resp.text
     assert "dev-stack" in resp.text
     assert "status-PROVISIONING" in resp.text   # derived aggregate badge
+    # Namespace dropdown with the blueprint-default leading option + the available namespace.
+    assert "Blueprint default" in resp.text
+    assert "dev1 (prod-cluster)" in resp.text
 
 
 def test_environments_page_empty_blueprints(client):
     with patch("app.presentation.routes.environments._env_repo") as er, \
-         patch("app.presentation.routes.environments._blueprint_repo") as br:
+         patch("app.presentation.routes.environments._blueprint_repo") as br, \
+         patch("app.presentation.routes.environments._namespace_repo") as nr:
         er.list_all = AsyncMock(return_value=[])
         br.list_active = AsyncMock(return_value=[])
+        nr.list_available = AsyncMock(return_value=[])
         resp = client.get("/environments")
     assert resp.status_code == 200
     assert "No blueprints yet" in resp.text
@@ -84,13 +96,44 @@ def test_order_environment_returns_row(client):
 def test_order_environment_error_rerenders_form(client):
     from app.domain.exceptions import BlueprintNotFoundError
     with patch("app.presentation.routes.environments._order_use_case") as uc, \
-         patch("app.presentation.routes.environments._blueprint_repo") as br:
+         patch("app.presentation.routes.environments._blueprint_repo") as br, \
+         patch("app.presentation.routes.environments._namespace_repo") as nr:
         uc.execute = AsyncMock(side_effect=BlueprintNotFoundError("no blueprint"))
         br.list_active = AsyncMock(return_value=[_blueprint()])
+        nr.list_available = AsyncMock(return_value=[_ns()])
         resp = client.post("/environments", data={"blueprint_name": "nope", "ttl_minutes": "240"})
     assert resp.status_code == 200
     assert resp.headers.get("HX-Retarget") == "#environment-order-form"
     assert "no blueprint" in resp.text
+    # The dropdown survives the error re-render.
+    assert "dev1 (prod-cluster)" in resp.text
+
+
+def test_order_environment_namespace_id_forwarded(client):
+    env = _env()
+    chosen = uuid4()
+    with patch("app.presentation.routes.environments._order_use_case") as uc:
+        uc.execute = AsyncMock(return_value=env)
+        resp = client.post("/environments", data={
+            "blueprint_name": "dev-stack", "ttl_minutes": "240", "namespace_id": str(chosen)})
+    assert resp.status_code == 201
+    assert f"environment-{env.id}" in resp.text
+    assert uc.execute.call_args.kwargs["namespace_id"] == chosen
+
+
+def test_order_environment_bad_blueprint_override_inline_400(client):
+    from app.domain.exceptions import EnvironmentItemError
+    with patch("app.presentation.routes.environments._order_use_case") as uc, \
+         patch("app.presentation.routes.environments._blueprint_repo") as br, \
+         patch("app.presentation.routes.environments._namespace_repo") as nr:
+        uc.execute = AsyncMock(side_effect=EnvironmentItemError("this blueprint has no namespace to choose"))
+        br.list_active = AsyncMock(return_value=[_blueprint()])
+        nr.list_available = AsyncMock(return_value=[_ns()])
+        resp = client.post("/environments", data={
+            "blueprint_name": "vm-only", "ttl_minutes": "240", "namespace_id": str(uuid4())})
+    assert resp.status_code == 200   # HTMX inline error re-render
+    assert resp.headers.get("HX-Retarget") == "#environment-order-form"
+    assert "this blueprint has no namespace to choose" in resp.text
 
 
 def test_environment_row_poll(client):
