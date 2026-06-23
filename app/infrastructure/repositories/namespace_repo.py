@@ -167,3 +167,24 @@ class NamespaceRepository:
             .limit(1)
         )
         return result.first() is not None
+
+    async def list_held_standalone_by_user(
+        self, session: AsyncSession, user_id: str
+    ) -> list[Namespace]:
+        """Active namespaces currently held by a live, standalone booking of user_id.
+
+        A booking is standalone when environment_id IS NULL. QUEUED bookings hold no namespace
+        yet (namespace_id is None), so they never match the join.
+        """
+        result = await session.execute(
+            select(NamespaceModel)
+            .join(BookingModel, BookingModel.namespace_id == NamespaceModel.id)
+            .where(
+                cast(BookingModel.user_id, String) == user_id,
+                BookingModel.status.in_(_LIVE_STATUSES),
+                BookingModel.environment_id.is_(None),
+                NamespaceModel.is_active.is_(True),
+            )
+            .order_by(NamespaceModel.name)
+        )
+        return [_to_entity(m) for m in result.scalars().all()]

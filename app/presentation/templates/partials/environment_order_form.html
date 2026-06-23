@@ -35,9 +35,20 @@
         <select id="env-namespace" name="namespace_id"
             class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-80">
             <option value="">Blueprint default</option>
+            {% if available_namespaces %}
+            <optgroup label="Available">
             {% for ns in available_namespaces %}
             <option value="{{ ns.id }}">{{ ns.name }} ({{ ns.cluster_name }})</option>
             {% endfor %}
+            </optgroup>
+            {% endif %}
+            {% if held_namespaces %}
+            <optgroup label="Reuse one of yours">
+            {% for ns in held_namespaces %}
+            <option value="{{ ns.id }}">{{ ns.name }} ({{ ns.cluster_name }})</option>
+            {% endfor %}
+            </optgroup>
+            {% endif %}
         </select>
     </div>
     <div class="flex flex-col gap-1.5">

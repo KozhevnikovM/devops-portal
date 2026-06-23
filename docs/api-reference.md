@@ -1109,6 +1109,13 @@ be provided together"*, same rule as `POST /api/bookings`). The override targets
 is rejected with `400` and **nothing is created**. Omit both to keep the blueprint default
 (any-available) behaviour.
 
+**Adopting a namespace you already hold.** If the chosen namespace is currently held by a
+**live, standalone** booking of the ordering user, the environment **adopts** that existing booking
+instead of creating a second reservation — the same booking becomes the environment's namespace
+child, its lease re-aligns to the environment, and releasing the environment tears it down with
+the rest. A namespace held by another user, or already inside another environment, is not adopted
+and the request fails with `409` as before.
+
 ```json
 { "blueprint_name": "dev-stack", "ttl_minutes": 240,
   "namespace_name": "dev1", "cluster_name": "prod-cluster" }

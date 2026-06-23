@@ -46,23 +46,32 @@ async def environments_page(
     environments = await _list_for(session, current_user)
     blueprints = await _blueprint_repo.list_active(session)
     available_namespaces = await _namespace_repo.list_available(session)
+    held_namespaces = await _namespace_repo.list_held_standalone_by_user(session, str(current_user.id))
     return templates.TemplateResponse(
         request, "environments.html",
         {
             "environments": environments,
             "blueprints": blueprints,
             "available_namespaces": available_namespaces,
+            "held_namespaces": held_namespaces,
             "current_user": current_user,
             "active_nav": "environment",
         },
     )
 
 
-def _order_error(request, current_user, blueprints, available_namespaces, message: str) -> HTMLResponse:
+def _order_error(
+    request, current_user, blueprints, available_namespaces, held_namespaces, message: str,
+) -> HTMLResponse:
     return templates.TemplateResponse(
         request, "partials/environment_order_form.html",
-        {"blueprints": blueprints, "available_namespaces": available_namespaces,
-         "current_user": current_user, "order_error": message},
+        {
+            "blueprints": blueprints,
+            "available_namespaces": available_namespaces,
+            "held_namespaces": held_namespaces,
+            "current_user": current_user,
+            "order_error": message,
+        },
         headers={"HX-Retarget": "#environment-order-form", "HX-Reswap": "outerHTML"},
     )
 
@@ -85,7 +94,8 @@ async def order_environment(
             QuotaExceededError, NamespaceUnavailableError, StaticVMUnavailableError) as exc:
         blueprints = await _blueprint_repo.list_active(session)
         available_namespaces = await _namespace_repo.list_available(session)
-        return _order_error(request, current_user, blueprints, available_namespaces, str(exc))
+        held_namespaces = await _namespace_repo.list_held_standalone_by_user(session, str(current_user.id))
+        return _order_error(request, current_user, blueprints, available_namespaces, held_namespaces, str(exc))
 
     env.owner_username = current_user.username
     return templates.TemplateResponse(
