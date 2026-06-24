@@ -46,6 +46,13 @@ class BookingRepositoryPort(Protocol):
     ) -> None: ...
     async def promote_next_queued(self, session: AsyncSession, resource_type: str) -> Booking | None: ...
     async def queue_position(self, session: AsyncSession, resource_type: str, created_at: datetime) -> int: ...
+    async def get_live_standalone_namespace_booking(
+        self, session: AsyncSession, user_id: str, namespace_id: UUID,
+    ) -> Booking | None: ...
+    async def set_environment(
+        self, session: AsyncSession, booking_id: UUID, environment_id: UUID | None,
+        environment_label: str | None, ttl_minutes: int, expires_at: datetime,
+    ) -> None: ...
 
 
 @runtime_checkable
@@ -83,6 +90,9 @@ class NamespaceRepositoryPort(PooledResourceRepositoryPort, Protocol):
     async def get_by_name_and_cluster(
         self, session: AsyncSession, name: str, cluster_name: str,
     ) -> Namespace | None: ...
+    async def list_held_standalone_by_user(
+        self, session: AsyncSession, user_id: str,
+    ) -> list[Namespace]: ...
 
 
 @runtime_checkable

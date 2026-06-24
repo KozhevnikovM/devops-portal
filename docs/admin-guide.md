@@ -735,6 +735,12 @@ it's **ordered**.
 > blueprint has **exactly one** namespace item; a blueprint with none or more than one rejects the
 > override (`400`, nothing created). This lets a user order a stack against a specific namespace
 > (e.g. `dev1`) and later find it via `GET /api/environments/by-namespace/dev1`.
+>
+> If you already hold a namespace standalone, the order form's **Namespace** dropdown shows it
+> in a **"Reuse one of yours"** group. Selecting it (or passing it via the API) **adopts** your
+> existing booking into the new environment — no second reservation is created, and releasing the
+> environment releases that namespace too. A namespace held by another user or already inside
+> another environment is not adoptable and will report unavailable (`409`).
 
 #### Adding a blueprint
 

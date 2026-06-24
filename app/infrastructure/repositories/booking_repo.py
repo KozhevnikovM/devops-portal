@@ -334,6 +334,53 @@ class BookingRepository:
         ))
         await session.commit()
 
+    async def get_live_standalone_namespace_booking(
+        self, session: AsyncSession, user_id: str, namespace_id: UUID
+    ) -> Booking | None:
+        """Return the live, standalone booking (environment_id IS NULL) holding namespace_id for
+        user_id, or None if no such booking exists."""
+        result = await session.execute(
+            select(BookingModel)
+            .where(
+                BookingModel.namespace_id == namespace_id,
+                cast(BookingModel.user_id, String) == user_id,
+                BookingModel.status.in_(_POOLED_LIVE_STATUSES),
+                BookingModel.environment_id.is_(None),
+            )
+        )
+        model = result.scalar_one_or_none()
+        return _to_entity(model) if model is not None else None
+
+    async def set_environment(
+        self,
+        session: AsyncSession,
+        booking_id: UUID,
+        environment_id: UUID | None,
+        environment_label: str | None,
+        ttl_minutes: int,
+        expires_at,
+    ) -> None:
+        """Re-point a booking's environment membership and lease fields.
+
+        Called with a live env_id to adopt a standalone booking into an environment, or with
+        environment_id=None and original ttl/expires_at to detach it on rollback.
+        """
+        result = await session.execute(select(BookingModel).where(BookingModel.id == booking_id))
+        model = result.scalar_one_or_none()
+        if model is None:
+            raise BookingNotFoundError(booking_id)
+        model.environment_id = environment_id
+        model.environment_label = environment_label
+        model.ttl_minutes = ttl_minutes
+        model.expires_at = expires_at
+        action = "ADOPTED" if environment_id is not None else "DETACHED"
+        session.add(BookingAuditModel(
+            booking_id=booking_id,
+            actor_id="system",
+            action=action,
+        ))
+        await session.commit()
+
     async def promote_next_queued(self, session: AsyncSession, resource_type: str) -> Booking | None:
         """Assign the next free resource to the oldest QUEUED booking of this type → READY."""
         booking = (await session.execute(_oldest_queued_stmt(resource_type))).scalar_one_or_none()

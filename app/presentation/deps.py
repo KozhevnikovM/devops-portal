@@ -54,5 +54,6 @@ reserve_static_vm_uc = ReserveStaticVMUseCase(booking_repo, static_vm_repo)
 order_environment_uc = OrderEnvironmentUseCase(
     env_repo, blueprint_repo, booking_repo, create_booking_uc, reserve_static_vm_uc,
     book_namespace_uc, image_repo, hw_config_repo, role_repo, static_vm_repo, dispatcher,
+    namespace_repo,
 )
 release_environment_uc = ReleaseEnvironmentUseCase(env_repo, release_booking_uc)

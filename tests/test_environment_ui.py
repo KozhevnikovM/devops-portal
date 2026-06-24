@@ -61,6 +61,7 @@ def test_environments_page_renders(client):
         er.list_all = AsyncMock(return_value=[_env()])
         br.list_active = AsyncMock(return_value=[_blueprint()])
         nr.list_available = AsyncMock(return_value=[_ns()])
+        nr.list_held_standalone_by_user = AsyncMock(return_value=[])
         resp = client.get("/environments")
     assert resp.status_code == 200
     assert "Order an Environment" in resp.text
@@ -78,6 +79,7 @@ def test_environments_page_empty_blueprints(client):
         er.list_all = AsyncMock(return_value=[])
         br.list_active = AsyncMock(return_value=[])
         nr.list_available = AsyncMock(return_value=[])
+        nr.list_held_standalone_by_user = AsyncMock(return_value=[])
         resp = client.get("/environments")
     assert resp.status_code == 200
     assert "No blueprints yet" in resp.text
@@ -101,6 +103,7 @@ def test_order_environment_error_rerenders_form(client):
         uc.execute = AsyncMock(side_effect=BlueprintNotFoundError("no blueprint"))
         br.list_active = AsyncMock(return_value=[_blueprint()])
         nr.list_available = AsyncMock(return_value=[_ns()])
+        nr.list_held_standalone_by_user = AsyncMock(return_value=[])
         resp = client.post("/environments", data={"blueprint_name": "nope", "ttl_minutes": "240"})
     assert resp.status_code == 200
     assert resp.headers.get("HX-Retarget") == "#environment-order-form"
@@ -129,6 +132,7 @@ def test_order_environment_bad_blueprint_override_inline_400(client):
         uc.execute = AsyncMock(side_effect=EnvironmentItemError("this blueprint has no namespace to choose"))
         br.list_active = AsyncMock(return_value=[_blueprint()])
         nr.list_available = AsyncMock(return_value=[_ns()])
+        nr.list_held_standalone_by_user = AsyncMock(return_value=[])
         resp = client.post("/environments", data={
             "blueprint_name": "vm-only", "ttl_minutes": "240", "namespace_id": str(uuid4())})
     assert resp.status_code == 200   # HTMX inline error re-render
@@ -183,3 +187,53 @@ def test_environments_routes_absent_from_schema():
     paths = set(TestClient(app).get("/openapi.json").json()["paths"])
     assert "/environments" not in paths
     assert "/environments/{environment_id}/row" not in paths
+
+
+# ── Held namespace optgroup ────────────────────────────────────────────────────
+
+def test_held_namespaces_optgroup_renders(client):
+    """The 'Reuse one of yours' optgroup appears when the user holds a standalone namespace."""
+    held = _ns(name="my-ns", cluster="dev-cluster")
+    with patch("app.presentation.routes.environments._env_repo") as er, \
+         patch("app.presentation.routes.environments._blueprint_repo") as br, \
+         patch("app.presentation.routes.environments._namespace_repo") as nr:
+        er.list_all = AsyncMock(return_value=[])
+        br.list_active = AsyncMock(return_value=[_blueprint()])
+        nr.list_available = AsyncMock(return_value=[])
+        nr.list_held_standalone_by_user = AsyncMock(return_value=[held])
+        resp = client.get("/environments")
+    assert resp.status_code == 200
+    assert "Reuse one of yours" in resp.text
+    assert "my-ns (dev-cluster)" in resp.text
+
+
+def test_held_namespaces_optgroup_absent_when_empty(client):
+    """No 'Reuse one of yours' optgroup when the user holds no standalone namespaces."""
+    with patch("app.presentation.routes.environments._env_repo") as er, \
+         patch("app.presentation.routes.environments._blueprint_repo") as br, \
+         patch("app.presentation.routes.environments._namespace_repo") as nr:
+        er.list_all = AsyncMock(return_value=[])
+        br.list_active = AsyncMock(return_value=[_blueprint()])
+        nr.list_available = AsyncMock(return_value=[_ns()])
+        nr.list_held_standalone_by_user = AsyncMock(return_value=[])
+        resp = client.get("/environments")
+    assert resp.status_code == 200
+    assert "Reuse one of yours" not in resp.text
+
+
+def test_held_namespaces_optgroup_in_error_rerender(client):
+    """The 'Reuse one of yours' optgroup is preserved after a form error re-render."""
+    from app.domain.exceptions import BlueprintNotFoundError
+    held = _ns(name="my-ns", cluster="dev-cluster")
+    with patch("app.presentation.routes.environments._order_use_case") as uc, \
+         patch("app.presentation.routes.environments._blueprint_repo") as br, \
+         patch("app.presentation.routes.environments._namespace_repo") as nr:
+        uc.execute = AsyncMock(side_effect=BlueprintNotFoundError("no blueprint"))
+        br.list_active = AsyncMock(return_value=[_blueprint()])
+        nr.list_available = AsyncMock(return_value=[])
+        nr.list_held_standalone_by_user = AsyncMock(return_value=[held])
+        resp = client.post("/environments", data={"blueprint_name": "nope", "ttl_minutes": "240"})
+    assert resp.status_code == 200
+    assert resp.headers.get("HX-Retarget") == "#environment-order-form"
+    assert "Reuse one of yours" in resp.text
+    assert "my-ns (dev-cluster)" in resp.text
