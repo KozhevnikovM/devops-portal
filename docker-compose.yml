@@ -161,6 +161,46 @@ services:
       redis:
         condition: service_healthy
 
+  # Opt-in MCP server: exposes the portal's self-service operations as MCP tools for agentic
+  # coding tools (opencode, qwen-cli, …). Stateless — it forwards each caller's portal API key.
+  # Start with: docker compose up mcp   (PORTAL_BASE_URL points at the in-network app service).
+  mcp:
+    build:
+      context: .
+      secrets:
+        - npm_token
+        - npm_ca
+        - apt_password
+      args:
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-}
+        PIP_TRUSTED_HOST: ${PIP_TRUSTED_HOST:-}
+        NPM_REGISTRY: ${NPM_REGISTRY:-}
+        TERRAFORM_IMAGE: ${TERRAFORM_IMAGE:-hashicorp/terraform:1.9}
+        NODE_IMAGE: ${NODE_IMAGE:-node:20-slim}
+        PYTHON_IMAGE: ${PYTHON_IMAGE:-python:3.11-slim}
+        PORTAL_UID: ${PORTAL_UID:-1000}
+        PORTAL_GID: ${PORTAL_GID:-1000}
+        APT_MIRROR: ${APT_MIRROR:-}
+        APT_SECURITY_MIRROR: ${APT_SECURITY_MIRROR:-}
+        APT_SUITE: ${APT_SUITE:-}
+        APT_COMPONENTS: ${APT_COMPONENTS:-main contrib}
+        APT_REPO_HOST: ${APT_REPO_HOST:-}
+        APT_REPO_USER: ${APT_REPO_USER:-token}
+        ANSIBLE_COLLECTIONS_REQUIREMENTS: ${ANSIBLE_COLLECTIONS_REQUIREMENTS:-ansible/requirements.yml}
+    command: python -m mcp_server
+    environment:
+      PORTAL_BASE_URL: ${PORTAL_BASE_URL:-http://app:8000}
+      MCP_HOST: 0.0.0.0
+      MCP_PORT: 8765
+    env_file: .env
+    ports:
+      - "8765:8765"
+    volumes:
+      - .:/app
+    depends_on:
+      app:
+        condition: service_started
+
 secrets:
   # npm auth token for the frontend build, passed as a BuildKit secret (never a build arg/layer).
   # Sourced from the NPM_REGISTRY_TOKEN env var; empty/unset → public npm.

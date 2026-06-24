@@ -6,6 +6,14 @@ when unauthenticated. API clients must pass `Authorization: Bearer <api_key>` on
 The interactive docs at `/docs` (and `/openapi.json`) list only the JSON API endpoints below.
 The server-rendered HTML pages and HTMX fragments are intentionally excluded from the schema.
 
+> **MCP server.** The same self-service operations are also available over the **Model Context
+> Protocol** for agentic coding tools (opencode, qwen-cli, Claude Code, …). The MCP server is a thin
+> proxy over these endpoints; you authenticate it with the same `dp_<api_key>`. Tools:
+> `list_vm_images`, `list_hardware_configs`, `list_static_vms`, `list_roles`, `list_blueprints`,
+> `list_bookings`, `create_booking`, `extend_booking`, `release_booking`, `get_booking_audit`,
+> `list_environments`, `get_environment`, `create_environment`, `release_environment`,
+> `find_environment_by_namespace`. See **Admin Guide → MCP server** for how to run and connect it.
+
 ---
 
 ## Authentication
