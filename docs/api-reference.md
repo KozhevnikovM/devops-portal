@@ -727,6 +727,135 @@ curl -s http://localhost:8000/api/bookings/<booking-id>/audit \
 
 ---
 
+## Namespace Sharing
+
+A namespace booking owner (or an admin / the creating dispatcher) can grant another portal user
+read-only visibility into the booking's connection details (`namespace_name`, `cluster_name`,
+`api_url`). The recipient can view the connection info but cannot release, extend, or re-share.
+
+**Permission model:** Only the booking owner, a dispatcher that created the booking (`created_by`),
+or an admin may share or revoke. A share is automatically removed when the booking is released or
+deleted (ON DELETE CASCADE).
+
+### `POST /api/bookings/{booking_id}/shares`
+
+Share a namespace booking with another portal user.
+
+**Auth:** booking owner, creating dispatcher, or admin.
+
+**Request body:**
+```json
+{ "username": "alice" }
+```
+
+**Responses:**
+
+- `201 Created` — share created.
+- `400 Bad Request` — `username` not found/inactive, self-share, or booking is not a live NAMESPACE booking.
+- `403 Forbidden` — caller is not authorized to manage this booking.
+- `404 Not Found` — booking does not exist.
+- `409 Conflict` — booking is already shared with that user.
+
+**Response body (201):**
+```json
+{
+  "booking_id": "uuid",
+  "shared_with": "alice",
+  "created_at": "2026-06-25T10:00:00+00:00"
+}
+```
+
+---
+
+### `GET /api/bookings/{booking_id}/shares`
+
+List all users the booking is currently shared with.
+
+**Auth:** booking owner, creating dispatcher, or admin.
+
+**Responses:**
+
+- `200 OK` — JSON array of share entries.
+- `403 Forbidden` — caller is not authorized.
+- `404 Not Found` — booking does not exist.
+
+**Response body (200):**
+```json
+[
+  { "username": "alice", "created_at": "2026-06-25T10:00:00+00:00" }
+]
+```
+
+---
+
+### `DELETE /api/bookings/{booking_id}/shares/{username}`
+
+Revoke a namespace share.
+
+**Auth:** booking owner, creating dispatcher, or admin.
+
+**Responses:**
+
+- `204 No Content` — share revoked.
+- `403 Forbidden` — caller is not authorized.
+- `404 Not Found` — booking not found, user not found, or no share exists for that user.
+
+---
+
+### `GET /api/namespaces/shared-with-me`
+
+Return namespace bookings currently shared with the calling user. The caller is the *recipient*,
+not the owner.
+
+**Auth:** any authenticated user.
+
+**Responses:**
+
+- `200 OK` — JSON array; empty list if nothing is shared with the caller.
+
+**Response body (200):**
+```json
+[
+  {
+    "booking_id": "uuid",
+    "status": "READY",
+    "namespace": "team-a-dev",
+    "cluster": "prod-cluster",
+    "api_url": "https://api.cluster:6443",
+    "owner_username": "bob",
+    "environment": null
+  },
+  {
+    "booking_id": "uuid",
+    "status": "READY",
+    "namespace": "dev1",
+    "cluster": "prod-cluster",
+    "api_url": "https://api.cluster:6443",
+    "owner_username": "bob",
+    "environment": { "id": "uuid", "name": "dev-stack" }
+  }
+]
+```
+
+**Example:**
+```bash
+# Share booking abc-123 with alice
+curl -s -X POST http://localhost:8000/api/bookings/abc-123/shares \
+     -H "Content-Type: application/json" \
+     -H "Authorization: Bearer dp_<api_key>" \
+     -d '{"username": "alice"}' | python3 -m json.tool
+
+# Alice views her shared namespaces
+curl -s http://localhost:8000/api/namespaces/shared-with-me \
+     -H "Authorization: Bearer dp_<alice_api_key>" | python3 -m json.tool
+
+# Revoke alice's access
+curl -s -X DELETE http://localhost:8000/api/bookings/abc-123/shares/alice \
+     -H "Authorization: Bearer dp_<api_key>"
+```
+
+---
+
 ### `GET /bookings/{booking_id}/row`
 
 Returns an HTML fragment for a single booking row. Used by **HTMX polling in the browser** — this

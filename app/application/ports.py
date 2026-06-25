@@ -19,7 +19,7 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.entities import (
-    Booking, Environment, EnvironmentBlueprint, HWConfig, Namespace, Role, StaticVM, VMImage,
+    Booking, Environment, EnvironmentBlueprint, HWConfig, Namespace, NamespaceShare, Role, StaticVM, VMImage,
 )
 from app.domain.enums import BookingStatus
 
@@ -119,3 +119,26 @@ class BlueprintRepositoryPort(Protocol):
 @runtime_checkable
 class RoleRepositoryPort(Protocol):
     async def get_by_name(self, session: AsyncSession, name: str) -> Role | None: ...
+
+
+@runtime_checkable
+class NamespaceShareRepositoryPort(Protocol):
+    async def create(
+        self, session: AsyncSession, booking_id: UUID, shared_with_user_id: UUID,
+    ) -> NamespaceShare: ...
+
+    async def get(
+        self, session: AsyncSession, booking_id: UUID, shared_with_user_id: UUID,
+    ) -> NamespaceShare | None: ...
+
+    async def list_by_booking(
+        self, session: AsyncSession, booking_id: UUID,
+    ) -> list[NamespaceShare]: ...
+
+    async def delete(
+        self, session: AsyncSession, booking_id: UUID, shared_with_user_id: UUID,
+    ) -> bool: ...
+
+    async def list_shared_with_user(
+        self, session: AsyncSession, user_id: UUID,
+    ) -> list[dict]: ...

@@ -1,0 +1,46 @@
+<div id="share-panel-{{ booking_id }}" class="mt-2 p-3 bg-gray-900 border border-gray-700 rounded-lg text-sm">
+    <h4 class="text-xs text-gray-400 uppercase tracking-widest mb-2">Shared with</h4>
+
+    {% if error %}
+    <p class="text-red-400 text-xs mb-2">{{ error }}</p>
+    {% endif %}
+
+    {% if shares %}
+    <ul class="space-y-1 mb-3">
+        {% for share in shares %}
+        <li class="flex items-center justify-between">
+            <span class="text-gray-300 font-mono text-xs">{{ share.shared_with_username }}</span>
+            <button
+                class="text-xs text-red-400 hover:text-red-300 transition-colors ml-2"
+                title="Revoke"
+                hx-delete="/namespaces/{{ booking_id }}/shares/{{ share.shared_with_username }}"
+                hx-target="#share-panel-{{ booking_id }}"
+                hx-swap="outerHTML"
+                hx-confirm="Revoke access for {{ share.shared_with_username }}?"
+            >✕</button>
+        </li>
+        {% endfor %}
+    </ul>
+    {% else %}
+    <p class="text-gray-600 text-xs mb-3">Not shared with anyone yet.</p>
+    {% endif %}
+
+    <form
+        hx-post="/namespaces/{{ booking_id }}/shares"
+        hx-target="#share-panel-{{ booking_id }}"
+        hx-swap="outerHTML"
+        class="flex items-center gap-2"
+    >
+        <input
+            type="text"
+            name="username"
+            placeholder="username"
+            required
+            class="flex-1 text-xs px-2 py-1 rounded bg-gray-800 text-gray-300 border border-gray-600 focus:outline-none focus:border-green-600"
+        >
+        <button
+            type="submit"
+            class="text-xs px-2 py-1 rounded bg-green-900 text-green-300 border border-green-700 hover:bg-green-800 transition-colors"
+        >Share</button>
+    </form>
+</div>
