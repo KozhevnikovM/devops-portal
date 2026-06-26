@@ -252,9 +252,11 @@ location /dp/ {
     sub_filter '="/static/'  '="/dp/static/';
     sub_filter '="/auth/'    '="/dp/auth/';
     sub_filter '="/admin'    '="/dp/admin';
-    sub_filter '="/book'     '="/dp/book';          # covers /book and /bookings
-    sub_filter '="/profile'  '="/dp/profile';
-    sub_filter '="/api'      '="/dp/api';
+    sub_filter '="/book'         '="/dp/book';        # covers /book and /bookings
+    sub_filter '="/environments' '="/dp/environments';
+    sub_filter '="/namespaces'   '="/dp/namespaces';
+    sub_filter '="/profile'      '="/dp/profile';
+    sub_filter '="/api'          '="/dp/api';
 
     # 3) Swagger UI (/dp/docs) fetches the OpenAPI schema from a root-absolute URL; rewrite it
     #    so the browser requests /dp/openapi.json (stripped back to /openapi.json above).
