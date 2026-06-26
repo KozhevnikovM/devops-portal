@@ -1,14 +1,16 @@
-"""JSON API routes for namespace sharing.
+"""JSON API routes for namespaces and namespace sharing.
 
 Endpoints:
+  GET    /api/namespaces                                 — list namespaces (all authenticated users)
   POST   /api/bookings/{booking_id}/shares              — share with a user (owner/admin)
   GET    /api/bookings/{booking_id}/shares              — list shares (owner/admin)
   DELETE /api/bookings/{booking_id}/shares/{username}   — revoke (owner/admin)
   GET    /api/namespaces/shared-with-me                 — namespaces shared with the caller
 """
+from typing import Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -25,12 +27,44 @@ from app.infrastructure.auth import require_user
 from app.infrastructure.database.session import get_async_session
 from app.presentation import deps
 
-router = APIRouter(tags=["namespace-shares"])
+router = APIRouter(tags=["namespaces"])
 
 _share_uc = deps.share_namespace_uc
 _revoke_uc = deps.revoke_namespace_share_uc
 _share_repo = deps.namespace_share_repo
 _booking_repo = deps.booking_repo
+_namespace_repo = deps.namespace_repo
+
+
+@router.get("/api/namespaces")
+async def list_namespaces(
+    filter: Literal["all", "active", "available"] = Query("all"),
+    session: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(require_user),
+):
+    """Return namespaces from the pool.
+
+    - ``all`` (default) — every namespace including inactive ones
+    - ``active`` — active namespaces (inactive excluded)
+    - ``available`` — active namespaces not currently held by any booking
+    """
+    if filter == "available":
+        namespaces = await _namespace_repo.list_available(session)
+    elif filter == "active":
+        namespaces = await _namespace_repo.list_active(session)
+    else:
+        namespaces = await _namespace_repo.list_all(session)
+
+    return [
+        {
+            "id": str(ns.id),
+            "name": ns.name,
+            "cluster_name": ns.cluster_name,
+            "api_url": ns.api_url,
+            "is_active": ns.is_active,
+        }
+        for ns in namespaces
+    ]
 
 
 class ShareRequest(BaseModel):

@@ -727,6 +727,44 @@ curl -s http://localhost:8000/api/bookings/<booking-id>/audit \
 
 ---
 
+## Namespaces
+
+### `GET /api/namespaces`
+
+List namespaces from the pool. Any authenticated user may call this endpoint.
+
+**Query parameters:**
+
+| Parameter | Values | Default | Description |
+|---|---|---|---|
+| `filter` | `all` \| `active` \| `available` | `all` | `all` — every namespace including inactive; `active` — active only; `available` — active and not currently held by any booking |
+
+**Response `200`:** array of namespace objects.
+
+```json
+[
+  {
+    "id": "b72875e8-642d-48ab-bbbc-f4f202ef9b9b",
+    "name": "dev1",
+    "cluster_name": "prod-cluster",
+    "api_url": "https://api.prod-cluster:6443",
+    "is_active": true
+  }
+]
+```
+
+**Examples:**
+
+```bash
+# All namespaces
+curl -H "Authorization: Bearer $TOKEN" https://my-domain.com/api/namespaces
+
+# Only available (free) namespaces
+curl -H "Authorization: Bearer $TOKEN" "https://my-domain.com/api/namespaces?filter=available"
+```
+
+---
+
 ## Namespace Sharing
 
 A namespace booking owner (or an admin / the creating dispatcher) can grant another portal user
