@@ -2,7 +2,7 @@
 return HTML fragments and reuse the same use cases, so the two never drift."""
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Form, HTTPException, Request
+from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -29,24 +29,29 @@ def _annotate(env):
     return env
 
 
-async def _list_for(session, current_user):
-    if current_user.role == "admin":
-        envs = await _env_repo.list_all(session)
+async def _fetch_environments(session, current_user, active_filter: str, show_released: bool):
+    if active_filter == "all":
+        envs = [_annotate(e) for e in await _env_repo.list_all(session)]
     else:
-        envs = await _env_repo.list_by_user(session, str(current_user.id))
-    return [_annotate(e) for e in envs]
+        envs = [_annotate(e) for e in await _env_repo.list_by_user(session, str(current_user.id))]
+    if not show_released:
+        envs = [e for e in envs if e.derived_status != "RELEASED"]
+    return envs
 
 
 @router.get("/environments", response_class=HTMLResponse)
 async def environments_page(
     request: Request,
+    filter: str = Query("mine"),
+    show_released: bool = Query(False),
     session: AsyncSession = Depends(get_async_session),
     current_user: User = Depends(require_user),
 ):
-    environments = await _list_for(session, current_user)
+    environments = await _fetch_environments(session, current_user, filter, show_released)
     blueprints = await _blueprint_repo.list_active(session)
     available_namespaces = await _namespace_repo.list_available(session)
     held_namespaces = await _namespace_repo.list_held_standalone_by_user(session, str(current_user.id))
+    shared_namespaces = await _namespace_repo.list_shared_standalone_namespaces(session, current_user.id)
     return templates.TemplateResponse(
         request, "environments.html",
         {
@@ -54,6 +59,9 @@ async def environments_page(
             "blueprints": blueprints,
             "available_namespaces": available_namespaces,
             "held_namespaces": held_namespaces,
+            "shared_namespaces": shared_namespaces,
+            "active_filter": filter,
+            "show_released": show_released,
             "current_user": current_user,
             "active_nav": "environment",
         },
@@ -61,7 +69,8 @@ async def environments_page(
 
 
 def _order_error(
-    request, current_user, blueprints, available_namespaces, held_namespaces, message: str,
+    request, current_user, blueprints, available_namespaces, held_namespaces, shared_namespaces,
+    message: str,
 ) -> HTMLResponse:
     return templates.TemplateResponse(
         request, "partials/environment_order_form.html",
@@ -69,6 +78,7 @@ def _order_error(
             "blueprints": blueprints,
             "available_namespaces": available_namespaces,
             "held_namespaces": held_namespaces,
+            "shared_namespaces": shared_namespaces,
             "current_user": current_user,
             "order_error": message,
         },
@@ -95,7 +105,8 @@ async def order_environment(
         blueprints = await _blueprint_repo.list_active(session)
         available_namespaces = await _namespace_repo.list_available(session)
         held_namespaces = await _namespace_repo.list_held_standalone_by_user(session, str(current_user.id))
-        return _order_error(request, current_user, blueprints, available_namespaces, held_namespaces, str(exc))
+        shared_namespaces = await _namespace_repo.list_shared_standalone_namespaces(session, current_user.id)
+        return _order_error(request, current_user, blueprints, available_namespaces, held_namespaces, shared_namespaces, str(exc))
 
     env.owner_username = current_user.username
     return templates.TemplateResponse(

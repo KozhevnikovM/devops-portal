@@ -18,6 +18,8 @@ from app.application.use_cases.order_environment import OrderEnvironmentUseCase
 from app.application.use_cases.release_booking import ReleaseBookingUseCase
 from app.application.use_cases.release_environment import ReleaseEnvironmentUseCase
 from app.application.use_cases.reserve_static_vm import ReserveStaticVMUseCase
+from app.application.use_cases.share_namespace import ShareNamespaceUseCase
+from app.application.use_cases.revoke_namespace_share import RevokeNamespaceShareUseCase
 from app.infrastructure.celery_dispatcher import CeleryTaskDispatcher
 from app.infrastructure.repositories.booking_repo import BookingRepository
 from app.infrastructure.repositories.environment_blueprint_repo import EnvironmentBlueprintRepository
@@ -25,6 +27,7 @@ from app.infrastructure.repositories.environment_repo import EnvironmentReposito
 from app.infrastructure.repositories.hw_config_repo import HWConfigRepository
 from app.infrastructure.repositories.image_repo import ImageRepository
 from app.infrastructure.repositories.namespace_repo import NamespaceRepository
+from app.infrastructure.repositories.namespace_share_repo import NamespaceShareRepository
 from app.infrastructure.repositories.quota_repo import QuotaRepository
 from app.infrastructure.repositories.role_repo import RoleRepository
 from app.infrastructure.repositories.static_vm_repo import StaticVMRepository
@@ -35,6 +38,7 @@ image_repo = ImageRepository()
 hw_config_repo = HWConfigRepository()
 quota_repo = QuotaRepository()
 namespace_repo = NamespaceRepository()
+namespace_share_repo = NamespaceShareRepository()
 static_vm_repo = StaticVMRepository()
 env_repo = EnvironmentRepository()
 blueprint_repo = EnvironmentBlueprintRepository()
@@ -57,3 +61,5 @@ order_environment_uc = OrderEnvironmentUseCase(
     namespace_repo,
 )
 release_environment_uc = ReleaseEnvironmentUseCase(env_repo, release_booking_uc)
+share_namespace_uc = ShareNamespaceUseCase(booking_repo, namespace_share_repo)
+revoke_namespace_share_uc = RevokeNamespaceShareUseCase(booking_repo, namespace_share_repo)

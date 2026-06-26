@@ -218,11 +218,13 @@ def test_namespace_page_renders_namespace_form(client):
          patch("app.presentation.routes.bookings._image_repo") as mock_img, \
          patch("app.presentation.routes.bookings._hw_config_repo") as mock_hw, \
          patch("app.presentation.routes.bookings._namespace_repo") as mock_ns, \
+         patch("app.presentation.routes.bookings._namespace_share_repo") as mock_nsr, \
          patch("app.presentation.routes.bookings._static_vm_repo") as mock_svm:
         mock_repo.list_by_user = AsyncMock(return_value=[])
         mock_img.list_active = AsyncMock(return_value=[])
         mock_hw.list_active = AsyncMock(return_value=[])
         mock_ns.list_available = AsyncMock(return_value=[ns])
+        mock_nsr.list_shared_with_user = AsyncMock(return_value=[])
         mock_svm.list_available = AsyncMock(return_value=[])
         resp = cl.get("/book/namespace")
 

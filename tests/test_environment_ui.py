@@ -59,9 +59,11 @@ def test_environments_page_renders(client):
          patch("app.presentation.routes.environments._blueprint_repo") as br, \
          patch("app.presentation.routes.environments._namespace_repo") as nr:
         er.list_all = AsyncMock(return_value=[_env()])
+        er.list_by_user = AsyncMock(return_value=[_env()])
         br.list_active = AsyncMock(return_value=[_blueprint()])
         nr.list_available = AsyncMock(return_value=[_ns()])
         nr.list_held_standalone_by_user = AsyncMock(return_value=[])
+        nr.list_shared_standalone_namespaces = AsyncMock(return_value=[])
         resp = client.get("/environments")
     assert resp.status_code == 200
     assert "Order an Environment" in resp.text
@@ -77,9 +79,11 @@ def test_environments_page_empty_blueprints(client):
          patch("app.presentation.routes.environments._blueprint_repo") as br, \
          patch("app.presentation.routes.environments._namespace_repo") as nr:
         er.list_all = AsyncMock(return_value=[])
+        er.list_by_user = AsyncMock(return_value=[])
         br.list_active = AsyncMock(return_value=[])
         nr.list_available = AsyncMock(return_value=[])
         nr.list_held_standalone_by_user = AsyncMock(return_value=[])
+        nr.list_shared_standalone_namespaces = AsyncMock(return_value=[])
         resp = client.get("/environments")
     assert resp.status_code == 200
     assert "No blueprints yet" in resp.text
@@ -104,6 +108,7 @@ def test_order_environment_error_rerenders_form(client):
         br.list_active = AsyncMock(return_value=[_blueprint()])
         nr.list_available = AsyncMock(return_value=[_ns()])
         nr.list_held_standalone_by_user = AsyncMock(return_value=[])
+        nr.list_shared_standalone_namespaces = AsyncMock(return_value=[])
         resp = client.post("/environments", data={"blueprint_name": "nope", "ttl_minutes": "240"})
     assert resp.status_code == 200
     assert resp.headers.get("HX-Retarget") == "#environment-order-form"
@@ -133,6 +138,7 @@ def test_order_environment_bad_blueprint_override_inline_400(client):
         br.list_active = AsyncMock(return_value=[_blueprint()])
         nr.list_available = AsyncMock(return_value=[_ns()])
         nr.list_held_standalone_by_user = AsyncMock(return_value=[])
+        nr.list_shared_standalone_namespaces = AsyncMock(return_value=[])
         resp = client.post("/environments", data={
             "blueprint_name": "vm-only", "ttl_minutes": "240", "namespace_id": str(uuid4())})
     assert resp.status_code == 200   # HTMX inline error re-render
@@ -198,9 +204,11 @@ def test_held_namespaces_optgroup_renders(client):
          patch("app.presentation.routes.environments._blueprint_repo") as br, \
          patch("app.presentation.routes.environments._namespace_repo") as nr:
         er.list_all = AsyncMock(return_value=[])
+        er.list_by_user = AsyncMock(return_value=[])
         br.list_active = AsyncMock(return_value=[_blueprint()])
         nr.list_available = AsyncMock(return_value=[])
         nr.list_held_standalone_by_user = AsyncMock(return_value=[held])
+        nr.list_shared_standalone_namespaces = AsyncMock(return_value=[])
         resp = client.get("/environments")
     assert resp.status_code == 200
     assert "Reuse one of yours" in resp.text
@@ -213,9 +221,11 @@ def test_held_namespaces_optgroup_absent_when_empty(client):
          patch("app.presentation.routes.environments._blueprint_repo") as br, \
          patch("app.presentation.routes.environments._namespace_repo") as nr:
         er.list_all = AsyncMock(return_value=[])
+        er.list_by_user = AsyncMock(return_value=[])
         br.list_active = AsyncMock(return_value=[_blueprint()])
         nr.list_available = AsyncMock(return_value=[_ns()])
         nr.list_held_standalone_by_user = AsyncMock(return_value=[])
+        nr.list_shared_standalone_namespaces = AsyncMock(return_value=[])
         resp = client.get("/environments")
     assert resp.status_code == 200
     assert "Reuse one of yours" not in resp.text
@@ -232,6 +242,7 @@ def test_held_namespaces_optgroup_in_error_rerender(client):
         br.list_active = AsyncMock(return_value=[_blueprint()])
         nr.list_available = AsyncMock(return_value=[])
         nr.list_held_standalone_by_user = AsyncMock(return_value=[held])
+        nr.list_shared_standalone_namespaces = AsyncMock(return_value=[])
         resp = client.post("/environments", data={"blueprint_name": "nope", "ttl_minutes": "240"})
     assert resp.status_code == 200
     assert resp.headers.get("HX-Retarget") == "#environment-order-form"
