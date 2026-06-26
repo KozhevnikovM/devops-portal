@@ -2,7 +2,7 @@
 return HTML fragments and reuse the same use cases, so the two never drift."""
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Form, HTTPException, Request
+from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -29,21 +29,25 @@ def _annotate(env):
     return env
 
 
-async def _list_for(session, current_user):
-    if current_user.role == "admin":
-        envs = await _env_repo.list_all(session)
+async def _fetch_environments(session, current_user, active_filter: str, show_released: bool):
+    if active_filter == "all":
+        envs = [_annotate(e) for e in await _env_repo.list_all(session)]
     else:
-        envs = await _env_repo.list_by_user(session, str(current_user.id))
-    return [_annotate(e) for e in envs]
+        envs = [_annotate(e) for e in await _env_repo.list_by_user(session, str(current_user.id))]
+    if not show_released:
+        envs = [e for e in envs if e.derived_status != "RELEASED"]
+    return envs
 
 
 @router.get("/environments", response_class=HTMLResponse)
 async def environments_page(
     request: Request,
+    filter: str = Query("mine"),
+    show_released: bool = Query(False),
     session: AsyncSession = Depends(get_async_session),
     current_user: User = Depends(require_user),
 ):
-    environments = await _list_for(session, current_user)
+    environments = await _fetch_environments(session, current_user, filter, show_released)
     blueprints = await _blueprint_repo.list_active(session)
     available_namespaces = await _namespace_repo.list_available(session)
     held_namespaces = await _namespace_repo.list_held_standalone_by_user(session, str(current_user.id))
@@ -56,6 +60,8 @@ async def environments_page(
             "available_namespaces": available_namespaces,
             "held_namespaces": held_namespaces,
             "shared_namespaces": shared_namespaces,
+            "active_filter": filter,
+            "show_released": show_released,
             "current_user": current_user,
             "active_nav": "environment",
         },

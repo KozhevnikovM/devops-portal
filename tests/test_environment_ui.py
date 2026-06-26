@@ -59,6 +59,7 @@ def test_environments_page_renders(client):
          patch("app.presentation.routes.environments._blueprint_repo") as br, \
          patch("app.presentation.routes.environments._namespace_repo") as nr:
         er.list_all = AsyncMock(return_value=[_env()])
+        er.list_by_user = AsyncMock(return_value=[_env()])
         br.list_active = AsyncMock(return_value=[_blueprint()])
         nr.list_available = AsyncMock(return_value=[_ns()])
         nr.list_held_standalone_by_user = AsyncMock(return_value=[])
@@ -78,6 +79,7 @@ def test_environments_page_empty_blueprints(client):
          patch("app.presentation.routes.environments._blueprint_repo") as br, \
          patch("app.presentation.routes.environments._namespace_repo") as nr:
         er.list_all = AsyncMock(return_value=[])
+        er.list_by_user = AsyncMock(return_value=[])
         br.list_active = AsyncMock(return_value=[])
         nr.list_available = AsyncMock(return_value=[])
         nr.list_held_standalone_by_user = AsyncMock(return_value=[])
@@ -202,6 +204,7 @@ def test_held_namespaces_optgroup_renders(client):
          patch("app.presentation.routes.environments._blueprint_repo") as br, \
          patch("app.presentation.routes.environments._namespace_repo") as nr:
         er.list_all = AsyncMock(return_value=[])
+        er.list_by_user = AsyncMock(return_value=[])
         br.list_active = AsyncMock(return_value=[_blueprint()])
         nr.list_available = AsyncMock(return_value=[])
         nr.list_held_standalone_by_user = AsyncMock(return_value=[held])
@@ -218,6 +221,7 @@ def test_held_namespaces_optgroup_absent_when_empty(client):
          patch("app.presentation.routes.environments._blueprint_repo") as br, \
          patch("app.presentation.routes.environments._namespace_repo") as nr:
         er.list_all = AsyncMock(return_value=[])
+        er.list_by_user = AsyncMock(return_value=[])
         br.list_active = AsyncMock(return_value=[_blueprint()])
         nr.list_available = AsyncMock(return_value=[_ns()])
         nr.list_held_standalone_by_user = AsyncMock(return_value=[])
