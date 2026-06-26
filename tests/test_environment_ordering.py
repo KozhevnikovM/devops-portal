@@ -678,3 +678,37 @@ async def test_release_booking_in_environment_allowed_with_force():
     # Should not raise.
     await uc.execute(MagicMock(), booking.id, owner, force=True)
     repo.update_status.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_failed_booking_in_environment_can_be_released_directly():
+    """A FAILED child of an environment may be released directly.
+
+    ReleaseEnvironmentUseCase skips FAILED children (treats them as terminal), so they
+    must be releasable individually — otherwise the user has no way to clean them up.
+    """
+    from app.application.use_cases.release_booking import ReleaseBookingUseCase
+    from app.domain.entities import User
+
+    now = datetime.now(timezone.utc)
+    env_id = uuid4()
+    owner_id = uuid4()
+    booking = Booking(
+        id=uuid4(), user_id=str(owner_id), status=BookingStatus.FAILED,
+        resource_type=ResourceType.VM, ttl_minutes=120,
+        expires_at=now + timedelta(hours=2), created_at=now,
+        environment_id=env_id,
+        image_id=uuid4(), image_name="Ubuntu", hw_config_id=uuid4(), hw_config_name="medium",
+    )
+    owner = User(id=owner_id, username="u", password_hash="", role="user",
+                 is_active=True, created_at=now)
+
+    repo = MagicMock()
+    repo.get = AsyncMock(side_effect=[booking, booking])
+    repo.update_status = AsyncMock()
+    dispatcher = MagicMock()
+    uc = ReleaseBookingUseCase(repo, dispatcher)
+
+    # Should not raise — FAILED is terminal from the environment's perspective.
+    await uc.execute(MagicMock(), booking.id, owner)
+    repo.update_status.assert_awaited_once()

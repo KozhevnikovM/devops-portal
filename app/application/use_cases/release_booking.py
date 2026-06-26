@@ -40,9 +40,13 @@ class ReleaseBookingUseCase:
         if not can_manage(owner_id=booking.user_id, created_by=booking.created_by, user=current_user):
             raise BookingPermissionError("Not the booking owner")
 
-        # Prevent releasing individual bookings that belong to an environment — the caller must
-        # release the environment instead. force=True bypasses this (used by ReleaseEnvironmentUseCase).
-        if booking.environment_id is not None and not force:
+        # Prevent releasing individual bookings that are actively held inside an environment
+        # (READY / in-flight / queued). FAILED children may be released directly because
+        # ReleaseEnvironmentUseCase skips them (treats them as terminal already), leaving them
+        # stranded with environment_id set but no live resource to protect.
+        # force=True bypasses this entirely (used by ReleaseEnvironmentUseCase itself).
+        _ENV_TERMINAL = {BookingStatus.RELEASED, BookingStatus.FAILED}
+        if booking.environment_id is not None and not force and booking.status not in _ENV_TERMINAL:
             raise BookingError("This booking belongs to an environment — release the environment instead")
 
         # `force` (used when releasing a whole environment) tears down any non-terminal child
