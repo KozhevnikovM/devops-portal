@@ -40,6 +40,11 @@ class ReleaseBookingUseCase:
         if not can_manage(owner_id=booking.user_id, created_by=booking.created_by, user=current_user):
             raise BookingPermissionError("Not the booking owner")
 
+        # Prevent releasing individual bookings that belong to an environment — the caller must
+        # release the environment instead. force=True bypasses this (used by ReleaseEnvironmentUseCase).
+        if booking.environment_id is not None and not force:
+            raise BookingError("This booking belongs to an environment — release the environment instead")
+
         # `force` (used when releasing a whole environment) tears down any non-terminal child
         # regardless of status — the same effect as an admin force-delete.
         is_admin_force_delete = force or (

@@ -49,6 +49,9 @@ class BookingRepositoryPort(Protocol):
     async def get_live_standalone_namespace_booking(
         self, session: AsyncSession, user_id: str, namespace_id: UUID,
     ) -> Booking | None: ...
+    async def get_live_standalone_namespace_booking_for_shared_user(
+        self, session: AsyncSession, namespace_id: UUID, shared_with_user_id: UUID,
+    ) -> Booking | None: ...
     async def set_environment(
         self, session: AsyncSession, booking_id: UUID, environment_id: UUID | None,
         environment_label: str | None, ttl_minutes: int, expires_at: datetime,
@@ -92,6 +95,9 @@ class NamespaceRepositoryPort(PooledResourceRepositoryPort, Protocol):
     ) -> Namespace | None: ...
     async def list_held_standalone_by_user(
         self, session: AsyncSession, user_id: str,
+    ) -> list[Namespace]: ...
+    async def list_shared_standalone_namespaces(
+        self, session: AsyncSession, user_id: UUID,
     ) -> list[Namespace]: ...
 
 

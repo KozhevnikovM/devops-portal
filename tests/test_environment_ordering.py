@@ -314,10 +314,14 @@ def test_api_get_environment_403_for_non_owner(client):
 
 
 def _make_use_case_with_ns_repo(
-    blueprint, *, standalone_booking=None, create_returns=None, ns_returns=None,
+    blueprint, *, standalone_booking=None, shared_booking=None, create_returns=None, ns_returns=None,
     ns_obj=None,
 ):
-    """Like _make_use_case but with a namespace_repo wired in for adoption tests."""
+    """Like _make_use_case but with a namespace_repo wired in for adoption tests.
+
+    standalone_booking: the booking returned by get_live_standalone_namespace_booking (self-hold).
+    shared_booking: the booking returned by get_live_standalone_namespace_booking_for_shared_user.
+    """
     now = datetime.now(timezone.utc)
     env = Environment(id=uuid4(), name="dev-stack", blueprint_name="dev-stack", user_id="u",
                       ttl_minutes=240, expires_at=now + timedelta(hours=12),
@@ -334,19 +338,21 @@ def _make_use_case_with_ns_repo(
     booking_repo.update_status = AsyncMock()
     booking_repo.set_environment = AsyncMock()
     booking_repo.get_live_standalone_namespace_booking = AsyncMock(return_value=standalone_booking)
+    booking_repo.get_live_standalone_namespace_booking_for_shared_user = AsyncMock(return_value=shared_booking)
 
-    # booking_repo.get returns the standalone booking (after adoption) if there is one.
+    # booking_repo.get returns the adopted booking (self or shared) with env_id set.
+    _adopted = standalone_booking or shared_booking
+
     def _get_side_effect(session, bid):
-        if standalone_booking is not None and bid == standalone_booking.id:
-            # Return a version of the booking that now has env_id set.
+        if _adopted is not None and bid == _adopted.id:
             updated = Booking(
-                id=standalone_booking.id,
-                user_id=standalone_booking.user_id,
-                status=standalone_booking.status,
-                resource_type=standalone_booking.resource_type,
+                id=_adopted.id,
+                user_id=_adopted.user_id,
+                status=_adopted.status,
+                resource_type=_adopted.resource_type,
                 ttl_minutes=240,
                 expires_at=env.expires_at,
-                created_at=standalone_booking.created_at,
+                created_at=_adopted.created_at,
                 environment_id=env.id,
                 environment_label="ns",
             )
@@ -528,3 +534,147 @@ def test_api_held_by_other_409(client):
             "namespace_name": "dev1", "cluster_name": "prod-cluster",
         })
     assert resp.status_code == 409
+
+
+# ── Shared namespace adoption ─────────────────────────────────────────────────
+
+
+def _shared_ns_booking(ns_id, owner_user_id="bob"):
+    """A READY, standalone namespace booking owned by someone else (the sharer)."""
+    now = datetime.now(timezone.utc)
+    return Booking(
+        id=uuid4(), user_id=owner_user_id, status=BookingStatus.READY,
+        resource_type=ResourceType.NAMESPACE, ttl_minutes=180,
+        expires_at=now + timedelta(hours=3), created_at=now,
+        namespace_id=ns_id,
+    )
+
+
+@pytest.mark.asyncio
+async def test_adopt_shared_namespace():
+    """Namespace shared with user (not owned) → sharer's booking adopted via cross-user path."""
+    ns_id = uuid4()
+    alice_id = str(uuid4())  # must be a real UUID string (used in UUID() conversion)
+    shared = _shared_ns_booking(ns_id)
+    bp = _blueprint([_bp_item("NAMESPACE", {}, "ns", 0)])
+    # Alice does not own the namespace (standalone_booking=None),
+    # but it is shared with her (shared_booking=shared).
+    uc, m = _make_use_case_with_ns_repo(bp, standalone_booking=None, shared_booking=shared)
+    await uc.execute(MagicMock(), "dev-stack", 240, user_id=alice_id, namespace_id=ns_id)
+
+    # set_environment called to adopt the sharer's booking.
+    m.booking_repo.set_environment.assert_awaited_once()
+    call_args = m.booking_repo.set_environment.call_args
+    assert call_args.args[1] == shared.id          # booking_id
+    assert call_args.args[2] == m.env.id            # environment_id
+    assert call_args.args[3] == "ns"               # environment_label
+
+    # get_live_standalone_namespace_booking_for_shared_user was called.
+    m.booking_repo.get_live_standalone_namespace_booking_for_shared_user.assert_awaited_once()
+
+    # book_namespace use case NOT called — no new reservation.
+    m.ns_uc.execute.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_shared_adoption_rollback_detaches():
+    """Shared-namespace adoption + later child failure → booking detached, not released."""
+    ns_id = uuid4()
+    alice_id = str(uuid4())
+    shared = _shared_ns_booking(ns_id)
+    bp = _blueprint([
+        _bp_item("NAMESPACE", {}, "ns", 0),
+        _bp_item("VM", {"image_name": "Ubuntu", "hw_config_name": "medium"}, "web", 1),
+    ])
+    uc, m = _make_use_case_with_ns_repo(
+        bp, standalone_booking=None, shared_booking=shared,
+        create_returns=QuotaExceededError("quota"),
+    )
+    with pytest.raises(QuotaExceededError):
+        await uc.execute(MagicMock(), "dev-stack", 240, user_id=alice_id, namespace_id=ns_id)
+
+    # set_environment called twice: adopt then detach.
+    assert m.booking_repo.set_environment.await_count == 2
+    detach_call = m.booking_repo.set_environment.call_args_list[1]
+    assert detach_call.args[2] is None   # environment_id = None on detach
+
+    # The shared booking is NOT released (update_status never called for its id).
+    for call in m.booking_repo.update_status.call_args_list:
+        assert call.args[1] != shared.id
+
+    m.env_repo.delete.assert_awaited_once()
+    m.dispatcher.dispatch_provision.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_no_shared_adoption_when_not_shared():
+    """Namespace held by someone else with no share → ns_uc called (normal reserve path)."""
+    ns_id = uuid4()
+    alice_id = str(uuid4())
+    bp = _blueprint([_bp_item("NAMESPACE", {}, "ns", 0)])
+    # Neither self-owned nor shared.
+    uc, m = _make_use_case_with_ns_repo(bp, standalone_booking=None, shared_booking=None)
+    await uc.execute(MagicMock(), "dev-stack", 240, user_id=alice_id, namespace_id=ns_id)
+
+    m.ns_uc.execute.assert_awaited_once()
+    m.booking_repo.set_environment.assert_not_called()
+
+
+# ── Release guard: booking in an environment cannot be released individually ──
+
+
+@pytest.mark.asyncio
+async def test_release_booking_in_environment_raises():
+    """Releasing a booking that belongs to an environment raises BookingError."""
+    from app.application.use_cases.release_booking import ReleaseBookingUseCase
+    from app.domain.exceptions import BookingError
+    from app.domain.entities import User
+
+    now = datetime.now(timezone.utc)
+    env_id = uuid4()
+    booking = Booking(
+        id=uuid4(), user_id="u", status=BookingStatus.READY,
+        resource_type=ResourceType.NAMESPACE, ttl_minutes=120,
+        expires_at=now + timedelta(hours=2), created_at=now,
+        environment_id=env_id,
+    )
+    owner = User(id=uuid4(), username="u", password_hash="", role="user",
+                 is_active=True, created_at=now)
+    # Patch user_id so can_manage passes.
+    booking = Booking(**{**booking.__dict__, "user_id": str(owner.id)})
+
+    repo = MagicMock()
+    repo.get = AsyncMock(return_value=booking)
+    uc = ReleaseBookingUseCase(repo, MagicMock())
+
+    with pytest.raises(BookingError, match="environment"):
+        await uc.execute(MagicMock(), booking.id, owner)
+
+
+@pytest.mark.asyncio
+async def test_release_booking_in_environment_allowed_with_force():
+    """force=True bypasses the environment guard (used by ReleaseEnvironmentUseCase)."""
+    from app.application.use_cases.release_booking import ReleaseBookingUseCase
+    from app.domain.entities import User
+
+    now = datetime.now(timezone.utc)
+    env_id = uuid4()
+    owner_id = uuid4()
+    booking = Booking(
+        id=uuid4(), user_id=str(owner_id), status=BookingStatus.READY,
+        resource_type=ResourceType.NAMESPACE, ttl_minutes=120,
+        expires_at=now + timedelta(hours=2), created_at=now,
+        environment_id=env_id,
+    )
+    owner = User(id=owner_id, username="u", password_hash="", role="user",
+                 is_active=True, created_at=now)
+
+    repo = MagicMock()
+    repo.get = AsyncMock(side_effect=[booking, booking])
+    repo.update_status = AsyncMock()
+    repo.promote_next_queued = AsyncMock()
+    uc = ReleaseBookingUseCase(repo, MagicMock())
+
+    # Should not raise.
+    await uc.execute(MagicMock(), booking.id, owner, force=True)
+    repo.update_status.assert_awaited_once()
