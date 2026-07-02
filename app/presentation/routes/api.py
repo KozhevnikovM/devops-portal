@@ -14,6 +14,7 @@ from app.infrastructure.database.session import get_async_session
 from app.infrastructure.repositories.image_repo import ImageRepository
 from app.infrastructure.repositories.hw_config_repo import HWConfigRepository
 from app.infrastructure.repositories.environment_blueprint_repo import EnvironmentBlueprintRepository
+from app.infrastructure.repositories.namespace_repo import NamespaceRepository
 from app.infrastructure.repositories.role_repo import RoleRepository
 from app.infrastructure.repositories.static_vm_repo import StaticVMRepository
 
@@ -21,6 +22,7 @@ router = APIRouter(prefix="/api", tags=["admin"])
 
 _image_repo = ImageRepository()
 _hw_config_repo = HWConfigRepository()
+_namespace_repo = NamespaceRepository()
 _role_repo = RoleRepository()
 _blueprint_repo = EnvironmentBlueprintRepository()
 _static_vm_repo = StaticVMRepository()
@@ -77,6 +79,15 @@ class HWConfigResponse(BaseModel):
     memory_mb: int
     disk_mb: int
     drive_type: DriveType
+    is_active: bool
+    created_at: datetime
+
+
+class NamespaceResponse(BaseModel):
+    id: UUID
+    name: str
+    cluster_name: str
+    api_url: str | None
     is_active: bool
     created_at: datetime
 
@@ -291,6 +302,39 @@ async def list_static_vms(
         )
         for vm in vms
     ]
+
+
+# ── Namespaces (discovery) ────────────────────────────────────────────────────
+
+_VALID_NS_FILTERS = {"active", "available"}
+
+
+@router.get("/namespaces", response_model=list[NamespaceResponse])
+async def list_namespaces(
+    filter: str = "active",
+    username: str | None = None,
+    not_username: str | None = None,
+    session: AsyncSession = Depends(get_async_session),
+    _: User = Depends(require_user),
+):
+    """List namespaces from the catalog.
+
+    - `filter=active` (default) — all active namespaces
+    - `filter=available` — active namespaces not currently held by any booking
+    - `username=X` — active namespaces currently held by user X
+    - `not_username=X` — active namespaces NOT held by user X
+    """
+    if filter not in _VALID_NS_FILTERS:
+        raise HTTPException(status_code=400, detail=f"invalid filter '{filter}'; use 'active' or 'available'")
+    if username and not_username:
+        raise HTTPException(status_code=400, detail="username and not_username are mutually exclusive")
+    if username:
+        return await _namespace_repo.list_held_by_username(session, username)
+    if not_username:
+        return await _namespace_repo.list_active_not_held_by_username(session, not_username)
+    if filter == "available":
+        return await _namespace_repo.list_available(session)
+    return await _namespace_repo.list_active(session)
 
 
 # ── Ansible Roles ─────────────────────────────────────────────────────────────
