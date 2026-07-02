@@ -252,9 +252,11 @@ location /dp/ {
     sub_filter '="/static/'  '="/dp/static/';
     sub_filter '="/auth/'    '="/dp/auth/';
     sub_filter '="/admin'    '="/dp/admin';
-    sub_filter '="/book'     '="/dp/book';          # covers /book and /bookings
-    sub_filter '="/profile'  '="/dp/profile';
-    sub_filter '="/api'      '="/dp/api';
+    sub_filter '="/book'         '="/dp/book';        # covers /book and /bookings
+    sub_filter '="/environments' '="/dp/environments';
+    sub_filter '="/namespaces'   '="/dp/namespaces';
+    sub_filter '="/profile'      '="/dp/profile';
+    sub_filter '="/api'          '="/dp/api';
 
     # 3) Swagger UI (/dp/docs) fetches the OpenAPI schema from a root-absolute URL; rewrite it
     #    so the browser requests /dp/openapi.json (stripped back to /openapi.json above).
@@ -687,6 +689,34 @@ pair; see `POST /api/bookings` in the API reference).
 
 Users reserve a namespace from the *Namespaces* page — picking a specific one or **"Any
 available"** — and the pool returns it on release / TTL expiry.
+
+**Namespace sharing:**
+
+A namespace booking owner (or an admin, or a dispatcher who created it) can share their booking
+with another portal user — granting them read-only access to the connection details
+(`namespace_name`, `cluster_name`, `api_url`). The recipient can see those details (and, if the
+booking is part of an environment, the environment's name and status) but cannot release, extend,
+or re-share.
+
+To share from the browser: open the **⋮** action menu on a `READY` namespace booking row and
+click **Share**. A small inline panel appears where you can enter a username and click **Share**.
+Current recipients are listed with ✕ buttons to revoke access. The panel is only visible to the
+booking owner, creating dispatcher, and admins.
+
+Recipients see a **Shared with me** section on the Namespaces page listing all namespaces shared
+with them (read-only, no action buttons).
+
+From the API:
+- `POST /api/bookings/{id}/shares` — share with `{ "username": "alice" }` → `201`.
+- `GET /api/bookings/{id}/shares` — list current shares.
+- `DELETE /api/bookings/{id}/shares/{username}` — revoke → `204`.
+- `GET /api/namespaces/shared-with-me` — caller's shared-with-me list.
+
+Permission rules:
+- Only the booking **owner**, the **creating dispatcher**, or an **admin** may share/revoke.
+- Recipients may only view connection details — no release, extend, or further sharing.
+- Shares are automatically cleaned up when the booking is released or deleted (cascade).
+- Sharing with yourself → `400`. Duplicate share → `409`.
 
 **Static VMs panel:**
 

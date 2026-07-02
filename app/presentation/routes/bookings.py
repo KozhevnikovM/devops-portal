@@ -23,6 +23,7 @@ _repo = deps.booking_repo
 _image_repo = deps.image_repo
 _hw_config_repo = deps.hw_config_repo
 _namespace_repo = deps.namespace_repo
+_namespace_share_repo = deps.namespace_share_repo
 _static_vm_repo = deps.static_vm_repo
 _dispatcher = deps.dispatcher
 _use_case = deps.create_booking_uc
@@ -63,6 +64,12 @@ async def _render_bookings_page(
     hw_configs = await _hw_config_repo.list_active(session)
     available_namespaces = await _namespace_repo.list_available(session)
     available_static_vms = await _static_vm_repo.list_available(session)
+    # Fetch namespaces shared with the current user (shown on the namespace page only).
+    shared_namespaces = []
+    if booking_type == "NAMESPACE":
+        shared_namespaces = await _namespace_share_repo.list_shared_with_user(
+            session, current_user.id
+        )
     return templates.TemplateResponse(
         request, "index.html",
         {
@@ -71,6 +78,7 @@ async def _render_bookings_page(
             "hw_configs": hw_configs,
             "available_namespaces": available_namespaces,
             "available_static_vms": available_static_vms,
+            "shared_namespaces": shared_namespaces,
             "current_user": current_user,
             "active_filter": filter,
             "show_released": show_released,
