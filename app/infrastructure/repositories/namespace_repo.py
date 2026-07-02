@@ -77,6 +77,13 @@ class NamespaceRepository:
             raise ValueError(f"Namespace {namespace_id} not found")
         return _to_entity(model)
 
+    async def get_by_name(self, session: AsyncSession, name: str) -> list[Namespace]:
+        """All namespaces with this name (may span multiple clusters)."""
+        result = await session.execute(
+            select(NamespaceModel).where(NamespaceModel.name == name)
+        )
+        return [_to_entity(m) for m in result.scalars().all()]
+
     async def get_by_name_and_cluster(
         self, session: AsyncSession, name: str, cluster_name: str
     ) -> Namespace | None:

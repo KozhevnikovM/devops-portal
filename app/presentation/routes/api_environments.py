@@ -9,7 +9,7 @@ from app.application.use_cases.release_environment import EnvironmentNotFoundErr
 from app.application.use_cases._permissions import can_manage
 from app.presentation.routes._dispatch import resolve_owner
 from app.domain.entities import Environment, User
-from app.domain.enums import BookingStatus
+from app.domain.enums import BookingStatus, ResourceType
 from app.domain.exceptions import (
     BlueprintNotFoundError, BookingPermissionError, EnvironmentItemError, NamespaceUnavailableError,
     QuotaExceededError, StaticVMUnavailableError,
@@ -183,6 +183,7 @@ async def namespace_allowed_to_user(
     * `202 {match: false, vacant: true}`  — namespace is not held by anyone (vacant).
     * `423 Locked`                        — namespace is held by a different user.
 
+    Both 202 responses include `namespace_id` (UUID or null) and `environment_id` (UUID or null).
     The actual owner is never disclosed. Any authenticated user may ask; optional `cluster`
     disambiguates a name reused across clusters.
     """
@@ -193,9 +194,32 @@ async def namespace_allowed_to_user(
             detail=f"namespace '{namespace_name}' is ambiguous across clusters; specify ?cluster=",
         )
     if not envs:
-        return {"namespace": namespace_name, "user": user, "match": False, "vacant": True}
+        # Vacant — look up the namespace catalog to return its id.
+        if cluster is not None:
+            ns = await _namespace_repo.get_by_name_and_cluster(session, namespace_name, cluster)
+            ns_id = ns.id if ns else None
+        else:
+            matches = await _namespace_repo.get_by_name(session, namespace_name)
+            if len(matches) > 1:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"namespace '{namespace_name}' is ambiguous across clusters; specify ?cluster=",
+                )
+            ns_id = matches[0].id if matches else None
+        return {
+            "namespace": namespace_name, "namespace_id": ns_id,
+            "environment_id": None,
+            "user": user, "match": False, "vacant": True,
+        }
+    ns_booking = next(
+        (b for b in envs[0].bookings if b.resource_type == ResourceType.NAMESPACE), None
+    )
     if envs[0].owner_username == user:
-        return {"namespace": namespace_name, "user": user, "match": True, "vacant": False}
+        return {
+            "namespace": namespace_name, "namespace_id": ns_booking.namespace_id if ns_booking else None,
+            "environment_id": envs[0].id,
+            "user": user, "match": True, "vacant": False,
+        }
     raise HTTPException(
         status_code=423,
         detail=f"namespace '{namespace_name}' is not available to user '{user}'",
