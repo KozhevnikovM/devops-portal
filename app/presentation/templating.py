@@ -13,7 +13,10 @@ def _as_tz(dt: datetime, tz_name: str) -> str:
         tz = ZoneInfo(tz_name)
     except (ZoneInfoNotFoundError, KeyError):
         tz = ZoneInfo("UTC")
-    return dt.astimezone(tz).strftime("%Y-%m-%d %H:%M (%Z)")
+    try:
+        return dt.astimezone(tz).strftime("%Y-%m-%d %H:%M (%Z)")
+    except OverflowError:
+        return "—"
 
 
 templates.env.filters["as_tz"] = _as_tz
