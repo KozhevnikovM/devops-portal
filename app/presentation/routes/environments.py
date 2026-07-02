@@ -2,7 +2,7 @@
 return HTML fragments and reuse the same use cases, so the two never drift."""
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Form, HTTPException, Request
+from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -131,15 +131,30 @@ async def environment_row(
     )
 
 
+_DISPATCH_ROLES = {"dispatcher", "admin"}
+
+
 @router.delete("/environments/{environment_id}", response_class=HTMLResponse)
 async def release_environment(
     environment_id: UUID,
     request: Request,
+    on_behalf_of: str | None = Query(default=None),
     session: AsyncSession = Depends(get_async_session),
     current_user: User = Depends(require_user),
 ):
+    force = False
+    if on_behalf_of is not None:
+        if current_user.role not in _DISPATCH_ROLES:
+            raise HTTPException(status_code=403, detail="Only a dispatcher may act on behalf of another user")
+        try:
+            env = await _env_repo.get(session, environment_id)
+        except ValueError:
+            raise HTTPException(status_code=404, detail="Environment not found")
+        if env.owner_username != on_behalf_of:
+            raise HTTPException(status_code=403, detail=f"Environment is not owned by '{on_behalf_of}'")
+        force = True
     try:
-        env = await _release_use_case.execute(session, environment_id, current_user)
+        env = await _release_use_case.execute(session, environment_id, current_user, force=force)
     except EnvironmentNotFoundError:
         raise HTTPException(status_code=404, detail="Environment not found")
     except BookingPermissionError as exc:

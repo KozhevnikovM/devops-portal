@@ -1205,9 +1205,23 @@ curl -s \
 
 Release a whole environment — tears down **all** its child resources together (provisioned VMs →
 `RELEASING` + teardown, pooled → back to the pool, queued → cancelled), including in-flight children.
-**Auth:** owner or admin (`403`/`404` otherwise). **Response:** `202` with the environment (children
-now `RELEASING`/`RELEASED`); idempotent if already released. The environment's TTL expiring triggers
-the same grouped teardown automatically.
+**Auth:** owner, admin, or dispatcher acting on behalf of the owner (see below). **Response:** `202`
+with the environment (children now `RELEASING`/`RELEASED`); idempotent if already released. The
+environment's TTL expiring triggers the same grouped teardown automatically.
+
+**Dispatcher delegation** — a user with `role=dispatcher` (or `admin`) may release an environment
+they did not create by passing the owner's username:
+
+```
+DELETE /api/environments/{id}?on_behalf_of=alice
+```
+
+| Scenario | Result |
+|---|---|
+| `on_behalf_of` absent | existing behaviour — owner / admin / original-dispatcher only |
+| `role=user`, `on_behalf_of` set | `403` — only dispatchers may delegate |
+| Dispatcher, correct owner username | `202` — environment released |
+| Dispatcher, wrong owner username | `403` |
 
 > **Browser UI:** the **Environments** page (`GET /environments`, in the top nav) lets users order a
 > blueprint, watch the stack come up (HTMX polling), and release it — the same operations as the JSON
