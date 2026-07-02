@@ -177,11 +177,14 @@ async def namespace_allowed_to_user(
     session: AsyncSession = Depends(get_async_session),
     current_user: User = Depends(require_user),
 ):
-    """Check whether the environment holding `namespace_name` belongs to `user`.
+    """Check whether `namespace_name` is available to `user`.
 
-    `202` if it does (that user may use it); `423 Locked` if not — owned by someone else, or no
-    active environment holds the namespace. The actual owner is never disclosed. Any authenticated
-    user may ask; optional `cluster` disambiguates a name reused across clusters.
+    * `202 {match: true,  vacant: false}` — namespace is held by `user`.
+    * `202 {match: false, vacant: true}`  — namespace is not held by anyone (vacant).
+    * `423 Locked`                        — namespace is held by a different user.
+
+    The actual owner is never disclosed. Any authenticated user may ask; optional `cluster`
+    disambiguates a name reused across clusters.
     """
     envs = await _env_repo.get_by_namespace(session, namespace_name, cluster_name=cluster)
     if len(envs) > 1:
@@ -189,8 +192,10 @@ async def namespace_allowed_to_user(
             status_code=400,
             detail=f"namespace '{namespace_name}' is ambiguous across clusters; specify ?cluster=",
         )
-    if envs and envs[0].owner_username == user:
-        return {"namespace": namespace_name, "user": user, "match": True}
+    if not envs:
+        return {"namespace": namespace_name, "user": user, "match": False, "vacant": True}
+    if envs[0].owner_username == user:
+        return {"namespace": namespace_name, "user": user, "match": True, "vacant": False}
     raise HTTPException(
         status_code=423,
         detail=f"namespace '{namespace_name}' is not available to user '{user}'",
