@@ -1148,7 +1148,7 @@ also appear in `GET /api/bookings`, carrying their `environment_id`.
 
 ### `GET /api/environments` and `GET /api/environments/{id}`
 
-List environments (owner-scoped; admins see all) / fetch one (owner or admin; `403`/`404` otherwise),
+List environments (owner-scoped; admins see all) / fetch one (any authenticated user; `404` if not found),
 each with the derived status + child summaries.
 
 ### `GET /api/environments/by-namespace/{namespace_name}`
@@ -1161,8 +1161,7 @@ disambiguates a name reused across clusters (namespace names are unique only *pe
 
 | Outcome | Status |
 |---------|--------|
-| Caller owns / dispatched the environment, or is admin | `200` — same body as `GET …/{id}` |
-| It belongs to another user | `409` `namespace '<name>' is in use by another user's environment` (the owner is **not** disclosed) |
+| Any authenticated caller | `200` — same body as `GET …/{id}` |
 | No active environment holds that namespace (unknown, free, or a standalone non-environment namespace booking) | `404` |
 | The name is held on **multiple clusters** and no `cluster` given | `400` — specify `?cluster=` |
 

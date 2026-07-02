@@ -6,7 +6,6 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.use_cases.release_environment import EnvironmentNotFoundError
-from app.application.use_cases._permissions import can_manage
 from app.presentation.routes._dispatch import resolve_owner
 from app.domain.entities import Environment, User
 from app.domain.enums import BookingStatus, ResourceType
@@ -146,9 +145,9 @@ async def get_environment_by_namespace(
 ):
     """Locate the live environment whose namespace child is named `namespace_name`.
 
-    Lets a pipeline find the stack it owns by namespace instead of environment id. Optional `cluster`
-    disambiguates a name reused across clusters. Owned/dispatched/admin → 200; owned by someone else
-    → 409 (the other owner is not disclosed); not found / free / standalone namespace → 404.
+    Lets any authenticated pipeline or user find a stack by namespace instead of environment id.
+    Optional `cluster` disambiguates a name reused across clusters. Any authenticated caller → 200;
+    not found / free / standalone namespace → 404.
     """
     envs = await _env_repo.get_by_namespace(session, namespace_name, cluster_name=cluster)
     if not envs:
@@ -160,13 +159,7 @@ async def get_environment_by_namespace(
             status_code=400,
             detail=f"namespace '{namespace_name}' is ambiguous across clusters; specify ?cluster=",
         )
-    env = envs[0]
-    if not can_manage(owner_id=env.user_id, created_by=env.created_by, user=current_user):
-        raise HTTPException(
-            status_code=409,
-            detail=f"namespace '{namespace_name}' is in use by another user's environment",
-        )
-    return _serialize(env)
+    return _serialize(envs[0])
 
 
 @router.get("/by-namespace/{namespace_name}/allowed-to-user", status_code=202)
@@ -236,8 +229,6 @@ async def get_environment(
         env = await _env_repo.get(session, environment_id)
     except ValueError:
         raise HTTPException(status_code=404, detail="Environment not found")
-    if not can_manage(owner_id=env.user_id, created_by=env.created_by, user=current_user):
-        raise HTTPException(status_code=403, detail="Not the environment owner")
     return _serialize(env)
 
 

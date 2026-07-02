@@ -57,7 +57,7 @@ def test_owner_gets_their_environment_by_namespace():
     )
 
 
-def test_another_users_namespace_is_409_without_owner_name():
+def test_any_authenticated_user_can_read_any_namespace_environment():
     me = _user(username="me")
     env = _env("someone-else", ns_name="dev2")  # owned by another user
     cl, app = _client(me)
@@ -67,9 +67,8 @@ def test_another_users_namespace_is_409_without_owner_name():
             resp = cl.get("/api/environments/by-namespace/dev2")
     finally:
         app.dependency_overrides.clear()
-    assert resp.status_code == 409
-    assert "another user" in resp.json()["detail"]
-    assert "owner" not in resp.json()["detail"]  # no username leaked
+    assert resp.status_code == 200
+    assert resp.json()["id"] == str(env.id)
 
 
 def test_unknown_namespace_is_404():

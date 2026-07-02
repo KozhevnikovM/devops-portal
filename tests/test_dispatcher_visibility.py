@@ -186,7 +186,7 @@ def test_dispatcher_reads_dispatched_environment():
     assert resp.json()["created_by"] == str(disp.id)
 
 
-def test_unrelated_user_cannot_read_environment():
+def test_any_authenticated_user_can_read_environment():
     env = _env("target-owner", created_by="some-dispatcher")
     cl, app = _client(_user())
     try:
@@ -195,4 +195,5 @@ def test_unrelated_user_cannot_read_environment():
             resp = cl.get(f"/api/environments/{env.id}")
     finally:
         app.dependency_overrides.clear()
-    assert resp.status_code == 403
+    assert resp.status_code == 200
+    assert resp.json()["id"] == str(env.id)
