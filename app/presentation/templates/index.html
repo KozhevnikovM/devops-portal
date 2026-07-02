@@ -12,6 +12,12 @@
         {% include "partials/booking_form.html" %}
     </section>
 
+    {# Shared with me — only shown on the Namespace page #}
+    {% if is_ns and shared_namespaces is defined %}
+    {% set entries = shared_namespaces %}
+    {% include "partials/shared_namespaces_section.html" %}
+    {% endif %}
+
     {# Bookings table #}
     <section id="bookings-section">
         <div class="flex items-center justify-between mb-3">
