@@ -17,11 +17,13 @@
         {% if environment.blueprint_name %}
         <div class="text-xs text-gray-500">from {{ environment.blueprint_name }}</div>
         {% endif %}
-    </td>
-    <td class="px-4 py-3 text-gray-400 text-xs">
-        {{ environment.owner_username or '—' }}
+        {% set ns = namespace(name=None) %}
+        {% for b in environment.bookings %}{% if b.resource_type.value == 'NAMESPACE' and b.namespace_name %}{% set ns.name = b.namespace_name %}{% endif %}{% endfor %}
+        {% if ns.name %}
+        <div class="text-xs text-cyan-400/80 font-mono" title="Namespace">ns: {{ ns.name }}</div>
+        {% endif %}
         {% if environment.created_by_username %}
-        <span class="block text-[10px] text-purple-400/80" title="Ordered on behalf of {{ environment.owner_username }} by a dispatcher">via {{ environment.created_by_username }}</span>
+        <div class="text-[10px] text-purple-400/80" title="Ordered on behalf of {{ environment.owner_username }} by a dispatcher">via {{ environment.created_by_username }}</div>
         {% endif %}
     </td>
     <td class="px-4 py-3">
@@ -37,7 +39,7 @@
                 <span class="text-gray-500 w-16 truncate" title="{{ b.resource_type.value }}">{{ b.environment_label or b.resource_type.value|lower }}</span>
                 <span class="px-1.5 py-0.5 rounded font-semibold status-{{ b.status.value }}">{{ b.status.value }}</span>
                 <span class="text-gray-300 font-mono">
-                    {% if b.resource_type.value == 'NAMESPACE' %}{{ b.namespace_name or '—' }}{% if b.cluster_name %}<span class="text-gray-500"> / {{ b.cluster_name }}</span>{% endif %}
+                    {% if b.resource_type.value == 'NAMESPACE' %}{{ b.namespace_name or '—' }}
                     {% elif b.resource_type.value == 'STATIC_VM' %}{{ b.static_vm_name or '—' }}{% if b.static_vm_host %} @ {{ b.static_vm_host }}{% endif %}
                     {% else %}{{ b.image_name or '—' }}{% if b.vm_ip %} @ {{ b.vm_ip }}{% endif %}{% endif %}
                 </span>
