@@ -1,11 +1,13 @@
 from uuid import UUID, uuid4
 
+from uuid import UUID
+
 from sqlalchemy import String, cast, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.entities import Namespace
 from app.domain.enums import BookingStatus
-from app.infrastructure.database.models import BookingModel, NamespaceModel, UserModel
+from app.infrastructure.database.models import BookingModel, NamespaceModel, NamespaceShareModel, UserModel
 
 # A namespace is "held" while a booking referencing it is in a non-terminal state.
 _LIVE_STATUSES = [
@@ -191,6 +193,28 @@ class NamespaceRepository:
                 BookingModel.status.in_(_LIVE_STATUSES),
                 BookingModel.environment_id.is_(None),
                 NamespaceModel.is_active.is_(True),
+            )
+            .order_by(NamespaceModel.name)
+        )
+        return [_to_entity(m) for m in result.scalars().all()]
+
+    async def list_shared_standalone_namespaces(
+        self, session: AsyncSession, user_id: UUID,
+    ) -> list[Namespace]:
+        """Active namespaces held by a live standalone booking that is shared with user_id.
+
+        Excludes bookings already adopted into an environment (environment_id IS NOT NULL),
+        since those are no longer independently selectable.
+        """
+        result = await session.execute(
+            select(NamespaceModel)
+            .join(BookingModel, BookingModel.namespace_id == NamespaceModel.id)
+            .join(NamespaceShareModel, NamespaceShareModel.booking_id == BookingModel.id)
+            .where(
+                NamespaceModel.is_active.is_(True),
+                BookingModel.status.in_(_LIVE_STATUSES),
+                BookingModel.environment_id.is_(None),
+                NamespaceShareModel.shared_with_user_id == user_id,
             )
             .order_by(NamespaceModel.name)
         )

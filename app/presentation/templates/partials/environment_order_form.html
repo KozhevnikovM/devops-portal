@@ -49,6 +49,13 @@
             {% endfor %}
             </optgroup>
             {% endif %}
+            {% if shared_namespaces %}
+            <optgroup label="Shared with me">
+            {% for ns in shared_namespaces %}
+            <option value="{{ ns.id }}">{{ ns.name }} ({{ ns.cluster_name }})</option>
+            {% endfor %}
+            </optgroup>
+            {% endif %}
         </select>
     </div>
     <div class="flex flex-col gap-1.5">
