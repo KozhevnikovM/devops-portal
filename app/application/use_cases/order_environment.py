@@ -102,25 +102,7 @@ class OrderEnvironmentUseCase:
                     _adopt_orig_expires = existing.expires_at
                     res["adopt_booking_id"] = existing.id
                 else:
-                    # Check whether the namespace was shared with this user and the sharer's
-                    # booking is still live and standalone. If so, adopt it (cross-user handoff).
-                    try:
-                        caller_uuid = UUID(user_id)
-                    except ValueError:
-                        caller_uuid = None
-                    shared = (
-                        await self._booking_repo.get_live_standalone_namespace_booking_for_shared_user(
-                            session, resolved_ns_id, caller_uuid,
-                        )
-                        if caller_uuid is not None else None
-                    )
-                    if shared is not None:
-                        _adopt_booking_id = shared.id
-                        _adopt_orig_ttl = shared.ttl_minutes
-                        _adopt_orig_expires = shared.expires_at
-                        res["adopt_booking_id"] = shared.id
-                    else:
-                        res["adopt_booking_id"] = None
+                    res["adopt_booking_id"] = None
             else:
                 res["adopt_booking_id"] = None
 
