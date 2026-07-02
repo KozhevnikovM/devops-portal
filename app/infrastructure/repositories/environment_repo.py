@@ -9,7 +9,7 @@ from app.domain.entities import Environment
 from app.domain.enums import BookingStatus, ResourceType
 from app.domain.lease import Lease
 from app.infrastructure.database.models import (
-    BookingModel, EnvironmentModel, NamespaceModel, UserModel,
+    BookingModel, EnvironmentModel, NamespaceModel, StaticVMModel, UserModel,
 )
 from app.infrastructure.repositories.booking_repo import _to_entity as _booking_to_entity
 
@@ -73,12 +73,17 @@ class EnvironmentRepository:
 
     async def _children(self, session: AsyncSession, environment_id: UUID):
         result = await session.execute(
-            select(BookingModel, UserModel.username)
+            select(BookingModel, UserModel.username, NamespaceModel, StaticVMModel)
             .join(UserModel, cast(UserModel.id, String) == BookingModel.user_id, isouter=True)
+            .outerjoin(NamespaceModel, NamespaceModel.id == BookingModel.namespace_id)
+            .outerjoin(StaticVMModel, StaticVMModel.id == BookingModel.static_vm_id)
             .where(BookingModel.environment_id == environment_id)
             .order_by(BookingModel.created_at)
         )
-        return [_booking_to_entity(b, owner_username=u) for b, u in result.all()]
+        return [
+            _booking_to_entity(b, owner_username=u, namespace=ns, static_vm=svm)
+            for b, u, ns, svm in result.all()
+        ]
 
     async def get(self, session: AsyncSession, environment_id: UUID) -> Environment:
         result = await session.execute(
