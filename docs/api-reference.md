@@ -1284,6 +1284,57 @@ A role pairs a catalog `name` with an Ansible role directory (`ansible_role`, un
 
 ---
 
+### `GET /api/namespaces`
+
+List namespaces from the catalog. **Auth:** any authenticated user.
+
+**Query params:**
+
+| Param | Values | Default | Meaning |
+|---|---|---|---|
+| `filter` | `active`, `available` | `active` | `active` → all active namespaces; `available` → active and not currently held by any booking |
+| `username` | string | — | Narrow to namespaces currently held by that username |
+| `not_username` | string | — | Exclude namespaces held by that username |
+
+`username` and `not_username` are mutually exclusive (`400` if both are supplied).
+Unknown `filter` value → `400`.
+
+**Response:** `200` array:
+
+```json
+[
+  {
+    "id": "uuid",
+    "name": "team-a-dev",
+    "cluster_name": "prod-cluster",
+    "api_url": "https://k8s.example.com",
+    "is_active": true,
+    "created_at": "2026-01-01T00:00:00Z"
+  }
+]
+```
+
+**Examples:**
+```bash
+# All active namespaces
+curl -s http://localhost:8000/api/namespaces \
+     -H "Authorization: Bearer dp_<api_key>"
+
+# Only unoccupied namespaces
+curl -s "http://localhost:8000/api/namespaces?filter=available" \
+     -H "Authorization: Bearer dp_<api_key>"
+
+# Namespaces currently held by alice
+curl -s "http://localhost:8000/api/namespaces?username=alice" \
+     -H "Authorization: Bearer dp_<api_key>"
+
+# Active namespaces NOT held by alice
+curl -s "http://localhost:8000/api/namespaces?not_username=alice" \
+     -H "Authorization: Bearer dp_<api_key>"
+```
+
+---
+
 ### `GET /api/static-vms`
 
 List active static VMs so their names are discoverable for ordering (`static_vm_name` on
