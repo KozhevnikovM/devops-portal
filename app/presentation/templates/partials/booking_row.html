@@ -135,17 +135,6 @@
                         </form>
                         <div class="border-t border-gray-800"></div>
                         {% endif %}
-                        {% if booking.resource_type.value == 'NAMESPACE' and booking.status.value == 'READY' %}
-                        <button
-                            class="w-full text-left px-3 py-2 text-sm text-blue-400 hover:bg-gray-800 transition-colors"
-                            hx-get="/namespaces/{{ booking.id }}/shares"
-                            hx-target="#share-panel-container-{{ booking.id }}"
-                            hx-swap="innerHTML"
-                        >
-                            Share
-                        </button>
-                        <div class="border-t border-gray-800"></div>
-                        {% endif %}
                         {% if booking.status.value == 'FAILED' or booking.config_failed %}
                         <a
                             href="/bookings/{{ booking.id }}/audit"
@@ -208,10 +197,3 @@
         {% endif %}
     </td>
 </tr>
-{% if booking.resource_type.value == 'NAMESPACE' and can_manage and booking.status.value == 'READY' %}
-<tr id="share-panel-row-{{ booking.id }}" class="bg-gray-900/50">
-    <td colspan="9" class="px-4 pb-2">
-        <div id="share-panel-container-{{ booking.id }}"></div>
-    </td>
-</tr>
-{% endif %}
