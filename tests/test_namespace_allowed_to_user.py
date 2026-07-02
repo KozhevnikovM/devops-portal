@@ -43,7 +43,8 @@ def test_owner_match_is_202():
     resp = _call([_env(owner_username="john")], user="john")
     assert resp.status_code == 202
     body = resp.json()
-    assert body["match"] is True and body["user"] == "john" and body["namespace"] == "dev1"
+    assert body["match"] is True and body["vacant"] is False
+    assert body["user"] == "john" and body["namespace"] == "dev1"
 
 
 def test_owned_by_other_is_423_without_owner_name():
@@ -52,9 +53,11 @@ def test_owned_by_other_is_423_without_owner_name():
     assert "marry" not in resp.text  # real owner never disclosed
 
 
-def test_no_environment_is_423():
+def test_vacant_namespace_is_202():
     resp = _call([], user="john")
-    assert resp.status_code == 423
+    assert resp.status_code == 202
+    body = resp.json()
+    assert body["match"] is False and body["vacant"] is True
 
 
 def test_ambiguous_namespace_is_400():
