@@ -168,15 +168,6 @@ class Booking:
 
 
 @dataclass
-class NamespaceShare:
-    id: UUID
-    booking_id: UUID
-    shared_with_user_id: UUID
-    shared_with_username: str
-    created_at: datetime
-
-
-@dataclass
 class VM:
     id: UUID
     booking_id: UUID

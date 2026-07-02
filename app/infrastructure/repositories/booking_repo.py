@@ -12,7 +12,7 @@ from app.domain.enums import BookingStatus, ResourceType
 from app.domain.exceptions import BookingNotFoundError, IllegalStatusTransitionError
 from app.domain.lease import Lease
 from app.infrastructure.database.models import (
-    BookingAuditModel, BookingModel, NamespaceModel, NamespaceShareModel, StaticVMModel, UserModel,
+    BookingAuditModel, BookingModel, NamespaceModel, StaticVMModel, UserModel,
 )
 
 # Second alias of users to resolve created_by (the dispatcher) → username, distinct from the
@@ -346,24 +346,6 @@ class BookingRepository:
                 cast(BookingModel.user_id, String) == user_id,
                 BookingModel.status.in_(_POOLED_LIVE_STATUSES),
                 BookingModel.environment_id.is_(None),
-            )
-        )
-        model = result.scalar_one_or_none()
-        return _to_entity(model) if model is not None else None
-
-    async def get_live_standalone_namespace_booking_for_shared_user(
-        self, session: AsyncSession, namespace_id: UUID, shared_with_user_id: UUID,
-    ) -> Booking | None:
-        """Return the live, standalone booking holding namespace_id if it is shared with
-        shared_with_user_id and has not yet been adopted into an environment."""
-        result = await session.execute(
-            select(BookingModel)
-            .join(NamespaceShareModel, NamespaceShareModel.booking_id == BookingModel.id)
-            .where(
-                BookingModel.namespace_id == namespace_id,
-                BookingModel.status.in_(_POOLED_LIVE_STATUSES),
-                BookingModel.environment_id.is_(None),
-                NamespaceShareModel.shared_with_user_id == shared_with_user_id,
             )
         )
         model = result.scalar_one_or_none()

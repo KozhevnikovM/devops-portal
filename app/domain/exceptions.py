@@ -41,23 +41,3 @@ class AuthenticationError(Exception):
 
 class BookingPermissionError(Exception):
     pass
-
-
-class NamespaceShareError(Exception):
-    pass
-
-
-class NamespaceShareSelfError(NamespaceShareError):
-    pass
-
-
-class NamespaceShareUserNotFoundError(NamespaceShareError):
-    pass
-
-
-class NamespaceShareDuplicateError(NamespaceShareError):
-    pass
-
-
-class NamespaceShareNotFoundError(NamespaceShareError):
-    pass
