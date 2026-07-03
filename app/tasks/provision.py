@@ -9,6 +9,7 @@ import redis as redis_lib
 
 from app.config import settings
 from app.domain.enums import BookingStatus
+from app.domain.exceptions import SecretDecryptionError
 from app.infrastructure.celery_app import celery_app
 from app.infrastructure.database.session import SyncSessionLocal
 from app.infrastructure.repositories.booking_repo import BookingRepository
@@ -176,6 +177,16 @@ def provision_vm_task(self, booking_id: str, image_id: str, hw_config_id: str) -
                 booking_id, ip, config_failed,
             )
 
+        except SecretDecryptionError as exc:
+            # Permanent configuration error — wrong/missing SECRETS_ENCRYPTION_KEY.
+            # Do not retry; retries would all fail identically and delay the failure signal.
+            logger.error("Secret decryption failed for booking %s (not retrying): %s", booking_id, exc)
+            try:
+                _run(lambda s: repo.sync_set_status_message(s, booking_uuid, f"Secret decryption failed: {exc}"))
+                _run(lambda s: repo.sync_update_status(s, booking_uuid, BookingStatus.FAILED))
+            except Exception:
+                pass
+            return
         except Exception as exc:
             logger.error("Provisioning failed for booking %s: %s", booking_id, exc)
             is_last_attempt = self.request.retries >= self.max_retries

@@ -7,6 +7,7 @@ from app.application.ports import (
     ImageRepositoryPort, NamespaceRepositoryPort, RoleRepositoryPort, StaticVMRepositoryPort,
     TaskDispatcher,
 )
+from app.config import settings
 from app.domain.entities import Environment
 from app.domain.enums import BookingStatus, ResourceType
 from app.domain.exceptions import BlueprintNotFoundError, EnvironmentItemError, NamespaceUnavailableError
@@ -169,7 +170,8 @@ class OrderEnvironmentUseCase:
                 if role is None:
                     raise EnvironmentItemError(f"no role named '{role_name}'")
                 config_roles.append(
-                    {"name": role.name, "ansible_role": role.ansible_role, "vars": role.default_vars or {}}
+                    {"name": role.name, "ansible_role": role.ansible_role, "vars": role.default_vars or {},
+                     "secret_vars": role.secret_vars if settings.SECRET_VARS_ENABLED else {}}
                 )
             return {"image_id": image.id, "hw_config_id": hw.id, "config_roles": config_roles,
                     "startup_script": spec.get("startup_script")}

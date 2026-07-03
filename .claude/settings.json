@@ -86,7 +86,10 @@
       "Bash(git -c commit.gpgsign=false commit -q -m 'refactor: enforce the BookingStatus transition invariant \\(#238 PR 3\\) *)",
       "Bash(DATABASE_URL_SYNC=postgresql+psycopg2://portal:portal@localhost:5432/portal python -c ' *)",
       "Bash(DATABASE_URL_SYNC=postgresql+psycopg2://portal:portal@localhost:5432/portal python3 -c ' *)",
-      "Bash(PYTHONPATH=/home/mike/devops-portal DATABASE_URL_SYNC=postgresql+psycopg2://portal:portal@localhost:5432/portal alembic upgrade head)"
+      "Bash(PYTHONPATH=/home/mike/devops-portal DATABASE_URL_SYNC=postgresql+psycopg2://portal:portal@localhost:5432/portal alembic upgrade head)",
+      "Bash(grep -n \"### \\\\`GET /api/environments/{environment_id}\\\\`\" /home/mike/devops-portal/docs/api-reference.md)",
+      "Bash(grep -n \"^### \\\\`GET /api/static-vms\\\\`\" /home/mike/devops-portal/docs/api-reference.md)",
+      "Bash(git -C /home/mike/devops-portal branch --show-current)"
     ]
   }
 }

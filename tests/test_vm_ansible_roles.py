@@ -104,7 +104,7 @@ def _vm_booking():
 
 def test_order_vm_with_roles_snapshots(client):
     booking = _vm_booking()
-    role = SimpleNamespace(name="docker-machine", ansible_role="docker_machine", default_vars={"v": 1})
+    role = SimpleNamespace(name="docker-machine", ansible_role="docker_machine", default_vars={"v": 1}, secret_vars={})
     with patch("app.presentation.routes.api_bookings._image_repo") as img, \
          patch("app.presentation.routes.api_bookings._hw_config_repo") as hw, \
          patch("app.presentation.routes.api_bookings._role_repo") as roles, \
@@ -121,7 +121,7 @@ def test_order_vm_with_roles_snapshots(client):
 
     assert resp.status_code == 201
     snapshot = uc.execute.call_args.kwargs["config_roles"]
-    assert snapshot == [{"name": "docker-machine", "ansible_role": "docker_machine", "vars": {"v": 1}}]
+    assert snapshot == [{"name": "docker-machine", "ansible_role": "docker_machine", "vars": {"v": 1}, "secret_vars": {}}]
 
 
 def test_order_vm_unknown_role_returns_400(client):

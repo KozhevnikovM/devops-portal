@@ -70,6 +70,14 @@ class Role:
     default_vars: dict         # admin-set Ansible variables for this role
     is_active: bool
     created_at: datetime
+    secret_vars: dict = field(default_factory=dict)  # per-key Fernet-encrypted blob; never log values
+
+    def __repr__(self) -> str:
+        keys = sorted(self.secret_vars.keys()) if self.secret_vars else []
+        return (
+            f"Role(id={self.id!r}, name={self.name!r}, ansible_role={self.ansible_role!r}, "
+            f"is_active={self.is_active!r}, secret_vars_keys={keys!r})"
+        )
 
 
 @dataclass

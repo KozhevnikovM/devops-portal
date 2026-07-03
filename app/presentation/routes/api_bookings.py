@@ -11,6 +11,7 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.use_cases._permissions import can_manage
+from app.config import settings
 from app.domain.entities import Booking, User
 from app.domain.enums import BookingStatus, ResourceType
 from app.domain.exceptions import (
@@ -231,7 +232,8 @@ async def create_booking(
             if role is None:
                 raise HTTPException(status_code=400, detail=f"no role named '{role_name}'")
             config_roles.append(
-                {"name": role.name, "ansible_role": role.ansible_role, "vars": role.default_vars or {}}
+                {"name": role.name, "ansible_role": role.ansible_role, "vars": role.default_vars or {},
+                 "secret_vars": role.secret_vars if settings.SECRET_VARS_ENABLED else {}}
             )
         try:
             booking = await _create_use_case.execute(

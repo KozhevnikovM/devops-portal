@@ -58,7 +58,8 @@ def _make_use_case(blueprint, create_returns=None, static_returns=None, ns_retur
     image_repo = MagicMock(get_by_name=AsyncMock(return_value=SimpleNamespace(id=uuid4())))
     hw_repo = MagicMock(get_by_name=AsyncMock(return_value=SimpleNamespace(id=uuid4())))
     role_repo = MagicMock(get_by_name=AsyncMock(
-        return_value=SimpleNamespace(name="docker-machine", ansible_role="docker_machine", default_vars={})))
+        return_value=SimpleNamespace(name="docker-machine", ansible_role="docker_machine",
+                                     default_vars={}, secret_vars={})))
     svm_repo = MagicMock(get_by_name=AsyncMock(return_value=SimpleNamespace(id=uuid4())))
     dispatcher = MagicMock()
     from app.application.use_cases.order_environment import OrderEnvironmentUseCase
@@ -366,7 +367,8 @@ def _make_use_case_with_ns_repo(
     image_repo = MagicMock(get_by_name=AsyncMock(return_value=SimpleNamespace(id=uuid4())))
     hw_repo = MagicMock(get_by_name=AsyncMock(return_value=SimpleNamespace(id=uuid4())))
     role_repo = MagicMock(get_by_name=AsyncMock(
-        return_value=SimpleNamespace(name="docker-machine", ansible_role="docker_machine", default_vars={})))
+        return_value=SimpleNamespace(name="docker-machine", ansible_role="docker_machine",
+                                     default_vars={}, secret_vars={})))
     svm_repo = MagicMock(get_by_name=AsyncMock(return_value=SimpleNamespace(id=uuid4())))
     dispatcher = MagicMock()
 

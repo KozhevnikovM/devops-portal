@@ -7,6 +7,7 @@ from markupsafe import escape
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.domain.entities import User
 from app.infrastructure.auth import require_admin
 from app.infrastructure.database.session import get_async_session
@@ -41,6 +42,25 @@ def _parse_default_vars(raw: str) -> dict:
         raise ValueError(f"default_vars must be valid JSON: {exc}")
     if not isinstance(parsed, dict):
         raise ValueError("default_vars must be a JSON object")
+    return parsed
+
+
+def _parse_secret_vars(raw: str) -> dict | None:
+    """Parse the secret_vars JSON textarea.
+
+    Returns None when blank (meaning "keep existing").
+    Returns {} when the field is explicitly ``{}``.
+    Raises ValueError on bad JSON or non-object.
+    """
+    raw = (raw or "").strip()
+    if not raw:
+        return None
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"secret_vars must be valid JSON: {exc}")
+    if not isinstance(parsed, dict):
+        raise ValueError("secret_vars must be a JSON object")
     return parsed
 
 
@@ -711,11 +731,12 @@ async def admin_deactivate_static_vm(
 
 # ── Ansible Roles ─────────────────────────────────────────────────────────────
 
-async def _role_table(request, session, current_user, editing_role=None):
+async def _role_table(request, session, current_user, editing_role=None, secret_vars_scaffold=None):
     roles = await _role_repo.list_all(session)
     return templates.TemplateResponse(
         request, "partials/role_table.html",
-        {"roles": roles, "editing_role": editing_role, "current_user": current_user},
+        {"roles": roles, "editing_role": editing_role, "current_user": current_user,
+         "settings": settings, "secret_vars_scaffold": secret_vars_scaffold},
     )
 
 
@@ -742,15 +763,22 @@ async def admin_create_role(
     ansible_role: str = Form(...),
     description: str = Form(""),
     default_vars: str = Form(""),
+    secret_vars: str = Form(""),
     session: AsyncSession = Depends(get_async_session),
     current_user: User = Depends(require_admin),
 ):
     try:
         parsed_vars = _parse_default_vars(default_vars)
+        parsed_secrets = _parse_secret_vars(secret_vars) if settings.SECRET_VARS_ENABLED else None
     except ValueError as exc:
         return _role_error(str(exc))
     try:
-        await _role_repo.create(session, name, description.strip() or None, ansible_role, parsed_vars)
+        await _role_repo.create(
+            session, name, description.strip() or None, ansible_role, parsed_vars,
+            secret_vars=parsed_secrets or {}, actor=current_user.username,
+        )
+    except ValueError as exc:
+        return _role_error(str(exc))
     except IntegrityError:
         await session.rollback()
         return _role_error(f'Role "{name}" already exists.')
@@ -768,10 +796,9 @@ async def admin_edit_role_form(
     editing_role = next((r for r in roles if r.id == role_id), None)
     if editing_role is None:
         raise HTTPException(status_code=404, detail="Role not found")
-    return templates.TemplateResponse(
-        request, "partials/role_table.html",
-        {"roles": roles, "editing_role": editing_role, "current_user": current_user},
-    )
+    scaffold = {k: "" for k in editing_role.secret_vars} if editing_role.secret_vars else None
+    return await _role_table(request, session, current_user,
+                             editing_role=editing_role, secret_vars_scaffold=scaffold)
 
 
 @router.patch("/admin/catalog/roles/{role_id}", response_class=HTMLResponse)
@@ -782,20 +809,27 @@ async def admin_update_role(
     ansible_role: str = Form(...),
     description: str = Form(""),
     default_vars: str = Form(""),
+    secret_vars: str = Form(""),
     session: AsyncSession = Depends(get_async_session),
     current_user: User = Depends(require_admin),
 ):
     try:
         parsed_vars = _parse_default_vars(default_vars)
+        parsed_secrets = _parse_secret_vars(secret_vars) if settings.SECRET_VARS_ENABLED else None
     except ValueError as exc:
         return _role_error(str(exc))
+    fields = {
+        "name": name, "ansible_role": ansible_role,
+        "description": description.strip() or None, "default_vars": parsed_vars,
+    }
+    if parsed_secrets is not None:
+        fields["secret_vars"] = parsed_secrets
     try:
-        await _role_repo.update(session, role_id, {
-            "name": name, "ansible_role": ansible_role,
-            "description": description.strip() or None, "default_vars": parsed_vars,
-        })
+        await _role_repo.update(session, role_id, fields, actor=current_user.username)
     except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
+        if "not found" in str(exc).lower():
+            raise HTTPException(status_code=404, detail=str(exc))
+        return _role_error(str(exc))
     except IntegrityError:
         await session.rollback()
         return _role_error(f'Role "{name}" already exists.')
