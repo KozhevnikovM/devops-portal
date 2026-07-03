@@ -722,12 +722,36 @@ to keep existing secrets**; supply `{}` to clear them; supply a full JSON object
 > **Requires `SECRETS_ENCRYPTION_KEY`** — generate once with
 > `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` and
 > set it in the environment. If the key is absent and a role has non-empty `secret_vars`, the
-> create/update is rejected (fail-closed — never stores plaintext). Set `SECRET_VARS_ENABLED=false`
-> to disable the feature entirely (e.g. while migrating to HashiCorp Vault).
+> create/update is rejected (fail-closed — never stores plaintext).
 >
 > **Key rotation:** rotating `SECRETS_ENCRYPTION_KEY` bricks existing stored secrets (old ciphertext
 > can't be decrypted with a new key). Before rotating, re-enter all role `secret_vars` via the UI
 > after deploying the new key.
+
+#### Disabling secret vars (e.g. before migrating to Vault)
+
+The feature is controlled by the `SECRET_VARS_ENABLED` environment variable (default `true`).
+Setting it to `false` disables the feature across the whole stack without data loss:
+
+| Layer | Behaviour when disabled |
+|---|---|
+| Admin UI | Secret vars textarea and masked key list are hidden |
+| API (`POST`/`PATCH /api/roles`) | `secret_vars` field is accepted but silently ignored |
+| Booking snapshot | `secret_vars` always written as `{}` — new bookings carry no secrets |
+| Ansible runner | Decrypt/`secrets.yml` step is skipped unconditionally |
+| DB | `secret_vars` column and stored ciphertext are untouched — re-enabling restores them |
+
+**Steps to disable:**
+
+1. Set `SECRET_VARS_ENABLED=false` in your environment / `docker-compose.override.yml` and restart the app and worker.
+2. Verify: the Secret vars row is gone from the catalog UI; `POST /api/roles` with `secret_vars` succeeds but the field is ignored on read.
+3. Existing bookings already in `READY` state are unaffected (their VMs are provisioned).  New bookings provisioned while disabled will not receive any secrets.
+
+**Steps to re-enable** (or switch to a different secrets backend and flip the flag back):
+
+1. Ensure `SECRETS_ENCRYPTION_KEY` is set (same key as before if you want existing DB blobs to be usable, or a new key if you've cleared all `secret_vars` first).
+2. Set `SECRET_VARS_ENABLED=true` and restart.
+3. Re-enter any role secrets that were cleared during the disabled period.
 
 **Add** / **Edit** / **Deactivate** / **Activate** / **Delete** behave as for the other panels.
 
