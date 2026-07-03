@@ -119,6 +119,7 @@ async def admin_catalog_page(
             "roles": roles,
             "blueprints": blueprints,
             "current_user": current_user,
+            "settings": settings,
         },
     )
 
