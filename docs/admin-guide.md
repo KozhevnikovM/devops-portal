@@ -711,9 +711,25 @@ returns it to the pool. See **Booking Queue** below for what happens when the po
 Roles are reusable configuration units applied to a provisioned VM. Each entry records a `name`,
 the **Ansible role** directory it maps to (`ansible_role`, under `ansible/roles/`), an optional
 description, and **default variables** entered as a **JSON object** (invalid JSON is rejected
-inline). **Add** / **Edit** / **Deactivate** / **Activate** / **Delete** behave as for the other
-panels. A later 0.8.0 item lets users order a VM with selected roles (applied during the VM's
-`CONFIGURING` step, after the startup script).
+inline).
+
+Roles may also carry **secret variables** — sensitive Ansible variables (passwords, tokens, API
+keys) stored encrypted in the database. In the Edit form a **Secret vars** textarea accepts a JSON
+object; values are Fernet-encrypted before storage. The read view shows key names only
+(`db_password=●●● api_token=●●●`) — values are never rendered. On edit, **leave the field blank
+to keep existing secrets**; supply `{}` to clear them; supply a full JSON object to replace all.
+
+> **Requires `SECRETS_ENCRYPTION_KEY`** — generate once with
+> `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` and
+> set it in the environment. If the key is absent and a role has non-empty `secret_vars`, the
+> create/update is rejected (fail-closed — never stores plaintext). Set `SECRET_VARS_ENABLED=false`
+> to disable the feature entirely (e.g. while migrating to HashiCorp Vault).
+>
+> **Key rotation:** rotating `SECRETS_ENCRYPTION_KEY` bricks existing stored secrets (old ciphertext
+> can't be decrypted with a new key). Before rotating, re-enter all role `secret_vars` via the UI
+> after deploying the new key.
+
+**Add** / **Edit** / **Deactivate** / **Activate** / **Delete** behave as for the other panels.
 
 **Environment Blueprints panel:**
 
@@ -913,7 +929,17 @@ panel). The worker is the Ansible control node: it renders a single-host invento
 the booking's role snapshot and runs `ansible-playbook` over SSH. A role run that fails (VM
 reachable) is treated like a failed script — `READY` + "⚠ configuration failed"; an unreachable VM
 is `FAILED`. Roles are **snapshotted** at order time, so editing a catalog role doesn't change a
-running VM. Requirements (real adapter only):
+running VM.
+
+**Secret vars at provision time.** If any role in the booking has `secret_vars`, the worker
+decrypts them (all-or-nothing — if any key fails to decrypt, the booking goes `FAILED` immediately,
+no retries), merges them across all roles (last role wins on overlap), writes them to a
+`chmod 600` temp file, and injects `vars_files: [secrets.yml]` + `no_log: true` into the playbook
+so Ansible roles access secrets as normal `{{ var_name }}` variables without printing values in
+task output. The temp file is in a `0o700` temp directory that is deleted unconditionally after the
+run (whether it succeeds, fails, or the task is retried for other reasons).
+
+Requirements (real adapter only):
 
 - The worker image bundles `ansible-core`, `openssh-client`, and `sshpass` (password SSH).
 - **You write the roles.** The repo ships only two trivial **mock** roles under `ansible/roles/`
