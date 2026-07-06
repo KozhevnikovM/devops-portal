@@ -134,7 +134,7 @@ def _run_teardown(booking_id, *, terraform_destroy_side_effect=None):
     mock_hw_repo = MagicMock()
     mock_hw_repo.sync_get = MagicMock(return_value=MagicMock(cpus=2, memory_mb=4096, disk_mb=26624))
 
-    async def fake_destroy(workspace_id, config, api_token=None, on_progress=None):
+    async def fake_destroy(workspace_id, config, api_token=None, on_progress=None, force=False):
         if terraform_destroy_side_effect:
             raise terraform_destroy_side_effect
         if on_progress:

@@ -13,3 +13,7 @@ class CeleryTaskDispatcher:
     def dispatch_teardown(self, booking_id: str) -> None:
         from app.tasks.teardown import teardown_vm_task
         teardown_vm_task.delay(booking_id)
+
+    def dispatch_teardown_force(self, booking_id: str) -> None:
+        from app.tasks.teardown import teardown_vm_task
+        teardown_vm_task.delay(booking_id, force=True)
