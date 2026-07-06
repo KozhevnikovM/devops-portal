@@ -9,18 +9,23 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.domain.entities import User
+from app.domain.enums import BookingStatus, ResourceType
+from app.domain.exceptions import BookingNotFoundError
 from app.infrastructure.auth import require_admin
 from app.infrastructure.database.session import get_async_session
+from app.infrastructure.repositories.booking_repo import BookingRepository
 from app.infrastructure.repositories.hw_config_repo import HWConfigRepository
 from app.infrastructure.repositories.image_repo import ImageRepository
 from app.infrastructure.repositories.environment_blueprint_repo import EnvironmentBlueprintRepository
 from app.infrastructure.repositories.namespace_repo import NamespaceRepository
 from app.infrastructure.repositories.role_repo import RoleRepository
 from app.infrastructure.repositories.static_vm_repo import StaticVMRepository
+from app.presentation.deps import dispatcher
 from app.presentation.templating import templates
 
 router = APIRouter()
 
+_booking_repo = BookingRepository()
 _image_repo = ImageRepository()
 _hw_config_repo = HWConfigRepository()
 _namespace_repo = NamespaceRepository()
@@ -121,6 +126,36 @@ async def admin_catalog_page(
             "current_user": current_user,
             "settings": settings,
         },
+    )
+
+
+# ── Admin booking actions ─────────────────────────────────────────────────────
+
+@router.post("/admin/bookings/{booking_id}/force-release", response_class=HTMLResponse)
+async def admin_force_release_booking(
+    booking_id: UUID,
+    request: Request,
+    session: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(require_admin),
+):
+    try:
+        booking = await _booking_repo.get(session, booking_id)
+    except BookingNotFoundError:
+        raise HTTPException(status_code=404, detail="Booking not found")
+
+    if booking.resource_type != ResourceType.VM:
+        raise HTTPException(status_code=400, detail="Force release is only available for VM bookings")
+    if booking.status != BookingStatus.FAILED:
+        raise HTTPException(status_code=400, detail=f"Booking is {booking.status.value}, not FAILED")
+
+    await _booking_repo.update_status(session, booking_id, BookingStatus.RELEASING, actor_id=str(current_user.id))
+    dispatcher.dispatch_teardown_force(str(booking_id))
+
+    booking = await _booking_repo.get(session, booking_id)
+    return templates.TemplateResponse(
+        request, "partials/booking_row.html",
+        {"booking": booking, "current_user": current_user},
+        status_code=202,
     )
 
 

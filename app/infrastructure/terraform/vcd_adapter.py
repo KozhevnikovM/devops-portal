@@ -222,6 +222,7 @@ class TerraformVcdAdapter:
         config: dict,
         api_token: str | None = None,
         on_progress=None,
+        force: bool = False,
     ) -> None:
         workspace_dir = self._workspace_dir(workspace_id)
         self._write_workspace(workspace_dir, config, api_token)
@@ -235,12 +236,14 @@ class TerraformVcdAdapter:
             shutil.rmtree(workspace_dir, ignore_errors=True)
             return
 
-        await self._destroy_state(workspace_id, workspace_dir, on_progress=on_progress)
+        await self._destroy_state(workspace_id, workspace_dir, on_progress=on_progress, force=force)
         await self._run("workspace", "select", "default", cwd=workspace_dir, on_progress=on_progress)
         await self._run("workspace", "delete", workspace_id, cwd=workspace_dir, on_progress=on_progress)
         shutil.rmtree(workspace_dir, ignore_errors=True)
 
-    async def _destroy_state(self, workspace_id: str, workspace_dir: Path, on_progress=None) -> None:
+    async def _destroy_state(
+        self, workspace_id: str, workspace_dir: Path, on_progress=None, force: bool = False,
+    ) -> None:
         """Run `terraform destroy`, recovering from a stale state lock.
 
         A release is a terminal teardown of an isolated, single-use per-booking workspace, so a
@@ -249,6 +252,10 @@ class TerraformVcdAdapter:
         in that error and retry — re-reading the current lock each pass and tolerating a
         force-unlock that itself fails (the lock may already be gone, or its id may have changed).
         A non-lock failure, or exhausting the attempts, propagates to the task's retry/FAILED path.
+
+        When force=True, a non-zero exit from terraform destroy is treated as a warning: the error
+        is logged but execution continues so the workspace can still be deleted from the PG backend.
+        Use only for admin force-release of bookings whose cloud resource is in an unrecoverable state.
         """
         attempts = 3
         for attempt in range(attempts):
@@ -258,6 +265,12 @@ class TerraformVcdAdapter:
             except TerraformError as exc:
                 lock_id = self._stale_lock_id(str(exc))
                 if lock_id is None or attempt == attempts - 1:
+                    if force:
+                        logger.warning(
+                            "terraform destroy failed for %s in force mode — proceeding with workspace deletion: %s",
+                            workspace_id, exc,
+                        )
+                        return
                     raise
                 logger.warning(
                     "Stale state lock %s on %s — force-unlocking (attempt %d/%d)",
