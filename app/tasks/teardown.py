@@ -30,7 +30,7 @@ def _any_api_token() -> str | None:
 
 
 @celery_app.task(bind=True, max_retries=2, default_retry_delay=30)
-def teardown_vm_task(self, booking_id: str) -> None:
+def teardown_vm_task(self, booking_id: str, force: bool = False) -> None:
     booking_uuid = UUID(booking_id)
     workspace_id = f"booking-{booking_id}"
     api_token = None if settings.USE_STUB_TERRAFORM else _any_api_token()
@@ -59,12 +59,12 @@ def teardown_vm_task(self, booking_id: str) -> None:
             }
 
             repo.sync_update_status(session, booking_uuid, BookingStatus.RELEASING)
-            logger.info("Teardown started for booking %s", booking_id)
+            logger.info("Teardown started for booking %s (force=%s)", booking_id, force)
 
             def _on_progress(msg: str) -> None:
                 repo.sync_set_status_message(session, booking_uuid, msg)
 
-            asyncio.run(terraform.destroy(workspace_id, config, api_token, on_progress=_on_progress))
+            asyncio.run(terraform.destroy(workspace_id, config, api_token, on_progress=_on_progress, force=force))
 
             repo.sync_set_status_message(session, booking_uuid, None)
             repo.sync_update_status(session, booking_uuid, BookingStatus.RELEASED)
@@ -72,6 +72,14 @@ def teardown_vm_task(self, booking_id: str) -> None:
 
         except Exception as exc:
             logger.error("Teardown failed for booking %s: %s", booking_id, exc)
+            if force:
+                logger.warning("Force teardown: marking booking %s as RELEASED despite error", booking_id)
+                try:
+                    repo.sync_set_status_message(session, booking_uuid, None)
+                    repo.sync_update_status(session, booking_uuid, BookingStatus.RELEASED)
+                except Exception:
+                    pass
+                return
             is_last_attempt = self.request.retries >= self.max_retries
             if is_last_attempt:
                 try:
