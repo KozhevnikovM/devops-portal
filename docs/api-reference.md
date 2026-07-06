@@ -1290,11 +1290,21 @@ creating/updating/deleting roles requires **admin**.
 ```
 
 A role pairs a catalog `name` with an Ansible role directory (`ansible_role`, under
-`ansible/roles/`) and admin-set `default_vars`. Roles will be applied to a VM during configuration
-(a later 0.8.0 item lets you order a VM with `roles: [...]`).
+`ansible/roles/`) and admin-set `default_vars`. Roles may also carry `secret_vars` — sensitive
+Ansible variables (passwords, tokens) stored Fernet-encrypted in the DB and injected at provision
+time via a `vars_files:` temp file (never inline in the playbook). Requires `SECRETS_ENCRYPTION_KEY`
+env var; controlled by `SECRET_VARS_ENABLED` feature flag.
 
 **Admin write endpoints:** `POST /api/roles` (201), `PATCH /api/roles/{id}`,
-`DELETE /api/roles/{id}` (deactivate). `default_vars` must be a JSON object; duplicate `name` → `409`.
+`DELETE /api/roles/{id}` (deactivate). `default_vars` and `secret_vars` must be JSON objects;
+duplicate `name` → `409`. `secret_vars` is **write-only** — `GET /api/roles` and `RoleResponse`
+never return secret values. On `PATCH`, omitting `secret_vars` keeps existing secrets; `{}` clears them.
+
+| Condition | Outcome |
+|---|---|
+| `SECRET_VARS_ENABLED=false` | `secret_vars` accepted but ignored |
+| `secret_vars` non-empty, key absent | `422` — fail-closed, never stores plaintext |
+| Wrong key on worker at provision time | Booking goes `FAILED` immediately, no retries |
 
 ---
 

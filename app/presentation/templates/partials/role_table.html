@@ -8,6 +8,7 @@
                 <th class="px-4 py-2 text-xs text-gray-500 font-normal uppercase tracking-widest">Ansible role</th>
                 <th class="px-4 py-2 text-xs text-gray-500 font-normal uppercase tracking-widest">Description</th>
                 <th class="px-4 py-2 text-xs text-gray-500 font-normal uppercase tracking-widest">Default vars</th>
+                <th class="px-4 py-2 text-xs text-gray-500 font-normal uppercase tracking-widest">Secret vars</th>
                 <th class="px-4 py-2 text-xs text-gray-500 font-normal uppercase tracking-widest">Status</th>
                 <th class="px-4 py-2 text-xs text-gray-500 font-normal uppercase tracking-widest">Actions</th>
             </tr>
@@ -31,6 +32,12 @@
                             class="bg-gray-900 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-100 focus:outline-none focus:border-green-600 flex-1 min-w-48">
                         <textarea name="default_vars" rows="2" placeholder='{"key": "value"}'
                             class="bg-gray-900 border border-gray-600 rounded px-2 py-1.5 text-xs text-gray-100 focus:outline-none focus:border-green-600 w-full font-mono">{{ role.default_vars | tojson }}</textarea>
+                        {% if settings.SECRET_VARS_ENABLED %}
+                        <textarea name="secret_vars" rows="2" autocomplete="off"
+                            placeholder='Leave blank to keep existing secrets. Provide JSON to replace all, e.g. {"db_password": "s3cr3t"}'
+                            class="bg-gray-900 border border-gray-600 rounded px-2 py-1.5 text-xs text-gray-100 focus:outline-none focus:border-yellow-600 w-full font-mono placeholder-gray-600">{{ secret_vars_scaffold | tojson if secret_vars_scaffold else '' }}</textarea>
+                        <p class="text-xs text-gray-500 w-full -mt-1">Secret vars: blank = keep existing; <code>{}</code> = clear all; JSON = replace all (values will be encrypted)</p>
+                        {% endif %}
                         <button type="submit" class="text-xs px-3 py-1.5 rounded bg-green-700 text-green-100 hover:bg-green-600 transition-colors">Save</button>
                         <button type="button"
                             hx-get="/admin/catalog/roles/table"
@@ -47,6 +54,15 @@
                 <td class="px-4 py-3 text-gray-400 text-xs font-mono">{{ role.ansible_role }}</td>
                 <td class="px-4 py-3 text-gray-400">{{ role.description or '—' }}</td>
                 <td class="px-4 py-3 text-gray-400 text-xs font-mono">{{ role.default_vars | tojson if role.default_vars else '—' }}</td>
+                <td class="px-4 py-3 text-gray-400 text-xs font-mono">
+                    {% if settings.SECRET_VARS_ENABLED and role.secret_vars %}
+                        {% for k in role.secret_vars %}<span class="mr-1">{{ k }}=<span class="text-gray-600">●●●</span></span>{% endfor %}
+                    {% elif not settings.SECRET_VARS_ENABLED %}
+                        <span class="text-gray-600">disabled</span>
+                    {% else %}
+                        —
+                    {% endif %}
+                </td>
                 <td class="px-4 py-3">
                     {% if role.is_active %}
                     <span class="text-xs text-green-400">active</span>

@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.domain.entities import User
 from app.domain.enums import DriveType
 from app.infrastructure.auth import require_admin, require_user
@@ -108,6 +109,7 @@ class RoleCreate(BaseModel):
     description: Optional[str] = None
     ansible_role: str
     default_vars: dict = {}
+    secret_vars: dict = {}
 
 
 class RoleUpdate(BaseModel):
@@ -115,6 +117,7 @@ class RoleUpdate(BaseModel):
     description: Optional[str] = None
     ansible_role: Optional[str] = None
     default_vars: Optional[dict] = None
+    secret_vars: Optional[dict] = None  # None = keep existing; {} = clear
     is_active: Optional[bool] = None
 
 
@@ -351,12 +354,16 @@ async def list_roles(
 async def create_role(
     body: RoleCreate,
     session: AsyncSession = Depends(get_async_session),
-    _: User = Depends(require_admin),
+    current_user: User = Depends(require_admin),
 ):
+    secret_vars = body.secret_vars if settings.SECRET_VARS_ENABLED else {}
     try:
         return await _role_repo.create(
             session, body.name, body.description, body.ansible_role, body.default_vars,
+            secret_vars=secret_vars, actor=current_user.username,
         )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
     except IntegrityError:
         await session.rollback()
         raise HTTPException(status_code=409, detail=f"Role '{body.name}' already exists")
@@ -367,15 +374,19 @@ async def update_role(
     role_id: UUID,
     body: RoleUpdate,
     session: AsyncSession = Depends(get_async_session),
-    _: User = Depends(require_admin),
+    current_user: User = Depends(require_admin),
 ):
     fields = body.model_dump(exclude_none=True)
+    if not settings.SECRET_VARS_ENABLED:
+        fields.pop("secret_vars", None)
     if not fields:
         raise HTTPException(status_code=422, detail="No fields to update")
     try:
-        return await _role_repo.update(session, role_id, fields)
+        return await _role_repo.update(session, role_id, fields, actor=current_user.username)
     except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
+        if "not found" in str(exc).lower():
+            raise HTTPException(status_code=404, detail=str(exc))
+        raise HTTPException(status_code=422, detail=str(exc))
 
 
 @router.delete("/roles/{role_id}", status_code=204)

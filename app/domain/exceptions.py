@@ -41,3 +41,7 @@ class AuthenticationError(Exception):
 
 class BookingPermissionError(Exception):
     pass
+
+
+class SecretDecryptionError(BookingError):
+    """Fernet key mismatch or corrupted ciphertext — permanent, must not be retried."""

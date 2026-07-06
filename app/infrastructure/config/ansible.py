@@ -11,6 +11,8 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+import yaml
+
 from app.config import settings
 from app.infrastructure.config.runner import ConfigError
 
@@ -37,15 +39,48 @@ def _render_inventory(ip: str, password: str) -> str:
     return "[vm]\n" + " ".join(parts) + "\n"
 
 
-def _render_playbook(config_roles: list) -> str:
-    """Render a play whose roles come from the snapshot, each with its vars (inline JSON = YAML)."""
-    lines = ["- hosts: vm", "  become: true", "  gather_facts: true", "  roles:"]
+def _render_playbook(config_roles: list, secrets_path: str | None = None) -> str:
+    """Render a play whose roles come from the snapshot, each with its vars (inline JSON = YAML).
+
+    When *secrets_path* is provided, ``no_log: true`` is set at the play level to prevent
+    Ansible from printing secret variable values in task output or verbose logs.
+    """
+    lines = ["- hosts: vm", "  become: true", "  gather_facts: true"]
+    if secrets_path:
+        lines.append("  no_log: true")
+        lines.append("  vars_files:")
+        lines.append(f"    - {secrets_path}")
+    lines.append("  roles:")
     for role in config_roles:
         lines.append(f"    - role: {role['ansible_role']}")
         vars_ = role.get("vars") or {}
         if vars_:
             lines.append(f"      vars: {json.dumps(vars_)}")
     return "\n".join(lines) + "\n"
+
+
+def _decrypt_all_secrets(config_roles: list) -> dict:
+    """Decrypt and merge secret_vars from all roles atomically.
+
+    Decrypts the full merged dict before returning anything — callers never receive a
+    partial result. Raises SecretDecryptionError (wrapped InvalidToken) on any failure.
+    """
+    from cryptography.fernet import InvalidToken
+    from app.domain.exceptions import SecretDecryptionError
+    from app.infrastructure.crypto import decrypt_dict
+
+    merged: dict = {}
+    for role in config_roles:
+        sv = role.get("secret_vars") or {}
+        if not sv:
+            continue
+        try:
+            merged.update(decrypt_dict(sv, settings.SECRETS_ENCRYPTION_KEY))
+        except (InvalidToken, ValueError) as exc:
+            raise SecretDecryptionError(
+                f"Failed to decrypt secret_vars for role '{role.get('name', '?')}': {exc}"
+            ) from exc
+    return merged
 
 
 class StubAnsibleRunner:
@@ -61,11 +96,25 @@ class AnsibleConfigRunner:
         roles = booking.config_roles or []
         if not roles:
             return
+
+        # Decrypt all secrets atomically before opening any file.
+        # If any key fails to decrypt, SecretDecryptionError is raised before secrets.yml is created.
+        merged_secrets = _decrypt_all_secrets(roles)
+
+        # tempfile.TemporaryDirectory creates the dir with 0o700 (Python stdlib guarantee).
         with tempfile.TemporaryDirectory(prefix="portal-ansible-") as tmp:
             inv = Path(tmp) / "inventory.ini"
             play = Path(tmp) / "configure_vm.yml"
             inv.write_text(_render_inventory(ip, password))
-            play.write_text(_render_playbook(roles))
+
+            secrets_path = None
+            if merged_secrets:
+                secrets_file = Path(tmp) / "secrets.yml"
+                secrets_file.write_text(yaml.safe_dump(merged_secrets))
+                secrets_file.chmod(0o600)
+                secrets_path = str(secrets_file)
+
+            play.write_text(_render_playbook(roles, secrets_path=secrets_path))
             self._run(["ansible-playbook", "-i", str(inv), str(play)], on_progress)
 
     def _run(self, cmd: list[str], on_progress=None) -> None:

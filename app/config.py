@@ -67,5 +67,11 @@ class Settings(BaseSettings):
     ANSIBLE_COLLECTIONS_PATH: str = "/app/ansible/collections"  # installed/vendored collections path
     ANSIBLE_TIMEOUT: int = 1800         # seconds before an ansible-playbook run is killed
 
+    # Ansible role secret vars (Fernet encryption at rest)
+    # Generate a key: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+    # Fail-closed: roles with non-empty secret_vars are rejected if this key is unset.
+    SECRET_VARS_ENABLED: bool = True
+    SECRETS_ENCRYPTION_KEY: str = ""
+
 
 settings = Settings()
