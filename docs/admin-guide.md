@@ -975,6 +975,37 @@ reachable) is treated like a failed script — `READY` + "⚠ configuration fail
 is `FAILED`. Roles are **snapshotted** at order time, so editing a catalog role doesn't change a
 running VM.
 
+**Using `portal.*` variables inside a role.** Every Ansible run injects a `portal` dict into
+the play vars. Two keys are always present:
+
+| Variable | Value |
+|---|---|
+| `portal.ip` | The VM's provisioned IP address |
+| `portal.label` | The VM's label in the blueprint (empty string for standalone bookings) |
+
+Any extra keys declared in the blueprint item's `spec.vars` (or in `vars` on a direct
+`POST /api/bookings`) are also available as `portal.<key>`.
+
+Use them directly in role tasks:
+
+```yaml
+# roles/generate_cert/tasks/main.yml
+- name: Generate cert
+  community.crypto.x509_certificate:
+    subject_alt_name: "IP:{{ portal.ip }}"
+```
+
+Or, if you have an existing role that expects its own variable name and you don't want to
+change the role, map via **Default vars** in the Ansible Roles catalog:
+
+```json
+{ "subject_alt_name_ip": "{{ portal.ip }}" }
+```
+
+The mapping is snapshotted at order time and rendered into the playbook as a role-level
+`vars:` block. Ansible evaluates `{{ portal.ip }}` lazily at task execution, so the role
+receives the real IP in `subject_alt_name_ip`.
+
 **Secret vars at provision time.** If any role in the booking has `secret_vars`, the worker
 decrypts them (all-or-nothing — if any key fails to decrypt, the booking goes `FAILED` immediately,
 no retries), merges them across all roles (last role wins on overlap), writes them to a
