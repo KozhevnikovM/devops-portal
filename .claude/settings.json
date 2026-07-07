@@ -93,7 +93,9 @@
       "Bash(git branch *)",
       "Bash(ansible-galaxy --version)",
       "Bash(/tmp/ansible-venv/bin/pip install *)",
-      "Bash(/tmp/ansible-venv/bin/ansible-galaxy --version)"
+      "Bash(/tmp/ansible-venv/bin/ansible-galaxy --version)",
+      "Bash(chmod +x /home/mike/devops-portal/docker/entrypoint-worker.sh)",
+      "Bash(git -C /home/mike/devops-portal *)"
     ]
   }
 }
