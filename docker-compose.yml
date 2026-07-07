@@ -117,6 +117,7 @@ services:
         APT_REPO_HOST: ${APT_REPO_HOST:-}
         APT_REPO_USER: ${APT_REPO_USER:-token}
         ANSIBLE_COLLECTIONS_REQUIREMENTS: ${ANSIBLE_COLLECTIONS_REQUIREMENTS:-ansible/requirements.yml}
+    entrypoint: ["/app/docker/entrypoint-worker.sh"]
     command: celery -A app.infrastructure.celery_app worker -l info -c 4
     env_file: .env
     volumes:

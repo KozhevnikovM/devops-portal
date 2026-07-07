@@ -106,16 +106,19 @@ COPY . .
 # Install Ansible collections. Two unconditional steps — ansible-galaxy exits 0 even on
 # total network failure (Errno 97), so a single || chain never reaches the fallback.
 #
+# Collections go to /opt/ansible/collections (outside /app) so the bind-mount
+# "volumes: - .:/app" in docker-compose does not shadow them at runtime.
+#
 # Step 1: online or vendor-requirements-yml install (best-effort; network failure is silently
 #         swallowed by ansible-galaxy itself, not by us).
 # Step 2: install any .tar.gz/.tar archives already in ansible/collections/ directly — covers
 #         offline builds where tarballs were downloaded and placed there manually.
-ENV ANSIBLE_COLLECTIONS_PATH=/app/ansible/collections
+ENV ANSIBLE_COLLECTIONS_PATH=/opt/ansible/collections
 ARG ANSIBLE_COLLECTIONS_REQUIREMENTS=ansible/requirements.yml
 RUN ansible-galaxy collection install -r "${ANSIBLE_COLLECTIONS_REQUIREMENTS}" \
-        -p /app/ansible/collections || true
+        -p /opt/ansible/collections || true
 RUN find /app/ansible/collections -maxdepth 1 \( -name '*.tar.gz' -o -name '*.tar' \) | \
-    xargs -r ansible-galaxy collection install -p /app/ansible/collections || true
+    xargs -r ansible-galaxy collection install -p /opt/ansible/collections || true
 
 COPY --from=frontend /build/dist/css/tailwind.css app/static/css/tailwind.css
 COPY --from=frontend /build/dist/js/htmx.min.js  app/static/js/htmx.min.js
@@ -128,5 +131,7 @@ ENV TF_CLI_CONFIG_FILE=/app/terraform/terraformrc
 ARG PORTAL_UID=1000
 ARG PORTAL_GID=1000
 RUN groupadd -g "${PORTAL_GID}" portal && \
-    useradd -m -u "${PORTAL_UID}" -g "${PORTAL_GID}" portal
+    useradd -m -u "${PORTAL_UID}" -g "${PORTAL_GID}" portal && \
+    mkdir -p /opt/ansible/collections && \
+    chown -R portal:portal /opt/ansible/collections
 USER portal
