@@ -90,7 +90,10 @@
       "Bash(grep -n \"### \\\\`GET /api/environments/{environment_id}\\\\`\" /home/mike/devops-portal/docs/api-reference.md)",
       "Bash(grep -n \"^### \\\\`GET /api/static-vms\\\\`\" /home/mike/devops-portal/docs/api-reference.md)",
       "Bash(git -C /home/mike/devops-portal branch --show-current)",
-      "Bash(git branch *)"
+      "Bash(git branch *)",
+      "Bash(ansible-galaxy --version)",
+      "Bash(/tmp/ansible-venv/bin/pip install *)",
+      "Bash(/tmp/ansible-venv/bin/ansible-galaxy --version)"
     ]
   }
 }
