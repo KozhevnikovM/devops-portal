@@ -157,6 +157,7 @@ class Booking:
     status_message: str | None = None
     startup_script: str | None = None
     config_roles: list = field(default_factory=list)  # snapshot: [{name, ansible_role, vars}]
+    extra_vars: dict = field(default_factory=dict)    # blueprint-level vars injected into ansible portal dict
     config_failed: bool = False
     environment_id: UUID | None = None  # parent Environment, when ordered as part of a stack
     environment_label: str | None = None  # blueprint item label (e.g. "web") within the stack

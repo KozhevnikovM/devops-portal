@@ -823,6 +823,26 @@ Example items value for `dev-stack` (a pooled namespace + a Docker-host VM + a P
 ]
 ```
 
+**Passing variables to Ansible roles.** Add a `vars` dict to a VM item's `spec` to inject
+per-VM variables into every role that runs on that VM. They are available inside any role as
+`{{ portal.<key> }}`. Two variables are always injected automatically:
+
+- `portal.ip` — the VM's IP address (set after provisioning)
+- `portal.label` — the VM's label within the blueprint (e.g. `"web"`, `"db"`)
+
+```json
+{ "label": "web", "resource_type": "VM",
+  "spec": {
+    "image_name": "Ubuntu 22.04", "hw_config_name": "medium",
+    "roles": ["my-role"],
+    "vars": { "deploy_env": "prod", "replicas": 3 }
+  }
+}
+```
+
+Variable names must be valid identifiers (`[a-zA-Z_][a-zA-Z0-9_]*`); a name containing a
+hyphen (e.g. `my-var`) is rejected at order time with `400`.
+
 > **Names are resolved at order time, not on save.** `image_name`, `hw_config_name`, and each role
 > name must match active entries in the Catalog (Images, Hardware, Ansible Roles) — but a wrong name
 > only surfaces as a `400` when a user **orders** the blueprint, not when you save it. Make sure the

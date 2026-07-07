@@ -154,7 +154,11 @@ def provision_vm_task(self, booking_id: str, image_id: str, hw_config_id: str) -
                         config_runner.run_script(client, booking.startup_script, on_progress=_on_progress)
                     if booking.config_roles:
                         logger.info("Applying %d role(s) for booking %s", len(booking.config_roles), booking_id)
-                        ansible_runner.apply_roles(booking, ip=ip, password=vm_password, on_progress=_on_progress)
+                        ansible_runner.apply_roles(
+                            booking, ip=ip, password=vm_password, on_progress=_on_progress,
+                            extra_vars=booking.extra_vars or {},
+                            label=booking.environment_label or "",
+                        )
                 except _CONFIG_SOFTWARE_ERRORS as cfg_exc:
                     # VM is up but configuration failed — keep the VM, flag the failure.
                     config_failed = True

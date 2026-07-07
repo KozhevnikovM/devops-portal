@@ -147,7 +147,7 @@ def test_roles_applied_after_script_clean_ready():
     bid, iid, hid = str(uuid4()), str(uuid4()), str(uuid4())
     mock_repo = MagicMock()
     mock_repo.sync_get = MagicMock(return_value=SimpleNamespace(
-        startup_script="echo hi", config_roles=SNAPSHOT))
+        startup_script="echo hi", config_roles=SNAPSHOT, extra_vars={}, environment_label=None))
     img = MagicMock(sync_get=MagicMock(return_value=SimpleNamespace(id=iid, name="U", vapp_template_id="t")))
     hw = MagicMock(sync_get=MagicMock(return_value=SimpleNamespace(
         id=hid, name="m", cpus=2, memory_mb=4096, disk_mb=26624, drive_type="HDD")))
@@ -180,7 +180,7 @@ def test_role_failure_is_ready_but_config_failed():
     bid, iid, hid = str(uuid4()), str(uuid4()), str(uuid4())
     mock_repo = MagicMock()
     mock_repo.sync_get = MagicMock(return_value=SimpleNamespace(
-        startup_script=None, config_roles=SNAPSHOT))
+        startup_script=None, config_roles=SNAPSHOT, extra_vars={}, environment_label=None))
     img = MagicMock(sync_get=MagicMock(return_value=SimpleNamespace(id=iid, name="U", vapp_template_id="t")))
     hw = MagicMock(sync_get=MagicMock(return_value=SimpleNamespace(
         id=hid, name="m", cpus=2, memory_mb=4096, disk_mb=26624, drive_type="HDD")))

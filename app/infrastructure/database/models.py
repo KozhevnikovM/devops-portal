@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, false, func
+from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, false, func, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -149,6 +149,7 @@ class BookingModel(Base):
     status_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     startup_script: Mapped[str | None] = mapped_column(Text, nullable=True)
     config_roles: Mapped[list] = mapped_column(JSONB, nullable=False, default=list, server_default="[]")
+    extra_vars: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb"))
     config_failed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=false())
     environment_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("environments.id", ondelete="SET NULL"), nullable=True,
