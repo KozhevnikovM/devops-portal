@@ -66,6 +66,7 @@ class Settings(BaseSettings):
     ANSIBLE_ROLES_PATH: str = "/app/ansible/roles"  # where the worker looks up roles (admins add theirs)
     ANSIBLE_COLLECTIONS_PATH: str = "/app/ansible/collections"  # installed/vendored collections path
     ANSIBLE_TIMEOUT: int = 1800         # seconds before an ansible-playbook run is killed
+    ANSIBLE_VERBOSITY: int = 0          # 0 = default output, 1-3 = -v / -vv / -vvv
 
     # Ansible role secret vars (Fernet encryption at rest)
     # Generate a key: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"

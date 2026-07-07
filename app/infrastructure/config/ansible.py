@@ -42,15 +42,21 @@ def _render_inventory(ip: str, password: str) -> str:
 def _render_playbook(config_roles: list, secrets_path: str | None = None) -> str:
     """Render a play whose roles come from the snapshot, each with its vars (inline JSON = YAML).
 
-    When *secrets_path* is provided, ``no_log: true`` is set at the play level to prevent
-    Ansible from printing secret variable values in task output or verbose logs.
+    When *secrets_path* is provided, secrets are loaded via a no_log include_vars task rather
+    than play-level vars_files + no_log. Play-level no_log would censor every task's output,
+    making failures from unrelated tasks completely opaque.
     """
     lines = ["- hosts: vm", "  become: true", "  gather_facts: true"]
     if secrets_path:
-        lines.append("  no_log: true")
-        lines.append("  vars_files:")
-        lines.append(f"    - {secrets_path}")
-    lines.append("  roles:")
+        # pre_tasks run before roles; tasks run after — secrets must be available to roles.
+        lines.append("  pre_tasks:")
+        lines.append("    - name: Load secret vars")
+        lines.append("      ansible.builtin.include_vars:")
+        lines.append(f"        file: {secrets_path}")
+        lines.append("      no_log: true")
+        lines.append("  roles:")
+    else:
+        lines.append("  roles:")
     for role in config_roles:
         lines.append(f"    - role: {role['ansible_role']}")
         vars_ = role.get("vars") or {}
@@ -115,7 +121,10 @@ class AnsibleConfigRunner:
                 secrets_path = str(secrets_file)
 
             play.write_text(_render_playbook(roles, secrets_path=secrets_path))
-            self._run(["ansible-playbook", "-i", str(inv), str(play)], on_progress)
+            cmd = ["ansible-playbook", "-i", str(inv), str(play)]
+            if settings.ANSIBLE_VERBOSITY > 0:
+                cmd.append("-" + "v" * min(settings.ANSIBLE_VERBOSITY, 3))
+            self._run(cmd, on_progress)
 
     def _run(self, cmd: list[str], on_progress=None) -> None:
         env = {
@@ -132,6 +141,7 @@ class AnsibleConfigRunner:
         for raw in proc.stdout:
             line = raw.rstrip("\n")
             if line:
+                logger.debug("ansible: %s", line)
                 lines.append(line)
                 if on_progress:
                     on_progress("\n".join(lines[-3:]))
@@ -141,7 +151,7 @@ class AnsibleConfigRunner:
             proc.kill()
             raise AnsibleConfigError(f"ansible-playbook timed out after {settings.ANSIBLE_TIMEOUT}s")
         if proc.returncode != 0:
-            tail = "\n".join(lines[-8:])
+            tail = "\n".join(lines[-20:])
             raise AnsibleConfigError(f"ansible-playbook failed (exit {proc.returncode}):\n{tail}")
 
 
