@@ -107,12 +107,16 @@ COPY . .
 # default (from ansible/requirements.yml). For an OFFLINE/air-gapped build, pre-download the
 # tarballs (`ansible-galaxy collection download -r ansible/requirements.yml -p ansible/collections/vendor`),
 # ship ansible/collections/vendor/, and set ANSIBLE_COLLECTIONS_REQUIREMENTS to its requirements.yml.
+# Fallback: if requirements-based install fails (no internet, no vendor requirements.yml), install
+# any .tar.gz/.tar archives already present in ansible/collections/ directly.
 # Best-effort: the shipped mock roles need no collections, so a failure here doesn't break the build.
 ENV ANSIBLE_COLLECTIONS_PATH=/app/ansible/collections
 ARG ANSIBLE_COLLECTIONS_REQUIREMENTS=ansible/requirements.yml
 RUN ansible-galaxy collection install -r "${ANSIBLE_COLLECTIONS_REQUIREMENTS}" \
         -p /app/ansible/collections || \
-    echo "WARNING: ansible-galaxy collection install failed (offline build without vendored collections?)"
+    find /app/ansible/collections -maxdepth 1 \( -name '*.tar.gz' -o -name '*.tar' \) | \
+        xargs -r ansible-galaxy collection install -p /app/ansible/collections || \
+    echo "WARNING: ansible-galaxy collection install failed (no internet, no vendor tarballs?)"
 
 COPY --from=frontend /build/dist/css/tailwind.css app/static/css/tailwind.css
 COPY --from=frontend /build/dist/js/htmx.min.js  app/static/js/htmx.min.js
