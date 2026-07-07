@@ -31,6 +31,9 @@ new tarballs can be picked up without a full image rebuild.
   bind-mounted source path; they are just installed to the new location.
 - `RUN groupadd/useradd` step gains `mkdir -p /opt/ansible/collections && chown -R portal:portal`
   so the `portal` user can write there at runtime (entrypoint runs as `portal`).
+- New `ARG ANSIBLE_GALAXY_ONLINE=false` — the online `ansible-galaxy collection install -r …`
+  step is skipped by default; set `ANSIBLE_GALAXY_ONLINE=true` to enable it on internet-connected
+  build hosts.
 
 **`docker/entrypoint-worker.sh`** (new)
 - Runs before Celery starts.

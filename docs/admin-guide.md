@@ -975,14 +975,23 @@ Requirements (real adapter only):
 
 **Ansible collections.** Collections your roles need go in `ansible/requirements.yml`; they're
 installed into `ANSIBLE_COLLECTIONS_PATH` (default `/opt/ansible/collections`). The mock roles need
-none. For an **offline / air-gapped** build, pre-download the tarballs on a connected host and
-install from them with no network:
+none.
+
+Online install from ansible-galaxy is **disabled by default** (`ANSIBLE_GALAXY_ONLINE=false`).
+The standard workflow is to vendor tarballs on a connected host and ship them with the build:
 
 ```bash
-# connected host — vendor the tarballs
+# connected host — download tarballs
 ansible-galaxy collection download -r ansible/requirements.yml -p ansible/collections/vendor
-# air-gapped build — point the build at the vendored requirements.yml
-ANSIBLE_COLLECTIONS_REQUIREMENTS=ansible/collections/vendor/requirements.yml docker compose build
+# build host (no internet required) — tarballs are installed automatically
+docker compose build
+```
+
+If your build host does have internet access and you want ansible-galaxy to pull collections
+directly during the build, pass `ANSIBLE_GALAXY_ONLINE=true`:
+
+```bash
+ANSIBLE_GALAXY_ONLINE=true docker compose build
 ```
 
 (`ansible/collections/` contents are gitignored; ship the `vendor/` directory to the build host.)

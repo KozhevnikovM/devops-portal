@@ -103,20 +103,25 @@ COPY --from=terraform-bin /bin/terraform /usr/local/bin/terraform
 
 COPY . .
 
-# Install Ansible collections. Two unconditional steps — ansible-galaxy exits 0 even on
-# total network failure (Errno 97), so a single || chain never reaches the fallback.
+# Install Ansible collections.
 #
 # Collections go to /opt/ansible/collections (outside /app) so the bind-mount
 # "volumes: - .:/app" in docker-compose does not shadow them at runtime.
 #
-# Step 1: online or vendor-requirements-yml install (best-effort; network failure is silently
-#         swallowed by ansible-galaxy itself, not by us).
-# Step 2: install any .tar.gz/.tar archives already in ansible/collections/ directly — covers
-#         offline builds where tarballs were downloaded and placed there manually.
+# Online install is disabled by default (ANSIBLE_GALAXY_ONLINE=false).  Set it to "true"
+# only on build hosts with internet access.  The normal offline workflow is to vendor
+# tarballs into ansible/collections/ and let Step 2 install them.
+#
+# Step 1 (opt-in): pull from ansible-galaxy / Automation Hub using requirements.yml.
+# Step 2 (always): install any .tar.gz/.tar archives already in ansible/collections/ —
+#         covers offline builds where tarballs were placed there manually.
 ENV ANSIBLE_COLLECTIONS_PATH=/opt/ansible/collections
 ARG ANSIBLE_COLLECTIONS_REQUIREMENTS=ansible/requirements.yml
-RUN ansible-galaxy collection install -r "${ANSIBLE_COLLECTIONS_REQUIREMENTS}" \
-        -p /opt/ansible/collections || true
+ARG ANSIBLE_GALAXY_ONLINE=false
+RUN if [ "$ANSIBLE_GALAXY_ONLINE" = "true" ]; then \
+        ansible-galaxy collection install -r "${ANSIBLE_COLLECTIONS_REQUIREMENTS}" \
+            -p /opt/ansible/collections || true; \
+    fi
 RUN find /app/ansible/collections -maxdepth 1 \( -name '*.tar.gz' -o -name '*.tar' \) | \
     xargs -r ansible-galaxy collection install -p /opt/ansible/collections || true
 
