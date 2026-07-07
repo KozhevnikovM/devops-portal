@@ -1,0 +1,19 @@
+---
+# Smoke-test: verify collections installed from tarballs are reachable.
+# Run inside the worker container:
+#   docker compose run --rm worker ansible-playbook ansible/test_collections.yml
+- name: Verify Ansible collections are installed
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: List installed collections
+      ansible.builtin.command: ansible-galaxy collection list
+      register: collection_list
+      changed_when: false
+
+    - name: Assert ansible.posix is present
+      ansible.builtin.assert:
+        that:
+          - "'ansible.posix' in collection_list.stdout"
+        fail_msg: "ansible.posix is NOT installed — tarball fallback may not have run"
+        success_msg: "ansible.posix is installed"
