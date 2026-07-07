@@ -993,6 +993,30 @@ ANSIBLE_COLLECTIONS_REQUIREMENTS=ansible/collections/vendor/requirements.yml doc
 > install path. If tarballs do end up in `ansible/collections/` directly, the image build will
 > still install them via a fallback — but the documented `vendor/` workflow is preferred.
 
+**Debugging ansible failures.** When a role run fails, the worker logs the last 20 lines of
+`ansible-playbook` output at `WARNING` level. To see the full output, run the worker with
+`CELERY_LOG_LEVEL=DEBUG` — every line is logged at `DEBUG` level as it arrives.
+
+For more detail from ansible itself, set `ANSIBLE_VERBOSITY` in `.env`:
+
+| Value | Flag added | What it shows |
+|-------|-----------|---------------|
+| `0` (default) | none | standard task results |
+| `1` | `-v` | module arguments and return values |
+| `2` | `-vv` | connection details |
+| `3` | `-vvv` | full SSH debug output |
+
+```ini
+# .env
+ANSIBLE_VERBOSITY=1
+```
+
+> **Note on secret vars**: when roles carry `secret_vars`, the `include_vars` step that loads
+> the decrypted secrets file still shows `(censored)` in the log — this is intentional. Task
+> failures unrelated to secrets are fully visible. If a task in your role uses a secret value
+> and you need to see its output, temporarily remove `no_log: true` from that task definition
+> during debugging.
+
 Order it via the API:
 
 ```bash

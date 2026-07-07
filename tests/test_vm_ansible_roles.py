@@ -50,6 +50,7 @@ def test_apply_roles_runs_playbook():
          patch("app.infrastructure.config.ansible.settings") as s:
         s.VM_SSH_USER = "root"; s.VM_SSH_PORT = 22; s.VM_SSH_PRIVATE_KEY = ""
         s.ANSIBLE_ROLES_PATH = "/app/ansible/roles"; s.ANSIBLE_TIMEOUT = 60
+        s.ANSIBLE_VERBOSITY = 0
         runner.apply_roles(_booking(SNAPSHOT), ip="10.0.0.5", password="pw")
     # ansible-playbook was invoked.
     assert popen.call_args.args[0][0] == "ansible-playbook"
@@ -64,6 +65,7 @@ def test_apply_roles_nonzero_raises():
          patch("app.infrastructure.config.ansible.settings") as s:
         s.VM_SSH_USER = "root"; s.VM_SSH_PORT = 22; s.VM_SSH_PRIVATE_KEY = ""
         s.ANSIBLE_ROLES_PATH = "/app/ansible/roles"; s.ANSIBLE_TIMEOUT = 60
+        s.ANSIBLE_VERBOSITY = 0
         with pytest.raises(AnsibleConfigError):
             runner.apply_roles(_booking(SNAPSHOT), ip="10.0.0.5", password="pw")
 

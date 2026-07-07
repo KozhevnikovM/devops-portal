@@ -86,7 +86,8 @@ def test_render_playbook_with_secrets():
     from app.infrastructure.config.ansible import _render_playbook
     play = _render_playbook([{"ansible_role": "myrole", "vars": {}}], secrets_path="/tmp/secrets.yml")
     assert "no_log: true" in play
-    assert "vars_files:" in play
+    assert "include_vars:" in play
+    assert "pre_tasks:" in play
     assert "/tmp/secrets.yml" in play
 
 
@@ -107,9 +108,9 @@ def test_ansible_runner_writes_secrets_file():
         # Capture the secrets file path from the playbook
         play_path = next(p for p in cmd if p.endswith(".yml"))
         play_content = open(play_path).read()
-        if "vars_files:" in play_content:
+        if "include_vars:" in play_content:
             import re
-            match = re.search(r"- (.+secrets\.yml)", play_content)
+            match = re.search(r"file: (.+secrets\.yml)", play_content)
             if match:
                 written_paths.append(match.group(1))
         # Verify the secrets file exists at this point
@@ -126,6 +127,7 @@ def test_ansible_runner_writes_secrets_file():
         mock_settings.ANSIBLE_ROLES_PATH = "/roles"
         mock_settings.ANSIBLE_COLLECTIONS_PATH = "/collections"
         mock_settings.ANSIBLE_TIMEOUT = 1800
+        mock_settings.ANSIBLE_VERBOSITY = 0
         runner.apply_roles(booking, ip="1.2.3.4", password="pw")
 
     assert written_paths, "secrets file path should appear in playbook"
@@ -155,11 +157,12 @@ def test_ansible_runner_no_secrets_file_when_empty():
         mock_settings.ANSIBLE_ROLES_PATH = "/roles"
         mock_settings.ANSIBLE_COLLECTIONS_PATH = "/collections"
         mock_settings.ANSIBLE_TIMEOUT = 1800
+        mock_settings.ANSIBLE_VERBOSITY = 0
         runner.apply_roles(booking, ip="1.2.3.4", password="pw")
 
     assert playbook_content
     assert "no_log" not in playbook_content[0]
-    assert "vars_files" not in playbook_content[0]
+    assert "include_vars" not in playbook_content[0]
 
 
 def test_ansible_runner_raises_secret_decryption_error_on_bad_key():
@@ -198,7 +201,7 @@ def test_secrets_file_deleted_after_run():
         play_path = next(p for p in cmd if p.endswith(".yml"))
         content = open(play_path).read()
         import re
-        match = re.search(r"- (.+secrets\.yml)", content)
+        match = re.search(r"file: (.+secrets\.yml)", content)
         if match:
             captured_secrets_path.append(match.group(1))
 
@@ -212,6 +215,7 @@ def test_secrets_file_deleted_after_run():
         mock_settings.ANSIBLE_ROLES_PATH = "/roles"
         mock_settings.ANSIBLE_COLLECTIONS_PATH = "/collections"
         mock_settings.ANSIBLE_TIMEOUT = 1800
+        mock_settings.ANSIBLE_VERBOSITY = 0
         runner.apply_roles(booking, ip="1.2.3.4", password="pw")
 
     assert captured_secrets_path, "should have captured secrets path"
