@@ -823,6 +823,26 @@ Example items value for `dev-stack` (a pooled namespace + a Docker-host VM + a P
 ]
 ```
 
+**Passing variables to Ansible roles.** Add a `vars` dict to a VM item's `spec` to inject
+per-VM variables into every role that runs on that VM. They are available inside any role as
+`{{ portal.<key> }}`. Two variables are always injected automatically:
+
+- `portal.ip` — the VM's IP address (set after provisioning)
+- `portal.label` — the VM's label within the blueprint (e.g. `"web"`, `"db"`)
+
+```json
+{ "label": "web", "resource_type": "VM",
+  "spec": {
+    "image_name": "Ubuntu 22.04", "hw_config_name": "medium",
+    "roles": ["my-role"],
+    "vars": { "deploy_env": "prod", "replicas": 3 }
+  }
+}
+```
+
+Variable names must be valid identifiers (`[a-zA-Z_][a-zA-Z0-9_]*`); a name containing a
+hyphen (e.g. `my-var`) is rejected at order time with `400`.
+
 > **Names are resolved at order time, not on save.** `image_name`, `hw_config_name`, and each role
 > name must match active entries in the Catalog (Images, Hardware, Ansible Roles) — but a wrong name
 > only surfaces as a `400` when a user **orders** the blueprint, not when you save it. Make sure the
@@ -954,6 +974,37 @@ the booking's role snapshot and runs `ansible-playbook` over SSH. A role run tha
 reachable) is treated like a failed script — `READY` + "⚠ configuration failed"; an unreachable VM
 is `FAILED`. Roles are **snapshotted** at order time, so editing a catalog role doesn't change a
 running VM.
+
+**Using `portal.*` variables inside a role.** Every Ansible run injects a `portal` dict into
+the play vars. Two keys are always present:
+
+| Variable | Value |
+|---|---|
+| `portal.ip` | The VM's provisioned IP address |
+| `portal.label` | The VM's label in the blueprint (empty string for standalone bookings) |
+
+Any extra keys declared in the blueprint item's `spec.vars` (or in `vars` on a direct
+`POST /api/bookings`) are also available as `portal.<key>`.
+
+Use them directly in role tasks:
+
+```yaml
+# roles/generate_cert/tasks/main.yml
+- name: Generate cert
+  community.crypto.x509_certificate:
+    subject_alt_name: "IP:{{ portal.ip }}"
+```
+
+Or, if you have an existing role that expects its own variable name and you don't want to
+change the role, map via **Default vars** in the Ansible Roles catalog:
+
+```json
+{ "subject_alt_name_ip": "{{ portal.ip }}" }
+```
+
+The mapping is snapshotted at order time and rendered into the playbook as a role-level
+`vars:` block. Ansible evaluates `{{ portal.ip }}` lazily at task execution, so the role
+receives the real IP in `subject_alt_name_ip`.
 
 **Secret vars at provision time.** If any role in the booking has `secret_vars`, the worker
 decrypts them (all-or-nothing — if any key fails to decrypt, the booking goes `FAILED` immediately,

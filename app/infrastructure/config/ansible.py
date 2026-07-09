@@ -39,14 +39,29 @@ def _render_inventory(ip: str, password: str) -> str:
     return "[vm]\n" + " ".join(parts) + "\n"
 
 
-def _render_playbook(config_roles: list, secrets_path: str | None = None) -> str:
+def _render_playbook(
+    config_roles: list,
+    secrets_path: str | None = None,
+    extra_vars: dict | None = None,
+    label: str = "",
+    ip: str = "",
+) -> str:
     """Render a play whose roles come from the snapshot, each with its vars (inline JSON = YAML).
+
+    Injects a ``portal`` dict into play vars so every role can reference ``portal.ip``,
+    ``portal.label``, and any blueprint-level ``portal.<key>`` variables.
 
     When *secrets_path* is provided, secrets are loaded via a no_log include_vars task rather
     than play-level vars_files + no_log. Play-level no_log would censor every task's output,
     making failures from unrelated tasks completely opaque.
     """
     lines = ["- hosts: vm", "  become: true", "  gather_facts: true"]
+    # portal dict: user extra_vars first, then auto-injected label/ip so they can't be overridden.
+    portal = {**(extra_vars or {}), "label": label, "ip": ip}
+    portal_yaml = yaml.safe_dump({"portal": portal}, default_flow_style=False).rstrip()
+    lines.append("  vars:")
+    for ln in portal_yaml.splitlines():
+        lines.append(f"    {ln}")
     if secrets_path:
         # pre_tasks run before roles; tasks run after — secrets must be available to roles.
         lines.append("  pre_tasks:")
@@ -92,13 +107,19 @@ def _decrypt_all_secrets(config_roles: list) -> dict:
 class StubAnsibleRunner:
     """No-op runner for stub/dev mode — there is no real VM to configure."""
 
-    def apply_roles(self, booking, *, ip: str, password: str, on_progress=None) -> None:
+    def apply_roles(
+        self, booking, *, ip: str, password: str, on_progress=None,
+        extra_vars: dict | None = None, label: str = "",
+    ) -> None:
         if booking.config_roles:
             logger.info("StubAnsibleRunner: skipping %d role(s) for %s", len(booking.config_roles), booking.id)
 
 
 class AnsibleConfigRunner:
-    def apply_roles(self, booking, *, ip: str, password: str, on_progress=None) -> None:
+    def apply_roles(
+        self, booking, *, ip: str, password: str, on_progress=None,
+        extra_vars: dict | None = None, label: str = "",
+    ) -> None:
         roles = booking.config_roles or []
         if not roles:
             return
@@ -120,7 +141,8 @@ class AnsibleConfigRunner:
                 secrets_file.chmod(0o600)
                 secrets_path = str(secrets_file)
 
-            play.write_text(_render_playbook(roles, secrets_path=secrets_path))
+            play.write_text(_render_playbook(roles, secrets_path=secrets_path,
+                                            extra_vars=extra_vars, label=label, ip=ip))
             cmd = ["ansible-playbook", "-i", str(inv), str(play)]
             if settings.ANSIBLE_VERBOSITY > 0:
                 cmd.append("-" + "v" * min(settings.ANSIBLE_VERBOSITY, 3))

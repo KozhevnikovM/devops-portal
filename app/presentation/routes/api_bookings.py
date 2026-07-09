@@ -4,6 +4,7 @@ The browser's HTMX routes live in `bookings.py` and return HTML fragments; this 
 canonical API surface for clients (Jenkins/CI). Both share the same application use cases so the
 two never drift.
 """
+import re
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -52,6 +53,8 @@ class CreateBookingRequest(BaseModel):
     startup_script: str | None = None
     # Optional Ansible roles (catalog names) applied to the VM after the startup script.
     roles: list[str] | None = None
+    # Blueprint-level vars injected into every role as portal.* ansible variables.
+    vars: dict | None = None
     namespace_id: UUID | None = None
     # Order a specific namespace by its (name, cluster) pair instead of namespace_id.
     namespace_name: str | None = None
@@ -235,11 +238,19 @@ async def create_booking(
                 {"name": role.name, "ansible_role": role.ansible_role, "vars": role.default_vars or {},
                  "secret_vars": role.secret_vars if settings.SECRET_VARS_ENABLED else {}}
             )
+        extra_vars = body.vars or {}
+        _var_re = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
+        for key in extra_vars:
+            if not _var_re.match(key):
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"invalid var name '{key}': must match [a-zA-Z_][a-zA-Z0-9_]*",
+                )
         try:
             booking = await _create_use_case.execute(
                 session, body.ttl_minutes, image_id, hw_config_id,
                 user_id=owner_id, created_by=created_by, startup_script=body.startup_script,
-                config_roles=config_roles,
+                config_roles=config_roles, extra_vars=extra_vars,
             )
         except QuotaExceededError as exc:
             raise HTTPException(status_code=409, detail=str(exc))

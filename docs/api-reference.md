@@ -402,6 +402,7 @@ Create a new booking. A booking is one of:
 | `hw_config_name` | string | VM | Hardware configuration by name (alternative to `hw_config_id`) |
 | `startup_script` | string | No | Bash script run on the VM over SSH after provisioning (VM only); see below |
 | `roles` | string[] | No | Ansible role **names** applied to the VM after the startup script (VM only); see below |
+| `vars` | object | No | Blueprint-level variables injected into roles as `portal.*` (VM only); see below |
 | `namespace_id` | UUID | No | A specific namespace by id; omit for "Any available" |
 | `namespace_name` | string | No | A specific namespace by name (with `cluster_name`); see below |
 | `cluster_name` | string | No | The cluster the named namespace lives on |
@@ -435,6 +436,13 @@ Create a new booking. A booking is one of:
 > VM). An unknown/inactive role name → `400`. A role run that fails (VM reachable) → `READY` flagged
 > `config_failed`, like a failed script; an unreachable VM → `FAILED`. Roles must be idempotent.
 > The applied role names appear in the `roles` field of `GET /api/bookings`.
+
+> **Role variables (`vars`).** Pass a `vars` object alongside `roles` to inject per-booking
+> variables into every role. Inside your role, access them as `{{ portal.<key> }}`. Two variables are
+> always present: **`portal.ip`** (the VM's IP, set after provisioning) and **`portal.label`** (the
+> VM's label in the blueprint, or `""` for a standalone booking). User-supplied `ip`/`label` keys are
+> silently overridden by the auto-injected values. Variable names must be valid Python/Ansible
+> identifiers (`[a-zA-Z_][a-zA-Z0-9_]*`); a name with a hyphen → `422`.
 
 > **Ordering on behalf of a user (dispatcher).** A caller whose role is `dispatcher` or `admin` may
 > add **`on_behalf_of`** (a target **username**) to order a resource *for that user*: the booking's
@@ -1257,8 +1265,10 @@ List environment blueprints — admin-defined templates bundling several resourc
 ```
 
 Each item's `spec` carries the per-type fields (catalog entries **by name**): VM →
-`image_name`/`hw_config_name`/`roles`/`startup_script`; STATIC_VM → `static_vm_name` (null = any);
-NAMESPACE → `namespace_name`/`cluster_name` (null = any). Names are **not** resolved at create time
+`image_name`/`hw_config_name`/`roles`/`startup_script`/`vars`; STATIC_VM → `static_vm_name`
+(null = any); NAMESPACE → `namespace_name`/`cluster_name` (null = any). `vars` is a flat
+object whose keys are injected into every role as `portal.<key>` (see *Role variables* above);
+variable names must match `[a-zA-Z_][a-zA-Z0-9_]*` → `400` otherwise. Names are **not** resolved at create time
 (a blueprint may reference a catalog entry added later) — they're resolved when the blueprint is
 *ordered* (a later 0.8.0 item).
 
