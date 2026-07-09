@@ -93,6 +93,13 @@ class UserRepository:
         await session.refresh(m)
         return _to_user(m)
 
+    async def update_password(self, session: AsyncSession, user_id: uuid.UUID, new_hash: str) -> None:
+        result = await session.execute(select(UserModel).where(UserModel.id == user_id))
+        m = result.scalar_one_or_none()
+        if m:
+            m.password_hash = new_hash
+            await session.commit()
+
     async def update_timezone(self, session: AsyncSession, user_id: uuid.UUID, tz: str) -> None:
         result = await session.execute(select(UserModel).where(UserModel.id == user_id))
         m = result.scalar_one_or_none()

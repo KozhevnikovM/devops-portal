@@ -128,6 +128,25 @@ Valid `role` values: `"admin"`, `"user"`.
 
 ---
 
+### `POST /api/users/{user_id}/password`
+
+Reset any user's password. Invalidates all of that user's active sessions.
+
+**Auth:** admin only.
+
+**Request body:**
+```json
+{ "new_password": "at-least-8-chars" }
+```
+
+**Responses:**
+
+- `204 No Content` — password changed, all sessions invalidated
+- `404 Not Found` — user not found
+- `422 Unprocessable Entity` — `new_password` shorter than 8 characters
+
+---
+
 ### `POST /api/users/{user_id}/api-keys`
 
 Create an API key for a user. The raw key is returned **once** — it cannot be retrieved again.
