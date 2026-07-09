@@ -383,6 +383,26 @@ curl -s http://localhost:8000/api/users \
      -H "Authorization: Bearer dp_<api_key>" | python3 -m json.tool
 ```
 
+### Changing and resetting passwords
+
+**Users** can change their own password from the profile page (**top-right menu → Profile → Change Password**). The form requires the current password and a new password (minimum 8 characters). On success, all other sessions for that user are invalidated; the current browser session stays alive.
+
+**Admins** can reset any user's password without knowing the current one.
+
+Via the UI: navigate to **Admin → Users**, click **Reset pw** on the target row, enter the new password, and click **Reset**. All of that user's sessions are immediately invalidated.
+
+Via the API:
+
+```bash
+curl -s -X POST http://localhost:8000/api/users/<user-id>/password \
+     -H "Content-Type: application/json" \
+     -H "Authorization: Bearer dp_<admin_api_key>" \
+     -d '{"new_password": "new-strong-password"}'
+# → 204 No Content on success
+```
+
+The reset invalidates every active session for that user — they must log in again.
+
 ### Dispatcher role (order on behalf of others)
 
 A user whose role is **`dispatcher`** can order resources **for another user** — a CI pipeline holds

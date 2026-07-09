@@ -37,6 +37,21 @@ def _get_redis() -> aioredis.Redis:
     return aioredis.from_url(settings.REDIS_URL, decode_responses=True)
 
 
+async def _invalidate_user_sessions(
+    r: aioredis.Redis,
+    user_id: str,
+    keep_session_id: str | None = None,
+) -> None:
+    session_ids = await r.smembers(f"user_sessions:{user_id}")
+    to_delete = [sid for sid in session_ids if sid != keep_session_id]
+    if to_delete:
+        await r.delete(*[f"session:{sid}" for sid in to_delete])
+    await r.delete(f"user_sessions:{user_id}")
+    if keep_session_id:
+        await r.sadd(f"user_sessions:{user_id}", keep_session_id)
+        await r.expire(f"user_sessions:{user_id}", settings.SESSION_TTL)
+
+
 # A fixed dummy hash (same cost factor as real hashes) compared on the username-miss path so
 # login spends the same bcrypt time whether or not the user exists — closes the timing oracle (#146).
 _DUMMY_PASSWORD_HASH = bcrypt.hashpw(b"timing-equalizer", bcrypt.gensalt()).decode()
@@ -75,6 +90,8 @@ async def login(
         settings.SESSION_TTL,
         json.dumps({"user_id": str(user.id), "username": user.username, "role": user.role}),
     )
+    await r.sadd(f"user_sessions:{user.id}", session_id)
+    await r.expire(f"user_sessions:{user.id}", settings.SESSION_TTL)
     await r.aclose()
 
     response = RedirectResponse(url="/", status_code=302)
@@ -93,6 +110,14 @@ async def logout(request: Request):
     session_id = request.cookies.get("session_id")
     if session_id:
         r = _get_redis()
+        raw = await r.get(f"session:{session_id}")
+        if raw:
+            try:
+                user_id = json.loads(raw).get("user_id")
+                if user_id:
+                    await r.srem(f"user_sessions:{user_id}", session_id)
+            except (ValueError, KeyError):
+                pass
         await r.delete(f"session:{session_id}")
         await r.aclose()
 
@@ -144,6 +169,31 @@ async def create_user(
     return UserResponse(id=user.id, username=user.username, role=user.role, is_active=user.is_active)
 
 
+# ── Password management ───────────────────────────────────────────────────────
+
+class PasswordReset(BaseModel):
+    new_password: str
+
+
+@router.post("/api/users/{user_id}/password", status_code=204)
+async def admin_reset_password(
+    user_id: UUID,
+    body: PasswordReset,
+    session: AsyncSession = Depends(get_async_session),
+    _: User = Depends(require_admin),
+):
+    if len(body.new_password) < 8:
+        raise HTTPException(status_code=422, detail="new_password must be at least 8 characters")
+    user = await _user_repo.get(session, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    new_hash = bcrypt.hashpw(body.new_password.encode(), bcrypt.gensalt()).decode()
+    await _user_repo.update_password(session, user_id, new_hash)
+    r = _get_redis()
+    await _invalidate_user_sessions(r, str(user_id))
+    await r.aclose()
+
+
 # ── API key management ────────────────────────────────────────────────────────
 
 class APIKeyCreate(BaseModel):
@@ -190,7 +240,14 @@ async def revoke_api_key(
 
 # ── Admin UI ─────────────────────────────────────────────────────────────────
 
-async def _user_table(request, session, current_user, editing_quota_user_id=None):
+async def _user_table(
+    request,
+    session,
+    current_user,
+    editing_quota_user_id=None,
+    editing_password_user_id=None,
+    password_reset_error=None,
+):
     users = await _user_repo.list_all(session)
     quotas = {
         str(u.id): await _quota_repo.get_limits(session, str(u.id))
@@ -203,6 +260,8 @@ async def _user_table(request, session, current_user, editing_quota_user_id=None
             "quotas": quotas,
             "current_user": current_user,
             "editing_quota_user_id": editing_quota_user_id,
+            "editing_password_user_id": editing_password_user_id,
+            "password_reset_error": password_reset_error,
         },
     )
 
@@ -293,6 +352,41 @@ async def admin_quota_edit_form(
     return await _user_table(request, session, current_user, editing_quota_user_id=str(user_id))
 
 
+@router.get("/admin/users/{user_id}/password/edit", response_class=HTMLResponse)
+async def admin_password_edit_form(
+    request: Request,
+    user_id: UUID,
+    session: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(require_admin),
+):
+    return await _user_table(request, session, current_user, editing_password_user_id=str(user_id))
+
+
+@router.post("/admin/users/{user_id}/password", response_class=HTMLResponse)
+async def admin_reset_user_password_ui(
+    request: Request,
+    user_id: UUID,
+    new_password: str = Form(...),
+    session: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(require_admin),
+):
+    if len(new_password) < 8:
+        return await _user_table(
+            request, session, current_user,
+            editing_password_user_id=str(user_id),
+            password_reset_error="Password must be at least 8 characters.",
+        )
+    user = await _user_repo.get(session, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    new_hash = bcrypt.hashpw(new_password.encode(), bcrypt.gensalt()).decode()
+    await _user_repo.update_password(session, user_id, new_hash)
+    r = _get_redis()
+    await _invalidate_user_sessions(r, str(user_id))
+    await r.aclose()
+    return await _user_table(request, session, current_user)
+
+
 @router.patch("/admin/users/{user_id}/quota", response_class=HTMLResponse)
 async def admin_set_quota(
     request: Request,
@@ -379,6 +473,40 @@ async def profile_save_defaults(
     refreshed = await _user_repo.get(session, current_user.id)
     ctx = await _profile_context(request, session, refreshed, defaults_saved=True)
     return templates.TemplateResponse(request, "partials/booking_defaults.html", ctx)
+
+
+# ── Self-service password change ──────────────────────────────────────────────
+
+@router.post("/profile/password", response_class=HTMLResponse)
+async def change_password(
+    request: Request,
+    current_password: str = Form(...),
+    new_password: str = Form(...),
+    session: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(require_user),
+):
+    def _card(*, error: str | None = None, saved: bool = False):
+        return templates.TemplateResponse(
+            request, "partials/change_password.html",
+            {"password_error": error, "password_saved": saved, "current_user": current_user},
+        )
+
+    if len(new_password) < 8:
+        return _card(error="New password must be at least 8 characters.")
+
+    db_user = await _user_repo.get(session, current_user.id)
+    if not db_user or not bcrypt.checkpw(current_password.encode(), db_user.password_hash.encode()):
+        return _card(error="Current password is incorrect.")
+
+    new_hash = bcrypt.hashpw(new_password.encode(), bcrypt.gensalt()).decode()
+    await _user_repo.update_password(session, current_user.id, new_hash)
+
+    session_id = request.cookies.get("session_id")
+    r = _get_redis()
+    await _invalidate_user_sessions(r, str(current_user.id), keep_session_id=session_id)
+    await r.aclose()
+
+    return _card(saved=True)
 
 
 # ── Quota management ──────────────────────────────────────────────────────────
