@@ -70,6 +70,14 @@ class Role:
     default_vars: dict         # admin-set Ansible variables for this role
     is_active: bool
     created_at: datetime
+    secret_vars: dict = field(default_factory=dict)  # per-key Fernet-encrypted blob; never log values
+
+    def __repr__(self) -> str:
+        keys = sorted(self.secret_vars.keys()) if self.secret_vars else []
+        return (
+            f"Role(id={self.id!r}, name={self.name!r}, ansible_role={self.ansible_role!r}, "
+            f"is_active={self.is_active!r}, secret_vars_keys={keys!r})"
+        )
 
 
 @dataclass
@@ -149,6 +157,7 @@ class Booking:
     status_message: str | None = None
     startup_script: str | None = None
     config_roles: list = field(default_factory=list)  # snapshot: [{name, ansible_role, vars}]
+    extra_vars: dict = field(default_factory=dict)    # blueprint-level vars injected into ansible portal dict
     config_failed: bool = False
     environment_id: UUID | None = None  # parent Environment, when ordered as part of a stack
     environment_label: str | None = None  # blueprint item label (e.g. "web") within the stack

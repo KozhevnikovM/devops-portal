@@ -58,7 +58,8 @@ def _make_use_case(blueprint, create_returns=None, static_returns=None, ns_retur
     image_repo = MagicMock(get_by_name=AsyncMock(return_value=SimpleNamespace(id=uuid4())))
     hw_repo = MagicMock(get_by_name=AsyncMock(return_value=SimpleNamespace(id=uuid4())))
     role_repo = MagicMock(get_by_name=AsyncMock(
-        return_value=SimpleNamespace(name="docker-machine", ansible_role="docker_machine", default_vars={})))
+        return_value=SimpleNamespace(name="docker-machine", ansible_role="docker_machine",
+                                     default_vars={}, secret_vars={})))
     svm_repo = MagicMock(get_by_name=AsyncMock(return_value=SimpleNamespace(id=uuid4())))
     dispatcher = MagicMock()
     from app.application.use_cases.order_environment import OrderEnvironmentUseCase
@@ -301,13 +302,14 @@ def test_api_order_unknown_pair_409(client):
     assert resp.status_code == 409
 
 
-def test_api_get_environment_403_for_non_owner(client):
+def test_api_get_environment_200_for_any_authenticated_user(client):
     env = Environment(id=uuid4(), name="e", blueprint_name=None, user_id="someone-else",
                       ttl_minutes=1, expires_at=datetime.now(timezone.utc), created_at=datetime.now(timezone.utc))
     with patch("app.presentation.routes.api_environments._env_repo") as repo:
         repo.get = AsyncMock(return_value=env)
         resp = client.get(f"/api/environments/{env.id}")
-    assert resp.status_code == 403
+    assert resp.status_code == 200
+    assert resp.json()["id"] == str(env.id)
 
 
 # ── Namespace adoption (#adopt-existing-namespace) ─────────────────────────────
@@ -365,7 +367,8 @@ def _make_use_case_with_ns_repo(
     image_repo = MagicMock(get_by_name=AsyncMock(return_value=SimpleNamespace(id=uuid4())))
     hw_repo = MagicMock(get_by_name=AsyncMock(return_value=SimpleNamespace(id=uuid4())))
     role_repo = MagicMock(get_by_name=AsyncMock(
-        return_value=SimpleNamespace(name="docker-machine", ansible_role="docker_machine", default_vars={})))
+        return_value=SimpleNamespace(name="docker-machine", ansible_role="docker_machine",
+                                     default_vars={}, secret_vars={})))
     svm_repo = MagicMock(get_by_name=AsyncMock(return_value=SimpleNamespace(id=uuid4())))
     dispatcher = MagicMock()
 

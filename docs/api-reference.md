@@ -402,6 +402,7 @@ Create a new booking. A booking is one of:
 | `hw_config_name` | string | VM | Hardware configuration by name (alternative to `hw_config_id`) |
 | `startup_script` | string | No | Bash script run on the VM over SSH after provisioning (VM only); see below |
 | `roles` | string[] | No | Ansible role **names** applied to the VM after the startup script (VM only); see below |
+| `vars` | object | No | Blueprint-level variables injected into roles as `portal.*` (VM only); see below |
 | `namespace_id` | UUID | No | A specific namespace by id; omit for "Any available" |
 | `namespace_name` | string | No | A specific namespace by name (with `cluster_name`); see below |
 | `cluster_name` | string | No | The cluster the named namespace lives on |
@@ -435,6 +436,13 @@ Create a new booking. A booking is one of:
 > VM). An unknown/inactive role name → `400`. A role run that fails (VM reachable) → `READY` flagged
 > `config_failed`, like a failed script; an unreachable VM → `FAILED`. Roles must be idempotent.
 > The applied role names appear in the `roles` field of `GET /api/bookings`.
+
+> **Role variables (`vars`).** Pass a `vars` object alongside `roles` to inject per-booking
+> variables into every role. Inside your role, access them as `{{ portal.<key> }}`. Two variables are
+> always present: **`portal.ip`** (the VM's IP, set after provisioning) and **`portal.label`** (the
+> VM's label in the blueprint, or `""` for a standalone booking). User-supplied `ip`/`label` keys are
+> silently overridden by the auto-injected values. Variable names must be valid Python/Ansible
+> identifiers (`[a-zA-Z_][a-zA-Z0-9_]*`); a name with a hyphen → `422`.
 
 > **Ordering on behalf of a user (dispatcher).** A caller whose role is `dispatcher` or `admin` may
 > add **`on_behalf_of`** (a target **username**) to order a resource *for that user*: the booking's
@@ -1148,7 +1156,7 @@ also appear in `GET /api/bookings`, carrying their `environment_id`.
 
 ### `GET /api/environments` and `GET /api/environments/{id}`
 
-List environments (owner-scoped; admins see all) / fetch one (owner or admin; `403`/`404` otherwise),
+List environments (owner-scoped; admins see all) / fetch one (any authenticated user; `404` if not found),
 each with the derived status + child summaries.
 
 ### `GET /api/environments/by-namespace/{namespace_name}`
@@ -1161,8 +1169,7 @@ disambiguates a name reused across clusters (namespace names are unique only *pe
 
 | Outcome | Status |
 |---------|--------|
-| Caller owns / dispatched the environment, or is admin | `200` — same body as `GET …/{id}` |
-| It belongs to another user | `409` `namespace '<name>' is in use by another user's environment` (the owner is **not** disclosed) |
+| Any authenticated caller | `200` — same body as `GET …/{id}` |
 | No active environment holds that namespace (unknown, free, or a standalone non-environment namespace booking) | `404` |
 | The name is held on **multiple clusters** and no `cluster` given | `400` — specify `?cluster=` |
 
@@ -1175,34 +1182,54 @@ curl -s "http://localhost:8000/api/environments/by-namespace/dev1?cluster=prod-c
 
 ### `GET /api/environments/by-namespace/{namespace_name}/allowed-to-user`
 
-Check whether the live environment holding a namespace belongs to a **named user** — a one-call
-yes/no, e.g. a dispatcher verifying "can `john` use the environment on namespace `dev1`?". Required
-query param **`user`** (username); optional **`cluster`** disambiguates a name across clusters.
+Check whether a namespace is available to a **named user** — e.g. a dispatcher verifying "can
+`john` use the environment on namespace `dev1`?". Required query param **`user`** (username);
+optional **`cluster`** disambiguates a name reused across clusters.
 
-| Outcome | Status |
-|---------|--------|
-| The namespace's environment is owned by `user` | `202` — body `{ "namespace": "...", "user": "...", "match": true }` |
-| Owned by someone else, **or** no active environment holds the namespace | `423 Locked` (the real owner is **not** disclosed) |
-| `user` omitted | `422` |
-| Name held on **multiple clusters** with no `cluster` | `400` — specify `?cluster=` |
+| Outcome | Status | Body |
+|---------|--------|------|
+| Namespace held by `user` | `202` | `{ "match": true,  "vacant": false, "namespace_id": "<uuid>", "environment_id": "<uuid>", ... }` |
+| Namespace is vacant (no active environment holds it) | `202` | `{ "match": false, "vacant": true,  "namespace_id": "<uuid\|null>", "environment_id": null, ... }` |
+| Namespace held by a **different** user | `423 Locked` | real owner **not** disclosed |
+| `user` omitted | `422` | — |
+| Name held on multiple clusters with no `?cluster=` | `400` | specify `?cluster=` |
 
-**Auth:** any authenticated user. Read-only equality check — it reveals only `true`/`false` for the
-(namespace, user) pair you name and never vends the environment or its secrets.
+`namespace_id` is the catalog UUID of the namespace (`null` if the name isn't in the catalog at
+all). `environment_id` is the UUID of the environment currently holding the namespace (`null` when
+vacant).
+
+**Auth:** any authenticated user. Read-only — never discloses the environment's owner or secrets.
 
 ```bash
-curl -s -o /dev/null -w "%{http_code}\n" \
+curl -s \
   "http://localhost:8000/api/environments/by-namespace/dev1/allowed-to-user?user=john" \
   -H "Authorization: Bearer <key>"
-# 202 → dev1's environment is john's   |   423 → it isn't (or dev1 isn't in any environment)
+# 202 { match: true,  vacant: false, namespace_id: "…", environment_id: "…" }  → john owns dev1
+# 202 { match: false, vacant: true,  namespace_id: "…", environment_id: null } → dev1 is free
+# 423                                                                           → held by someone else
 ```
 
 ### `DELETE /api/environments/{id}`
 
 Release a whole environment — tears down **all** its child resources together (provisioned VMs →
 `RELEASING` + teardown, pooled → back to the pool, queued → cancelled), including in-flight children.
-**Auth:** owner or admin (`403`/`404` otherwise). **Response:** `202` with the environment (children
-now `RELEASING`/`RELEASED`); idempotent if already released. The environment's TTL expiring triggers
-the same grouped teardown automatically.
+**Auth:** owner, admin, or dispatcher acting on behalf of the owner (see below). **Response:** `202`
+with the environment (children now `RELEASING`/`RELEASED`); idempotent if already released. The
+environment's TTL expiring triggers the same grouped teardown automatically.
+
+**Dispatcher delegation** — a user with `role=dispatcher` (or `admin`) may release an environment
+they did not create by passing the owner's username:
+
+```
+DELETE /api/environments/{id}?on_behalf_of=alice
+```
+
+| Scenario | Result |
+|---|---|
+| `on_behalf_of` absent | existing behaviour — owner / admin / original-dispatcher only |
+| `role=user`, `on_behalf_of` set | `403` — only dispatchers may delegate |
+| Dispatcher, correct owner username | `202` — environment released |
+| Dispatcher, wrong owner username | `403` |
 
 > **Browser UI:** the **Environments** page (`GET /environments`, in the top nav) lets users order a
 > blueprint, watch the stack come up (HTMX polling), and release it — the same operations as the JSON
@@ -1238,8 +1265,10 @@ List environment blueprints — admin-defined templates bundling several resourc
 ```
 
 Each item's `spec` carries the per-type fields (catalog entries **by name**): VM →
-`image_name`/`hw_config_name`/`roles`/`startup_script`; STATIC_VM → `static_vm_name` (null = any);
-NAMESPACE → `namespace_name`/`cluster_name` (null = any). Names are **not** resolved at create time
+`image_name`/`hw_config_name`/`roles`/`startup_script`/`vars`; STATIC_VM → `static_vm_name`
+(null = any); NAMESPACE → `namespace_name`/`cluster_name` (null = any). `vars` is a flat
+object whose keys are injected into every role as `portal.<key>` (see *Role variables* above);
+variable names must match `[a-zA-Z_][a-zA-Z0-9_]*` → `400` otherwise. Names are **not** resolved at create time
 (a blueprint may reference a catalog entry added later) — they're resolved when the blueprint is
 *ordered* (a later 0.8.0 item).
 
@@ -1271,11 +1300,72 @@ creating/updating/deleting roles requires **admin**.
 ```
 
 A role pairs a catalog `name` with an Ansible role directory (`ansible_role`, under
-`ansible/roles/`) and admin-set `default_vars`. Roles will be applied to a VM during configuration
-(a later 0.8.0 item lets you order a VM with `roles: [...]`).
+`ansible/roles/`) and admin-set `default_vars`. Roles may also carry `secret_vars` — sensitive
+Ansible variables (passwords, tokens) stored Fernet-encrypted in the DB and injected at provision
+time via a `vars_files:` temp file (never inline in the playbook). Requires `SECRETS_ENCRYPTION_KEY`
+env var; controlled by `SECRET_VARS_ENABLED` feature flag.
 
 **Admin write endpoints:** `POST /api/roles` (201), `PATCH /api/roles/{id}`,
-`DELETE /api/roles/{id}` (deactivate). `default_vars` must be a JSON object; duplicate `name` → `409`.
+`DELETE /api/roles/{id}` (deactivate). `default_vars` and `secret_vars` must be JSON objects;
+duplicate `name` → `409`. `secret_vars` is **write-only** — `GET /api/roles` and `RoleResponse`
+never return secret values. On `PATCH`, omitting `secret_vars` keeps existing secrets; `{}` clears them.
+
+| Condition | Outcome |
+|---|---|
+| `SECRET_VARS_ENABLED=false` | `secret_vars` accepted but ignored |
+| `secret_vars` non-empty, key absent | `422` — fail-closed, never stores plaintext |
+| Wrong key on worker at provision time | Booking goes `FAILED` immediately, no retries |
+
+---
+
+### `GET /api/namespaces`
+
+List namespaces from the catalog. **Auth:** any authenticated user.
+
+**Query params:**
+
+| Param | Values | Default | Meaning |
+|---|---|---|---|
+| `filter` | `active`, `available` | `active` | `active` → all active namespaces; `available` → active and not currently held by any booking |
+| `username` | string | — | Narrow to namespaces currently held by that username |
+| `not_username` | string | — | Exclude namespaces held by that username |
+
+`username` and `not_username` are mutually exclusive (`400` if both are supplied).
+Unknown `filter` value → `400`.
+
+**Response:** `200` array:
+
+```json
+[
+  {
+    "id": "uuid",
+    "name": "team-a-dev",
+    "cluster_name": "prod-cluster",
+    "api_url": "https://k8s.example.com",
+    "is_active": true,
+    "created_at": "2026-01-01T00:00:00Z"
+  }
+]
+```
+
+**Examples:**
+```bash
+# All active namespaces
+curl -s http://localhost:8000/api/namespaces \
+     -H "Authorization: Bearer dp_<api_key>"
+
+# Only unoccupied namespaces
+curl -s "http://localhost:8000/api/namespaces?filter=available" \
+     -H "Authorization: Bearer dp_<api_key>"
+
+# Namespaces currently held by alice
+curl -s "http://localhost:8000/api/namespaces?username=alice" \
+     -H "Authorization: Bearer dp_<api_key>"
+
+# Active namespaces NOT held by alice
+curl -s "http://localhost:8000/api/namespaces?not_username=alice" \
+     -H "Authorization: Bearer dp_<api_key>"
+```
 
 ---
 

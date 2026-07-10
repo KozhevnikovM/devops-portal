@@ -1,3 +1,4 @@
+import re
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -7,10 +8,22 @@ from app.application.ports import (
     ImageRepositoryPort, NamespaceRepositoryPort, RoleRepositoryPort, StaticVMRepositoryPort,
     TaskDispatcher,
 )
+from app.config import settings
 from app.domain.entities import Environment
 from app.domain.enums import BookingStatus, ResourceType
 from app.domain.exceptions import BlueprintNotFoundError, EnvironmentItemError, NamespaceUnavailableError
 from app.domain.lease import Lease
+
+
+_VAR_NAME_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
+
+
+def _validate_extra_vars(vars_: dict) -> None:
+    for key in vars_:
+        if not _VAR_NAME_RE.match(key):
+            raise EnvironmentItemError(
+                f"invalid var name '{key}': must match [a-zA-Z_][a-zA-Z0-9_]*"
+            )
 
 
 class OrderEnvironmentUseCase:
@@ -169,10 +182,13 @@ class OrderEnvironmentUseCase:
                 if role is None:
                     raise EnvironmentItemError(f"no role named '{role_name}'")
                 config_roles.append(
-                    {"name": role.name, "ansible_role": role.ansible_role, "vars": role.default_vars or {}}
+                    {"name": role.name, "ansible_role": role.ansible_role, "vars": role.default_vars or {},
+                     "secret_vars": role.secret_vars if settings.SECRET_VARS_ENABLED else {}}
                 )
+            extra_vars = spec.get("vars") or {}
+            _validate_extra_vars(extra_vars)
             return {"image_id": image.id, "hw_config_id": hw.id, "config_roles": config_roles,
-                    "startup_script": spec.get("startup_script")}
+                    "startup_script": spec.get("startup_script"), "extra_vars": extra_vars}
         if rt == ResourceType.STATIC_VM.value:
             static_vm_id = None
             if spec.get("static_vm_name"):
@@ -194,6 +210,7 @@ class OrderEnvironmentUseCase:
             return await self._create.execute(
                 session, ttl_minutes, res["image_id"], res["hw_config_id"], user_id=user_id,
                 startup_script=res["startup_script"], config_roles=res["config_roles"],
+                extra_vars=res.get("extra_vars", {}),
                 environment_id=env_id, environment_label=label, created_by=created_by, dispatch=False,
             )
         if rt == ResourceType.STATIC_VM.value:

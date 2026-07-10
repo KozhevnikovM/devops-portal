@@ -19,6 +19,7 @@ class TerraformAdapter(Protocol):
         config: dict,
         api_token: str | None = None,
         on_progress: Callable[[str], None] | None = None,
+        force: bool = False,
     ) -> None:
         """Tear down resources for the given workspace."""
         ...

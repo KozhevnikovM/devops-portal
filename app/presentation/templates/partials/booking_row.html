@@ -153,6 +153,18 @@
                         >
                             Release
                         </button>
+                        {% if current_user.role == 'admin' and booking.status.value == 'FAILED' and booking.resource_type.value == 'VM' %}
+                        <div class="border-t border-gray-800"></div>
+                        <button
+                            class="w-full text-left px-3 py-2 text-sm text-orange-400 hover:bg-gray-800 transition-colors"
+                            hx-post="/admin/bookings/{{ booking.id }}/force-release"
+                            hx-target="#booking-{{ booking.id }}"
+                            hx-swap="outerHTML"
+                            hx-confirm="Force release this VM? Terraform errors will be ignored — any remaining cloud resource must be cleaned up manually in VCD."
+                        >
+                            Force release
+                        </button>
+                        {% endif %}
                     </div>
                 </details>
             {% else %}

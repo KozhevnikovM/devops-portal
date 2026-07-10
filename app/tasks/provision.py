@@ -9,6 +9,7 @@ import redis as redis_lib
 
 from app.config import settings
 from app.domain.enums import BookingStatus
+from app.domain.exceptions import SecretDecryptionError
 from app.infrastructure.celery_app import celery_app
 from app.infrastructure.database.session import SyncSessionLocal
 from app.infrastructure.repositories.booking_repo import BookingRepository
@@ -153,7 +154,11 @@ def provision_vm_task(self, booking_id: str, image_id: str, hw_config_id: str) -
                         config_runner.run_script(client, booking.startup_script, on_progress=_on_progress)
                     if booking.config_roles:
                         logger.info("Applying %d role(s) for booking %s", len(booking.config_roles), booking_id)
-                        ansible_runner.apply_roles(booking, ip=ip, password=vm_password, on_progress=_on_progress)
+                        ansible_runner.apply_roles(
+                            booking, ip=ip, password=vm_password, on_progress=_on_progress,
+                            extra_vars=booking.extra_vars or {},
+                            label=booking.environment_label or "",
+                        )
                 except _CONFIG_SOFTWARE_ERRORS as cfg_exc:
                     # VM is up but configuration failed — keep the VM, flag the failure.
                     config_failed = True
@@ -176,6 +181,16 @@ def provision_vm_task(self, booking_id: str, image_id: str, hw_config_id: str) -
                 booking_id, ip, config_failed,
             )
 
+        except SecretDecryptionError as exc:
+            # Permanent configuration error — wrong/missing SECRETS_ENCRYPTION_KEY.
+            # Do not retry; retries would all fail identically and delay the failure signal.
+            logger.error("Secret decryption failed for booking %s (not retrying): %s", booking_id, exc)
+            try:
+                _run(lambda s: repo.sync_set_status_message(s, booking_uuid, f"Secret decryption failed: {exc}"))
+                _run(lambda s: repo.sync_update_status(s, booking_uuid, BookingStatus.FAILED))
+            except Exception:
+                pass
+            return
         except Exception as exc:
             logger.error("Provisioning failed for booking %s: %s", booking_id, exc)
             is_last_attempt = self.request.retries >= self.max_retries

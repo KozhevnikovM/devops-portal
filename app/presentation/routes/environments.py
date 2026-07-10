@@ -2,11 +2,12 @@
 return HTML fragments and reuse the same use cases, so the two never drift."""
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Form, HTTPException, Request
+from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.entities import User
+from app.domain.enums import BookingStatus
 from app.domain.exceptions import (
     BlueprintNotFoundError, BookingPermissionError, EnvironmentItemError,
     NamespaceUnavailableError, QuotaExceededError, StaticVMUnavailableError,
@@ -29,21 +30,26 @@ def _annotate(env):
     return env
 
 
-async def _list_for(session, current_user):
-    if current_user.role == "admin":
+async def _list_for(session, current_user, *, filter: str = "mine", show_released: bool = False):
+    if filter == "all":
         envs = await _env_repo.list_all(session)
     else:
         envs = await _env_repo.list_by_user(session, str(current_user.id))
-    return [_annotate(e) for e in envs]
+    annotated = [_annotate(e) for e in envs]
+    if not show_released:
+        annotated = [e for e in annotated if e.derived_status != BookingStatus.RELEASED.value]
+    return annotated
 
 
 @router.get("/environments", response_class=HTMLResponse)
 async def environments_page(
     request: Request,
+    filter: str = "mine",
+    show_released: bool = False,
     session: AsyncSession = Depends(get_async_session),
     current_user: User = Depends(require_user),
 ):
-    environments = await _list_for(session, current_user)
+    environments = await _list_for(session, current_user, filter=filter, show_released=show_released)
     blueprints = await _blueprint_repo.list_active(session)
     available_namespaces = await _namespace_repo.list_available(session)
     held_namespaces = await _namespace_repo.list_held_standalone_by_user(session, str(current_user.id))
@@ -56,6 +62,8 @@ async def environments_page(
             "held_namespaces": held_namespaces,
             "current_user": current_user,
             "active_nav": "environment",
+            "active_filter": filter,
+            "show_released": show_released,
         },
     )
 
@@ -123,15 +131,30 @@ async def environment_row(
     )
 
 
+_DISPATCH_ROLES = {"dispatcher", "admin"}
+
+
 @router.delete("/environments/{environment_id}", response_class=HTMLResponse)
 async def release_environment(
     environment_id: UUID,
     request: Request,
+    on_behalf_of: str | None = Query(default=None),
     session: AsyncSession = Depends(get_async_session),
     current_user: User = Depends(require_user),
 ):
+    force = False
+    if on_behalf_of is not None:
+        if current_user.role not in _DISPATCH_ROLES:
+            raise HTTPException(status_code=403, detail="Only a dispatcher may act on behalf of another user")
+        try:
+            env = await _env_repo.get(session, environment_id)
+        except ValueError:
+            raise HTTPException(status_code=404, detail="Environment not found")
+        if env.owner_username != on_behalf_of:
+            raise HTTPException(status_code=403, detail=f"Environment is not owned by '{on_behalf_of}'")
+        force = True
     try:
-        env = await _release_use_case.execute(session, environment_id, current_user)
+        env = await _release_use_case.execute(session, environment_id, current_user, force=force)
     except EnvironmentNotFoundError:
         raise HTTPException(status_code=404, detail="Environment not found")
     except BookingPermissionError as exc:

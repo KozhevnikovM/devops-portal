@@ -27,13 +27,15 @@ class ReleaseEnvironmentUseCase:
         self._env_repo = env_repo
         self._release = release_booking_use_case
 
-    async def execute(self, session: AsyncSession, environment_id: UUID, current_user: User) -> Environment:
+    async def execute(
+        self, session: AsyncSession, environment_id: UUID, current_user: User, *, force: bool = False
+    ) -> Environment:
         try:
             env = await self._env_repo.get(session, environment_id)
         except ValueError:
             raise EnvironmentNotFoundError(f"Environment {environment_id} not found")
 
-        if not can_manage(owner_id=env.user_id, created_by=env.created_by, user=current_user):
+        if not force and not can_manage(owner_id=env.user_id, created_by=env.created_by, user=current_user):
             raise BookingPermissionError("Not the environment owner")
 
         for child in env.bookings:

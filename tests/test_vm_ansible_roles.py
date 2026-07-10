@@ -50,6 +50,7 @@ def test_apply_roles_runs_playbook():
          patch("app.infrastructure.config.ansible.settings") as s:
         s.VM_SSH_USER = "root"; s.VM_SSH_PORT = 22; s.VM_SSH_PRIVATE_KEY = ""
         s.ANSIBLE_ROLES_PATH = "/app/ansible/roles"; s.ANSIBLE_TIMEOUT = 60
+        s.ANSIBLE_VERBOSITY = 0
         runner.apply_roles(_booking(SNAPSHOT), ip="10.0.0.5", password="pw")
     # ansible-playbook was invoked.
     assert popen.call_args.args[0][0] == "ansible-playbook"
@@ -64,6 +65,7 @@ def test_apply_roles_nonzero_raises():
          patch("app.infrastructure.config.ansible.settings") as s:
         s.VM_SSH_USER = "root"; s.VM_SSH_PORT = 22; s.VM_SSH_PRIVATE_KEY = ""
         s.ANSIBLE_ROLES_PATH = "/app/ansible/roles"; s.ANSIBLE_TIMEOUT = 60
+        s.ANSIBLE_VERBOSITY = 0
         with pytest.raises(AnsibleConfigError):
             runner.apply_roles(_booking(SNAPSHOT), ip="10.0.0.5", password="pw")
 
@@ -104,7 +106,7 @@ def _vm_booking():
 
 def test_order_vm_with_roles_snapshots(client):
     booking = _vm_booking()
-    role = SimpleNamespace(name="docker-machine", ansible_role="docker_machine", default_vars={"v": 1})
+    role = SimpleNamespace(name="docker-machine", ansible_role="docker_machine", default_vars={"v": 1}, secret_vars={})
     with patch("app.presentation.routes.api_bookings._image_repo") as img, \
          patch("app.presentation.routes.api_bookings._hw_config_repo") as hw, \
          patch("app.presentation.routes.api_bookings._role_repo") as roles, \
@@ -121,7 +123,7 @@ def test_order_vm_with_roles_snapshots(client):
 
     assert resp.status_code == 201
     snapshot = uc.execute.call_args.kwargs["config_roles"]
-    assert snapshot == [{"name": "docker-machine", "ansible_role": "docker_machine", "vars": {"v": 1}}]
+    assert snapshot == [{"name": "docker-machine", "ansible_role": "docker_machine", "vars": {"v": 1}, "secret_vars": {}}]
 
 
 def test_order_vm_unknown_role_returns_400(client):
@@ -145,7 +147,7 @@ def test_roles_applied_after_script_clean_ready():
     bid, iid, hid = str(uuid4()), str(uuid4()), str(uuid4())
     mock_repo = MagicMock()
     mock_repo.sync_get = MagicMock(return_value=SimpleNamespace(
-        startup_script="echo hi", config_roles=SNAPSHOT))
+        startup_script="echo hi", config_roles=SNAPSHOT, extra_vars={}, environment_label=None))
     img = MagicMock(sync_get=MagicMock(return_value=SimpleNamespace(id=iid, name="U", vapp_template_id="t")))
     hw = MagicMock(sync_get=MagicMock(return_value=SimpleNamespace(
         id=hid, name="m", cpus=2, memory_mb=4096, disk_mb=26624, drive_type="HDD")))
@@ -178,7 +180,7 @@ def test_role_failure_is_ready_but_config_failed():
     bid, iid, hid = str(uuid4()), str(uuid4()), str(uuid4())
     mock_repo = MagicMock()
     mock_repo.sync_get = MagicMock(return_value=SimpleNamespace(
-        startup_script=None, config_roles=SNAPSHOT))
+        startup_script=None, config_roles=SNAPSHOT, extra_vars={}, environment_label=None))
     img = MagicMock(sync_get=MagicMock(return_value=SimpleNamespace(id=iid, name="U", vapp_template_id="t")))
     hw = MagicMock(sync_get=MagicMock(return_value=SimpleNamespace(
         id=hid, name="m", cpus=2, memory_mb=4096, disk_mb=26624, drive_type="HDD")))

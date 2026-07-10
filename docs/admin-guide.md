@@ -711,9 +711,49 @@ returns it to the pool. See **Booking Queue** below for what happens when the po
 Roles are reusable configuration units applied to a provisioned VM. Each entry records a `name`,
 the **Ansible role** directory it maps to (`ansible_role`, under `ansible/roles/`), an optional
 description, and **default variables** entered as a **JSON object** (invalid JSON is rejected
-inline). **Add** / **Edit** / **Deactivate** / **Activate** / **Delete** behave as for the other
-panels. A later 0.8.0 item lets users order a VM with selected roles (applied during the VM's
-`CONFIGURING` step, after the startup script).
+inline).
+
+Roles may also carry **secret variables** — sensitive Ansible variables (passwords, tokens, API
+keys) stored encrypted in the database. In the Edit form a **Secret vars** textarea accepts a JSON
+object; values are Fernet-encrypted before storage. The read view shows key names only
+(`db_password=●●● api_token=●●●`) — values are never rendered. On edit, **leave the field blank
+to keep existing secrets**; supply `{}` to clear them; supply a full JSON object to replace all.
+
+> **Requires `SECRETS_ENCRYPTION_KEY`** — generate once with
+> `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` and
+> set it in the environment. If the key is absent and a role has non-empty `secret_vars`, the
+> create/update is rejected (fail-closed — never stores plaintext).
+>
+> **Key rotation:** rotating `SECRETS_ENCRYPTION_KEY` bricks existing stored secrets (old ciphertext
+> can't be decrypted with a new key). Before rotating, re-enter all role `secret_vars` via the UI
+> after deploying the new key.
+
+#### Disabling secret vars (e.g. before migrating to Vault)
+
+The feature is controlled by the `SECRET_VARS_ENABLED` environment variable (default `true`).
+Setting it to `false` disables the feature across the whole stack without data loss:
+
+| Layer | Behaviour when disabled |
+|---|---|
+| Admin UI | Secret vars textarea and masked key list are hidden |
+| API (`POST`/`PATCH /api/roles`) | `secret_vars` field is accepted but silently ignored |
+| Booking snapshot | `secret_vars` always written as `{}` — new bookings carry no secrets |
+| Ansible runner | Decrypt/`secrets.yml` step is skipped unconditionally |
+| DB | `secret_vars` column and stored ciphertext are untouched — re-enabling restores them |
+
+**Steps to disable:**
+
+1. Set `SECRET_VARS_ENABLED=false` in your environment / `docker-compose.override.yml` and restart the app and worker.
+2. Verify: the Secret vars row is gone from the catalog UI; `POST /api/roles` with `secret_vars` succeeds but the field is ignored on read.
+3. Existing bookings already in `READY` state are unaffected (their VMs are provisioned).  New bookings provisioned while disabled will not receive any secrets.
+
+**Steps to re-enable** (or switch to a different secrets backend and flip the flag back):
+
+1. Ensure `SECRETS_ENCRYPTION_KEY` is set (same key as before if you want existing DB blobs to be usable, or a new key if you've cleared all `secret_vars` first).
+2. Set `SECRET_VARS_ENABLED=true` and restart.
+3. Re-enter any role secrets that were cleared during the disabled period.
+
+**Add** / **Edit** / **Deactivate** / **Activate** / **Delete** behave as for the other panels.
 
 **Environment Blueprints panel:**
 
@@ -782,6 +822,26 @@ Example items value for `dev-stack` (a pooled namespace + a Docker-host VM + a P
     "spec": { "image_name": "Ubuntu 22.04", "hw_config_name": "large", "roles": ["postgres-database"] } }
 ]
 ```
+
+**Passing variables to Ansible roles.** Add a `vars` dict to a VM item's `spec` to inject
+per-VM variables into every role that runs on that VM. They are available inside any role as
+`{{ portal.<key> }}`. Two variables are always injected automatically:
+
+- `portal.ip` — the VM's IP address (set after provisioning)
+- `portal.label` — the VM's label within the blueprint (e.g. `"web"`, `"db"`)
+
+```json
+{ "label": "web", "resource_type": "VM",
+  "spec": {
+    "image_name": "Ubuntu 22.04", "hw_config_name": "medium",
+    "roles": ["my-role"],
+    "vars": { "deploy_env": "prod", "replicas": 3 }
+  }
+}
+```
+
+Variable names must be valid identifiers (`[a-zA-Z_][a-zA-Z0-9_]*`); a name containing a
+hyphen (e.g. `my-var`) is rejected at order time with `400`.
 
 > **Names are resolved at order time, not on save.** `image_name`, `hw_config_name`, and each role
 > name must match active entries in the Catalog (Images, Hardware, Ansible Roles) — but a wrong name
@@ -913,7 +973,48 @@ panel). The worker is the Ansible control node: it renders a single-host invento
 the booking's role snapshot and runs `ansible-playbook` over SSH. A role run that fails (VM
 reachable) is treated like a failed script — `READY` + "⚠ configuration failed"; an unreachable VM
 is `FAILED`. Roles are **snapshotted** at order time, so editing a catalog role doesn't change a
-running VM. Requirements (real adapter only):
+running VM.
+
+**Using `portal.*` variables inside a role.** Every Ansible run injects a `portal` dict into
+the play vars. Two keys are always present:
+
+| Variable | Value |
+|---|---|
+| `portal.ip` | The VM's provisioned IP address |
+| `portal.label` | The VM's label in the blueprint (empty string for standalone bookings) |
+
+Any extra keys declared in the blueprint item's `spec.vars` (or in `vars` on a direct
+`POST /api/bookings`) are also available as `portal.<key>`.
+
+Use them directly in role tasks:
+
+```yaml
+# roles/generate_cert/tasks/main.yml
+- name: Generate cert
+  community.crypto.x509_certificate:
+    subject_alt_name: "IP:{{ portal.ip }}"
+```
+
+Or, if you have an existing role that expects its own variable name and you don't want to
+change the role, map via **Default vars** in the Ansible Roles catalog:
+
+```json
+{ "subject_alt_name_ip": "{{ portal.ip }}" }
+```
+
+The mapping is snapshotted at order time and rendered into the playbook as a role-level
+`vars:` block. Ansible evaluates `{{ portal.ip }}` lazily at task execution, so the role
+receives the real IP in `subject_alt_name_ip`.
+
+**Secret vars at provision time.** If any role in the booking has `secret_vars`, the worker
+decrypts them (all-or-nothing — if any key fails to decrypt, the booking goes `FAILED` immediately,
+no retries), merges them across all roles (last role wins on overlap), writes them to a
+`chmod 600` temp file, and injects `vars_files: [secrets.yml]` + `no_log: true` into the playbook
+so Ansible roles access secrets as normal `{{ var_name }}` variables without printing values in
+task output. The temp file is in a `0o700` temp directory that is deleted unconditionally after the
+run (whether it succeeds, fails, or the task is retried for other reasons).
+
+Requirements (real adapter only):
 
 - The worker image bundles `ansible-core`, `openssh-client`, and `sshpass` (password SSH).
 - **You write the roles.** The repo ships only two trivial **mock** roles under `ansible/roles/`
@@ -924,18 +1025,70 @@ running VM. Requirements (real adapter only):
 - Roles run with `become: true` — the `VM_SSH_USER` must be root or have passwordless `sudo`.
 
 **Ansible collections.** Collections your roles need go in `ansible/requirements.yml`; they're
-installed into `ANSIBLE_COLLECTIONS_PATH` (default `/app/ansible/collections`). The mock roles need
-none. For an **offline / air-gapped** build, pre-download the tarballs on a connected host and
-install from them with no network:
+installed into `ANSIBLE_COLLECTIONS_PATH` (default `/opt/ansible/collections`). The mock roles need
+none.
+
+Online install from ansible-galaxy is **disabled by default** (`ANSIBLE_GALAXY_ONLINE=false`).
+The standard workflow is to vendor tarballs on a connected host and ship them with the build:
 
 ```bash
-# connected host — vendor the tarballs
+# connected host — download tarballs
 ansible-galaxy collection download -r ansible/requirements.yml -p ansible/collections/vendor
-# air-gapped build — point the build at the vendored requirements.yml
-ANSIBLE_COLLECTIONS_REQUIREMENTS=ansible/collections/vendor/requirements.yml docker compose build
+# build host (no internet required) — tarballs are installed automatically
+docker compose build
+```
+
+If your build host does have internet access and you want ansible-galaxy to pull collections
+directly during the build, pass `ANSIBLE_GALAXY_ONLINE=true`:
+
+```bash
+ANSIBLE_GALAXY_ONLINE=true docker compose build
 ```
 
 (`ansible/collections/` contents are gitignored; ship the `vendor/` directory to the build host.)
+
+> **Important**: download to a *subdirectory* of `ansible/collections/` (e.g. `vendor/`), not to
+> `ansible/collections/` itself. Placing tarballs directly in `ansible/collections/` skips the
+> `requirements.yml` generated by `collection download`, which is what maps each tarball to its
+> install path. If tarballs do end up in `ansible/collections/` directly, the image build will
+> still install them via a fallback — but the documented `vendor/` workflow is preferred.
+
+**Adding a collection without rebuilding the image.** If a new role needs a collection that was
+not installed at build time, drop the tarball into `ansible/collections/` on the host and restart
+the worker:
+
+```bash
+cp community.crypto-3.2.2.tar.gz ansible/collections/
+docker compose restart worker
+```
+
+The worker entrypoint re-runs the tarball install step before starting Celery, so the new
+collection is available without a full image rebuild. The server does not need internet access —
+only the tarball is required.
+
+**Debugging ansible failures.** When a role run fails, the worker logs the last 20 lines of
+`ansible-playbook` output at `WARNING` level. To see the full output, run the worker with
+`CELERY_LOG_LEVEL=DEBUG` — every line is logged at `DEBUG` level as it arrives.
+
+For more detail from ansible itself, set `ANSIBLE_VERBOSITY` in `.env`:
+
+| Value | Flag added | What it shows |
+|-------|-----------|---------------|
+| `0` (default) | none | standard task results |
+| `1` | `-v` | module arguments and return values |
+| `2` | `-vv` | connection details |
+| `3` | `-vvv` | full SSH debug output |
+
+```ini
+# .env
+ANSIBLE_VERBOSITY=1
+```
+
+> **Note on secret vars**: when roles carry `secret_vars`, the `include_vars` step that loads
+> the decrypted secrets file still shows `(censored)` in the log — this is intentional. Task
+> failures unrelated to secrets are fully visible. If a task in your role uses a secret value
+> and you need to see its output, temporarily remove `no_log: true` from that task definition
+> during debugging.
 
 Order it via the API:
 

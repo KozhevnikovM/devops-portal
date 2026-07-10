@@ -77,6 +77,13 @@ class NamespaceRepository:
             raise ValueError(f"Namespace {namespace_id} not found")
         return _to_entity(model)
 
+    async def get_by_name(self, session: AsyncSession, name: str) -> list[Namespace]:
+        """All namespaces with this name (may span multiple clusters)."""
+        result = await session.execute(
+            select(NamespaceModel).where(NamespaceModel.name == name)
+        )
+        return [_to_entity(m) for m in result.scalars().all()]
+
     async def get_by_name_and_cluster(
         self, session: AsyncSession, name: str, cluster_name: str
     ) -> Namespace | None:
@@ -167,6 +174,44 @@ class NamespaceRepository:
             .limit(1)
         )
         return result.first() is not None
+
+    async def list_held_by_username(self, session: AsyncSession, username: str) -> list[Namespace]:
+        """Active namespaces currently held by a live booking owned by `username`."""
+        result = await session.execute(
+            select(NamespaceModel)
+            .join(BookingModel, BookingModel.namespace_id == NamespaceModel.id)
+            .join(UserModel, cast(UserModel.id, String) == BookingModel.user_id)
+            .where(
+                UserModel.username == username,
+                BookingModel.status.in_(_LIVE_STATUSES),
+                NamespaceModel.is_active.is_(True),
+            )
+            .order_by(NamespaceModel.name)
+        )
+        return [_to_entity(m) for m in result.scalars().all()]
+
+    async def list_active_not_held_by_username(
+        self, session: AsyncSession, username: str
+    ) -> list[Namespace]:
+        """Active namespaces with no live booking owned by `username`."""
+        held_by_user = (
+            select(BookingModel.namespace_id)
+            .join(UserModel, cast(UserModel.id, String) == BookingModel.user_id)
+            .where(
+                UserModel.username == username,
+                BookingModel.namespace_id.is_not(None),
+                BookingModel.status.in_(_LIVE_STATUSES),
+            )
+        )
+        result = await session.execute(
+            select(NamespaceModel)
+            .where(
+                NamespaceModel.is_active.is_(True),
+                NamespaceModel.id.not_in(held_by_user),
+            )
+            .order_by(NamespaceModel.name)
+        )
+        return [_to_entity(m) for m in result.scalars().all()]
 
     async def list_held_standalone_by_user(
         self, session: AsyncSession, user_id: str

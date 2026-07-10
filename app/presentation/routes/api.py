@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.domain.entities import User
 from app.domain.enums import DriveType
 from app.infrastructure.auth import require_admin, require_user
@@ -14,6 +15,7 @@ from app.infrastructure.database.session import get_async_session
 from app.infrastructure.repositories.image_repo import ImageRepository
 from app.infrastructure.repositories.hw_config_repo import HWConfigRepository
 from app.infrastructure.repositories.environment_blueprint_repo import EnvironmentBlueprintRepository
+from app.infrastructure.repositories.namespace_repo import NamespaceRepository
 from app.infrastructure.repositories.role_repo import RoleRepository
 from app.infrastructure.repositories.static_vm_repo import StaticVMRepository
 
@@ -21,6 +23,7 @@ router = APIRouter(prefix="/api", tags=["admin"])
 
 _image_repo = ImageRepository()
 _hw_config_repo = HWConfigRepository()
+_namespace_repo = NamespaceRepository()
 _role_repo = RoleRepository()
 _blueprint_repo = EnvironmentBlueprintRepository()
 _static_vm_repo = StaticVMRepository()
@@ -81,6 +84,15 @@ class HWConfigResponse(BaseModel):
     created_at: datetime
 
 
+class NamespaceResponse(BaseModel):
+    id: UUID
+    name: str
+    cluster_name: str
+    api_url: str | None
+    is_active: bool
+    created_at: datetime
+
+
 class StaticVMSummaryResponse(BaseModel):
     """Non-secret static-VM view for catalog discovery — never vends password/ssh_key."""
     id: UUID
@@ -97,6 +109,7 @@ class RoleCreate(BaseModel):
     description: Optional[str] = None
     ansible_role: str
     default_vars: dict = {}
+    secret_vars: dict = {}
 
 
 class RoleUpdate(BaseModel):
@@ -104,6 +117,7 @@ class RoleUpdate(BaseModel):
     description: Optional[str] = None
     ansible_role: Optional[str] = None
     default_vars: Optional[dict] = None
+    secret_vars: Optional[dict] = None  # None = keep existing; {} = clear
     is_active: Optional[bool] = None
 
 
@@ -293,6 +307,39 @@ async def list_static_vms(
     ]
 
 
+# ── Namespaces (discovery) ────────────────────────────────────────────────────
+
+_VALID_NS_FILTERS = {"active", "available"}
+
+
+@router.get("/namespaces", response_model=list[NamespaceResponse])
+async def list_namespaces(
+    filter: str = "active",
+    username: str | None = None,
+    not_username: str | None = None,
+    session: AsyncSession = Depends(get_async_session),
+    _: User = Depends(require_user),
+):
+    """List namespaces from the catalog.
+
+    - `filter=active` (default) — all active namespaces
+    - `filter=available` — active namespaces not currently held by any booking
+    - `username=X` — active namespaces currently held by user X
+    - `not_username=X` — active namespaces NOT held by user X
+    """
+    if filter not in _VALID_NS_FILTERS:
+        raise HTTPException(status_code=400, detail=f"invalid filter '{filter}'; use 'active' or 'available'")
+    if username and not_username:
+        raise HTTPException(status_code=400, detail="username and not_username are mutually exclusive")
+    if username:
+        return await _namespace_repo.list_held_by_username(session, username)
+    if not_username:
+        return await _namespace_repo.list_active_not_held_by_username(session, not_username)
+    if filter == "available":
+        return await _namespace_repo.list_available(session)
+    return await _namespace_repo.list_active(session)
+
+
 # ── Ansible Roles ─────────────────────────────────────────────────────────────
 
 @router.get("/roles", response_model=list[RoleResponse])
@@ -307,12 +354,16 @@ async def list_roles(
 async def create_role(
     body: RoleCreate,
     session: AsyncSession = Depends(get_async_session),
-    _: User = Depends(require_admin),
+    current_user: User = Depends(require_admin),
 ):
+    secret_vars = body.secret_vars if settings.SECRET_VARS_ENABLED else {}
     try:
         return await _role_repo.create(
             session, body.name, body.description, body.ansible_role, body.default_vars,
+            secret_vars=secret_vars, actor=current_user.username,
         )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
     except IntegrityError:
         await session.rollback()
         raise HTTPException(status_code=409, detail=f"Role '{body.name}' already exists")
@@ -323,15 +374,19 @@ async def update_role(
     role_id: UUID,
     body: RoleUpdate,
     session: AsyncSession = Depends(get_async_session),
-    _: User = Depends(require_admin),
+    current_user: User = Depends(require_admin),
 ):
     fields = body.model_dump(exclude_none=True)
+    if not settings.SECRET_VARS_ENABLED:
+        fields.pop("secret_vars", None)
     if not fields:
         raise HTTPException(status_code=422, detail="No fields to update")
     try:
-        return await _role_repo.update(session, role_id, fields)
+        return await _role_repo.update(session, role_id, fields, actor=current_user.username)
     except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
+        if "not found" in str(exc).lower():
+            raise HTTPException(status_code=404, detail=str(exc))
+        raise HTTPException(status_code=422, detail=str(exc))
 
 
 @router.delete("/roles/{role_id}", status_code=204)

@@ -103,16 +103,27 @@ COPY --from=terraform-bin /bin/terraform /usr/local/bin/terraform
 
 COPY . .
 
-# Install Ansible collections into ANSIBLE_COLLECTIONS_PATH from a requirements file. Online by
-# default (from ansible/requirements.yml). For an OFFLINE/air-gapped build, pre-download the
-# tarballs (`ansible-galaxy collection download -r ansible/requirements.yml -p ansible/collections/vendor`),
-# ship ansible/collections/vendor/, and set ANSIBLE_COLLECTIONS_REQUIREMENTS to its requirements.yml.
-# Best-effort: the shipped mock roles need no collections, so a failure here doesn't break the build.
-ENV ANSIBLE_COLLECTIONS_PATH=/app/ansible/collections
+# Install Ansible collections.
+#
+# Collections go to /opt/ansible/collections (outside /app) so the bind-mount
+# "volumes: - .:/app" in docker-compose does not shadow them at runtime.
+#
+# Online install is disabled by default (ANSIBLE_GALAXY_ONLINE=false).  Set it to "true"
+# only on build hosts with internet access.  The normal offline workflow is to vendor
+# tarballs into ansible/collections/ and let Step 2 install them.
+#
+# Step 1 (opt-in): pull from ansible-galaxy / Automation Hub using requirements.yml.
+# Step 2 (always): install any .tar.gz/.tar archives already in ansible/collections/ —
+#         covers offline builds where tarballs were placed there manually.
+ENV ANSIBLE_COLLECTIONS_PATH=/opt/ansible/collections
 ARG ANSIBLE_COLLECTIONS_REQUIREMENTS=ansible/requirements.yml
-RUN ansible-galaxy collection install -r "${ANSIBLE_COLLECTIONS_REQUIREMENTS}" \
-        -p /app/ansible/collections || \
-    echo "WARNING: ansible-galaxy collection install failed (offline build without vendored collections?)"
+ARG ANSIBLE_GALAXY_ONLINE=false
+RUN if [ "$ANSIBLE_GALAXY_ONLINE" = "true" ]; then \
+        ansible-galaxy collection install -r "${ANSIBLE_COLLECTIONS_REQUIREMENTS}" \
+            -p /opt/ansible/collections || true; \
+    fi
+RUN find /app/ansible/collections -maxdepth 1 \( -name '*.tar.gz' -o -name '*.tar' \) | \
+    xargs -r ansible-galaxy collection install -p /opt/ansible/collections || true
 
 COPY --from=frontend /build/dist/css/tailwind.css app/static/css/tailwind.css
 COPY --from=frontend /build/dist/js/htmx.min.js  app/static/js/htmx.min.js
@@ -125,5 +136,7 @@ ENV TF_CLI_CONFIG_FILE=/app/terraform/terraformrc
 ARG PORTAL_UID=1000
 ARG PORTAL_GID=1000
 RUN groupadd -g "${PORTAL_GID}" portal && \
-    useradd -m -u "${PORTAL_UID}" -g "${PORTAL_GID}" portal
+    useradd -m -u "${PORTAL_UID}" -g "${PORTAL_GID}" portal && \
+    mkdir -p /opt/ansible/collections && \
+    chown -R portal:portal /opt/ansible/collections
 USER portal
