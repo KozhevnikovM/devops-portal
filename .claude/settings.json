@@ -95,7 +95,11 @@
       "Bash(/tmp/ansible-venv/bin/pip install *)",
       "Bash(/tmp/ansible-venv/bin/ansible-galaxy --version)",
       "Bash(chmod +x /home/mike/devops-portal/docker/entrypoint-worker.sh)",
-      "Bash(git -C /home/mike/devops-portal *)"
+      "Bash(git -C /home/mike/devops-portal *)",
+      "Bash(xargs git log -1 --oneline)",
+      "Bash(echo \"share files: $?\")",
+      "Bash(grep -c '\\\\.py$')",
+      "Bash(git merge *)"
     ]
   }
 }
