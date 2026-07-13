@@ -22,7 +22,8 @@ from app.domain.enums import BookingStatus
 
 ALLOWED_TRANSITIONS: dict[BookingStatus, set[BookingStatus]] = {
     BookingStatus.QUEUED:       {BookingStatus.READY, BookingStatus.RELEASED},
-    BookingStatus.PENDING:      {BookingStatus.PROVISIONING, BookingStatus.FAILED, BookingStatus.RELEASING},
+    BookingStatus.PENDING:      {BookingStatus.PROVISIONING, BookingStatus.FAILED, BookingStatus.RELEASING,
+                                 BookingStatus.RELEASED},
     BookingStatus.PROVISIONING: {BookingStatus.CONFIGURING, BookingStatus.READY, BookingStatus.RETRY,
                                  BookingStatus.FAILED, BookingStatus.RELEASING},
     BookingStatus.CONFIGURING:  {BookingStatus.READY, BookingStatus.RETRY, BookingStatus.FAILED,
