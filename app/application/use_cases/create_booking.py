@@ -1,3 +1,4 @@
+import math
 from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
@@ -63,8 +64,8 @@ class CreateBookingUseCase:
         used   = await self._quota_repo.count_active_resources(session, uid)
 
         new_cpus      = hw.cpus
-        new_memory_gb = hw.memory_mb // 1024  # floor: matches ceiling on the used-side at the boundary
-        new_disk_gb   = hw.disk_mb   // 1024
+        new_memory_gb = math.ceil(hw.memory_mb / 1024)
+        new_disk_gb   = math.ceil(hw.disk_mb   / 1024)
 
         # The config's disk counts toward the quota of its own drive type (SSD or HDD).
         is_ssd     = hw.drive_type == DriveType.SSD.value
