@@ -1,3 +1,4 @@
+import logging
 import re
 from uuid import UUID
 
@@ -13,6 +14,8 @@ from app.domain.entities import Environment
 from app.domain.enums import BookingStatus, ResourceType
 from app.domain.exceptions import BlueprintNotFoundError, EnvironmentItemError, NamespaceUnavailableError
 from app.domain.lease import Lease
+
+logger = logging.getLogger(__name__)
 
 
 _VAR_NAME_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
@@ -133,6 +136,7 @@ class OrderEnvironmentUseCase:
         )
 
         created_ids: list[UUID] = []
+        created_resource_types: list[str] = []  # parallel to created_ids — for promote after rollback
         adopted_id: UUID | None = None  # tracked separately — rolled back by detach, not release
         vm_dispatch: list[tuple[str, str, str]] = []  # (booking_id, image_id, hw_config_id)
         try:
@@ -145,11 +149,12 @@ class OrderEnvironmentUseCase:
                     adopted_id = booking.id
                 else:
                     created_ids.append(booking.id)
+                    created_resource_types.append(item.resource_type)
                 if item.resource_type == ResourceType.VM.value:
                     vm_dispatch.append((str(booking.id), str(res["image_id"]), str(res["hw_config_id"])))
         except Exception:
             await self._rollback(
-                session, env.id, created_ids,
+                session, env.id, created_ids, created_resource_types,
                 detach_id=_adopt_booking_id,
                 orig_ttl=_adopt_orig_ttl,
                 orig_expires=_adopt_orig_expires,
@@ -236,7 +241,7 @@ class OrderEnvironmentUseCase:
         )
 
     async def _rollback(
-        self, session, env_id, booking_ids,
+        self, session, env_id, booking_ids, resource_types: list[str] | None = None,
         detach_id: UUID | None = None,
         orig_ttl: int | None = None,
         orig_expires=None,
@@ -249,19 +254,28 @@ class OrderEnvironmentUseCase:
         (environment_id → NULL, original lease restored) rather than released — so the user's
         standalone booking is left exactly as it was before the order.
         """
-        for bid in booking_ids:
+        freed_pool_types: set[str] = set()
+        rts = resource_types if resource_types is not None else [None] * len(booking_ids)
+        for bid, rt in zip(booking_ids, rts):
             try:
                 await self._booking_repo.update_status(session, bid, BookingStatus.RELEASED)
+                if rt in (ResourceType.STATIC_VM.value, ResourceType.NAMESPACE.value):
+                    freed_pool_types.add(rt)
             except Exception:
-                pass
+                logger.exception("Rollback: failed to release booking %s (%s)", bid, rt)
         if detach_id is not None:
             try:
                 await self._booking_repo.set_environment(
                     session, detach_id, None, None, orig_ttl, orig_expires,
                 )
             except Exception:
-                pass
+                logger.exception("Rollback: failed to detach adopted booking %s", detach_id)
         try:
             await self._env_repo.delete(session, env_id)
         except Exception:
-            pass
+            logger.exception("Rollback: failed to delete environment %s", env_id)
+        for rt in freed_pool_types:
+            try:
+                await self._booking_repo.promote_next_queued(session, rt)
+            except Exception:
+                logger.exception("Rollback: failed to promote next queued for %s", rt)
