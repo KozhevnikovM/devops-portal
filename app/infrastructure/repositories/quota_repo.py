@@ -13,6 +13,7 @@ from app.infrastructure.database.models import BookingModel, QuotaModel
 _ACTIVE_STATUSES = [
     BookingStatus.PENDING.value,
     BookingStatus.PROVISIONING.value,
+    BookingStatus.CONFIGURING.value,
     BookingStatus.RETRY.value,
     BookingStatus.READY.value,
     BookingStatus.RELEASING.value,
