@@ -256,3 +256,20 @@ async def test_rollback_no_promote_for_vm_type():
 
     called_types = [c.args[1] for c in m.booking_repo.promote_next_queued.await_args_list]
     assert ResourceType.VM.value not in called_types
+
+
+
+@pytest.mark.asyncio
+async def test_rollback_with_none_resource_types():
+    """If resource_types is None, _rollback must still release all booking_ids."""
+    bp = _blueprint([])
+    uc, m = _make_use_case(bp)
+
+    bid1 = uuid4()
+    bid2 = uuid4()
+
+    await uc._rollback(MagicMock(), uuid4(), [bid1, bid2], resource_types=None)
+
+    released_ids = {c.args[1] for c in m.booking_repo.update_status.await_args_list}
+    assert bid1 in released_ids
+    assert bid2 in released_ids

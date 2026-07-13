@@ -255,7 +255,8 @@ class OrderEnvironmentUseCase:
         standalone booking is left exactly as it was before the order.
         """
         freed_pool_types: set[str] = set()
-        for bid, rt in zip(booking_ids, resource_types or []):
+        rts = resource_types if resource_types is not None else [None] * len(booking_ids)
+        for bid, rt in zip(booking_ids, rts):
             try:
                 await self._booking_repo.update_status(session, bid, BookingStatus.RELEASED)
                 if rt in (ResourceType.STATIC_VM.value, ResourceType.NAMESPACE.value):
