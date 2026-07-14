@@ -122,3 +122,8 @@ def _custom_openapi():
 
 
 app.openapi = _custom_openapi
+
+
+@app.get("/health", tags=["platform"], summary="Liveness probe")
+async def health():
+    return {"status": "ok"}

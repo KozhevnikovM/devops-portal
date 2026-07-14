@@ -1,3 +1,12 @@
+# Production compose file.
+# Use in place of docker-compose.yml — not as an overlay on top of it.
+# Differences from the dev file:
+#   - app:    no --reload; multi-worker (APP_WORKERS, default 2); no .:/app bind-mount
+#   - worker: no .:/app bind-mount
+#   - beat:   no .:/app bind-mount
+#   - app / worker / beat: restart: unless-stopped
+#   - postgres / redis: ports not exposed to the host
+
 services:
   postgres:
     image: ${POSTGRES_IMAGE:-postgres:15}
@@ -5,8 +14,6 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-portal}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-portal}
       POSTGRES_DB: ${POSTGRES_DB:-portal}
-    ports:
-      - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -14,16 +21,16 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+    restart: unless-stopped
 
   redis:
     image: ${REDIS_IMAGE:-redis:7}
-    ports:
-      - "6379:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
       timeout: 5s
       retries: 5
+    restart: unless-stopped
 
   init:
     build:
@@ -81,12 +88,11 @@ services:
         APT_REPO_HOST: ${APT_REPO_HOST:-}
         APT_REPO_USER: ${APT_REPO_USER:-token}
         ANSIBLE_COLLECTIONS_REQUIREMENTS: ${ANSIBLE_COLLECTIONS_REQUIREMENTS:-ansible/requirements.yml}
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers ${APP_WORKERS:-2}
     ports:
       - "8000:8000"
     env_file: .env
     volumes:
-      - .:/app
       - portal_static:/app/app/static
     depends_on:
       init:
@@ -99,6 +105,7 @@ services:
       timeout: 5s
       retries: 3
       start_period: 30s
+    restart: unless-stopped
 
   worker:
     build:
@@ -126,9 +133,6 @@ services:
     entrypoint: ["/app/docker/entrypoint-worker.sh"]
     command: celery -A app.infrastructure.celery_app worker -l info -c 4
     env_file: .env
-    volumes:
-      - .:/app
-      - portal_static:/app/app/static
     depends_on:
       init:
         condition: service_completed_successfully
@@ -140,6 +144,7 @@ services:
       timeout: 10s
       retries: 3
       start_period: 60s
+    restart: unless-stopped
 
   beat:
     build:
@@ -166,25 +171,18 @@ services:
         ANSIBLE_COLLECTIONS_REQUIREMENTS: ${ANSIBLE_COLLECTIONS_REQUIREMENTS:-ansible/requirements.yml}
     command: celery -A app.infrastructure.celery_app beat -l info
     env_file: .env
-    volumes:
-      - .:/app
     depends_on:
       init:
         condition: service_completed_successfully
       redis:
         condition: service_healthy
+    restart: unless-stopped
 
 secrets:
-  # npm auth token for the frontend build, passed as a BuildKit secret (never a build arg/layer).
-  # Sourced from the NPM_REGISTRY_TOKEN env var; empty/unset → public npm.
   npm_token:
     environment: NPM_REGISTRY_TOKEN
-  # CA certificate (PEM) for a registry behind an internal/self-signed CA. Point NPM_CA_CERT_FILE
-  # at the cert; defaults to /dev/null (empty → npm uses the default CA bundle).
   npm_ca:
     file: ${NPM_CA_CERT_FILE:-/dev/null}
-  # Password/token for a local apt mirror that needs auth (used only when APT_MIRROR + APT_REPO_HOST
-  # are set). Sourced from the APT_REPO_PASSWORD env var; empty/unset → no apt auth file is written.
   apt_password:
     environment: APT_REPO_PASSWORD
 
