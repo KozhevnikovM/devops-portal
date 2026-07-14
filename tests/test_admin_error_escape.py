@@ -43,7 +43,7 @@ def test_duplicate_username_is_escaped(client):
         mock_repo.create = AsyncMock(side_effect=IntegrityError("dup", {}, None))
         resp = client.post(
             "/admin/users",
-            data={"username": XSS, "password": "pw", "role": "user"},
+            data={"username": XSS, "password": "password123", "role": "user"},
         )
 
     assert resp.status_code == 200

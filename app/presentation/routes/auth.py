@@ -164,6 +164,8 @@ async def create_user(
 ):
     if body.role not in VALID_ROLES:
         raise HTTPException(status_code=400, detail=f"invalid role '{body.role}'")
+    if len(body.password) < 8:
+        raise HTTPException(status_code=422, detail="password must be at least 8 characters")
     pw_hash = bcrypt.hashpw(body.password.encode(), bcrypt.gensalt()).decode()
     user = await _user_repo.create(session, body.username, pw_hash, body.role)
     return UserResponse(id=user.id, username=user.username, role=user.role, is_active=user.is_active)
@@ -295,6 +297,11 @@ async def admin_create_user(
     if role not in VALID_ROLES:
         return HTMLResponse(
             content=f'<span class="text-red-400 text-xs">Invalid role "{escape(role)}".</span>',
+            headers={"HX-Retarget": "#user-create-error", "HX-Reswap": "innerHTML"},
+        )
+    if len(password) < 8:
+        return HTMLResponse(
+            content='<span class="text-red-400 text-xs">Password must be at least 8 characters.</span>',
             headers={"HX-Retarget": "#user-create-error", "HX-Reswap": "innerHTML"},
         )
     pw_hash = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()

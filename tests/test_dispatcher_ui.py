@@ -42,7 +42,7 @@ def test_api_create_user_accepts_dispatcher():
         with patch("app.presentation.routes.auth._user_repo") as repo:
             created = _user(role="dispatcher", username="ci-bot")
             repo.create = AsyncMock(return_value=created)
-            resp = cl.post("/api/users", json={"username": "ci-bot", "password": "x", "role": "dispatcher"})
+            resp = cl.post("/api/users", json={"username": "ci-bot", "password": "password123", "role": "dispatcher"})
     finally:
         app.dependency_overrides.clear()
     assert resp.status_code == 201
