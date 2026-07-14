@@ -26,6 +26,20 @@ On startup the portal seeds an initial admin user from `ADMIN_USERNAME` / `ADMIN
 (defaults: `admin` / `changeme`). Navigate to `http://<host>:8000` — you will be redirected
 to the login page.
 
+**Checking service health:**
+
+```bash
+# Show healthy/unhealthy status for all containers
+docker compose ps
+
+# Query the app liveness probe directly
+curl -f http://localhost:8000/health   # → {"status": "ok"}
+```
+
+The `app` and `worker` services have Docker healthchecks. A container that passes its probe
+shows `(healthy)` in `docker compose ps`; a failing one shows `(unhealthy)` and can be
+inspected with `docker inspect <container-id>`.
+
 **Change the default password immediately** — see [Auth Setup](#auth-setup) below.
 
 > **Serve over HTTPS in production.** The session cookie is issued with `Secure` by default
