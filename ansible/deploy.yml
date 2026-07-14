@@ -41,7 +41,7 @@
       REDIS_URL: redis://redis:6379/0
       USE_STUB_TERRAFORM: "true"
       ADMIN_USERNAME: admin
-      ADMIN_PASSWORD: changeme  # override via vault — never ship this default
+      # ADMIN_PASSWORD must be set via vault — no default here so a missing value fails loudly
 
     # Base container images for isolated / air-gapped deploys. Empty by default, so the
     # Dockerfile + compose defaults (Docker Hub) apply. Override per host (group_vars) with
@@ -87,6 +87,7 @@
     - name: Restart portal stack
       community.docker.docker_compose_v2:
         project_src: "{{ deploy_dir }}"
+        files: [docker-compose.prod.yml]
         build: always
         state: restarted
       become_user: "{{ deploy_user }}"
@@ -138,6 +139,7 @@
         password: "{{ registry_password }}"
       become_user: "{{ deploy_user }}"
       when: registry_url | length > 0
+      no_log: true
 
     # ── Get the code onto the host ────────────────────────────────────────────
     - name: Push current working-tree code
@@ -194,6 +196,7 @@
     - name: Build and start the portal stack
       community.docker.docker_compose_v2:
         project_src: "{{ deploy_dir }}"
+        files: [docker-compose.prod.yml]
         build: always
         state: present
         wait: true
