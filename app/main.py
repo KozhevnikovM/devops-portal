@@ -11,6 +11,7 @@ from app.config import settings
 from app.infrastructure.database.session import SyncSessionLocal
 from app.infrastructure.repositories.booking_repo import BookingRepository
 from app.infrastructure.repositories.user_repo import UserRepository
+from app.presentation.middleware.csrf_origin import CSRFOriginMiddleware
 from app.presentation.routes.admin import router as admin_router
 from app.presentation.routes.auth import router as auth_router
 from app.presentation.routes.bookings import router
@@ -85,6 +86,7 @@ app = FastAPI(
     swagger_ui_parameters={"persistAuthorization": True},
     root_path=settings.ROOT_PATH,
 )
+app.add_middleware(CSRFOriginMiddleware, base_url=settings.BASE_URL)
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
 app.include_router(admin_router)
 app.include_router(auth_router)
