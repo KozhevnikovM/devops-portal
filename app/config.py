@@ -22,6 +22,10 @@ class Settings(BaseSettings):
     # Send the session cookie only over HTTPS. Default True (production runs behind TLS);
     # set False for local development over plain http://localhost.
     SESSION_COOKIE_SECURE: bool = True
+    # Canonical origin the browser uses to reach this portal (scheme + host + optional port,
+    # no trailing slash). Used by CSRFOriginMiddleware to reject requests from foreign origins.
+    # Must match the URL in the browser's address bar (e.g. https://dp.my-domain.com).
+    BASE_URL: str = "http://localhost:8000"
 
     # Per-user resource quotas (defaults applied when no per-user row exists)
     DEFAULT_QUOTA_CPUS: int = 16

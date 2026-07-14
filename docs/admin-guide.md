@@ -48,6 +48,7 @@ to the login page.
 | `ADMIN_PASSWORD` | No | Password for the seeded admin account. Default: `changeme` — **always override in production** |
 | `SESSION_TTL` | No | Browser session lifetime in seconds. Default: `86400` (24 h) |
 | `SESSION_COOKIE_SECURE` | No | Send the `session_id` cookie only over HTTPS. Default: `true`. Set `false` only for local development over plain `http://localhost`. |
+| `BASE_URL` | No | Canonical origin the browser uses to reach the portal (scheme + host, no trailing slash). Used by the CSRF origin check to reject requests from foreign origins. Default: `http://localhost:8000`. **Must be set in production** (e.g. `https://dp.my-domain.com`). |
 | `DEFAULT_QUOTA_CPUS` | No | Default CPU core quota per user. Default: `16` |
 | `DEFAULT_QUOTA_MEMORY_GB` | No | Default memory quota per user in GB. Default: `32` |
 | `DEFAULT_QUOTA_HDD_GB` | No | Default HDD storage quota per user in GB. Default: `500` |
