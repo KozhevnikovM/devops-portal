@@ -49,6 +49,7 @@ to the login page.
 | `SESSION_TTL` | No | Browser session lifetime in seconds. Default: `86400` (24 h) |
 | `SESSION_COOKIE_SECURE` | No | Send the `session_id` cookie only over HTTPS. Default: `true`. Set `false` only for local development over plain `http://localhost`. |
 | `BASE_URL` | No | Canonical origin the browser uses to reach the portal (scheme + host, no trailing slash). Used by the CSRF origin check to reject requests from foreign origins. Default: `http://localhost:8000`. **Must be set in production** (e.g. `https://dp.my-domain.com`). |
+| `APP_WORKERS` | No | Number of uvicorn worker processes. Default: `2`. Only applies when using `docker-compose.prod.yml` (the dev file uses `--reload` which is single-process). |
 | `DEFAULT_QUOTA_CPUS` | No | Default CPU core quota per user. Default: `16` |
 | `DEFAULT_QUOTA_MEMORY_GB` | No | Default memory quota per user in GB. Default: `32` |
 | `DEFAULT_QUOTA_HDD_GB` | No | Default HDD storage quota per user in GB. Default: `500` |
@@ -168,6 +169,31 @@ PORTAL_GID=1500
 In the Ansible deploy, set `deploy_uid` / `deploy_gid`; the playbook creates the host `portal`
 user/group with those ids **and** renders matching `PORTAL_UID` / `PORTAL_GID` into `.env` so the
 image build lines up.
+
+---
+
+## Development vs production compose
+
+The repo ships two Docker Compose files:
+
+| File | Purpose |
+| :--- | :--- |
+| `docker-compose.yml` | **Development** — hot-reload (`--reload`), `.:/app` bind-mount, Postgres and Redis ports exposed to the host. Use for local development. |
+| `docker-compose.prod.yml` | **Production** — no hot-reload, no bind-mount (image layers only), Postgres and Redis ports internal only, `restart: unless-stopped` on `app`/`worker`/`beat`. The Ansible deploy playbook uses this file. |
+
+**Local development:**
+
+```bash
+docker compose up            # uses docker-compose.yml by default
+```
+
+**Manual production start** (e.g. without Ansible):
+
+```bash
+docker compose -f docker-compose.prod.yml up -d
+```
+
+The `init` service (runs migrations on startup) and the shared `portal_static` volume behave the same in both files.
 
 ---
 
