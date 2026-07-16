@@ -33,8 +33,8 @@ class TerraformVcdAdapter:
 
     def _provider_block(self, api_token: str | None = None) -> str:
         ssl = str(settings.VCD_ALLOW_UNVERIFIED_SSL).lower()
-        token = api_token or settings.VCD_API_TOKEN
-        if token:
+        if api_token or settings.VCD_API_TOKEN:
+            # Credentials supplied via VCD_TOKEN env var at subprocess time — not written to disk.
             return textwrap.dedent(f"""\
                 provider "vcd" {{
                   url                  = "{settings.VCD_URL}"
@@ -43,22 +43,27 @@ class TerraformVcdAdapter:
                   user                 = "none"
                   password             = "none"
                   auth_type            = "api_token"
-                  api_token            = "{token}"
                   allow_api_token_file = true
                   max_retry_timeout    = 1800
                   allow_unverified_ssl = {ssl}
                 }}""")
+        # Credentials supplied via VCD_USER / VCD_PASSWORD env vars at subprocess time.
         return textwrap.dedent(f"""\
             provider "vcd" {{
               url                  = "{settings.VCD_URL}"
               org                  = "{settings.VCD_ORG}"
               vdc                  = "{settings.VCD_VDC}"
-              user                 = "{settings.VCD_USER}"
-              password             = "{settings.VCD_PASSWORD}"
               auth_type            = "integrated"
               max_retry_timeout    = 1800
               allow_unverified_ssl = {ssl}
             }}""")
+
+    def _cred_env(self, api_token: str | None = None) -> dict:
+        """Credential env vars for the terraform subprocess — never written to disk."""
+        token = api_token or settings.VCD_API_TOKEN
+        if token:
+            return {"VCD_TOKEN": token}
+        return {"VCD_USER": settings.VCD_USER, "VCD_PASSWORD": settings.VCD_PASSWORD}
 
     def _write_workspace(self, workspace_dir: Path, config: dict, api_token: str | None = None) -> None:
         workspace_dir.mkdir(parents=True, exist_ok=True)
@@ -138,13 +143,16 @@ class TerraformVcdAdapter:
         }
         (workspace_dir / "terraform.tfvars.json").write_text(json.dumps(tfvars, indent=2) + "\n")
 
-    async def _run(self, *args: str, cwd: Path, on_progress=None) -> str:
+    async def _run(self, *args: str, cwd: Path, on_progress=None, extra_env: dict | None = None) -> str:
+        env = {**os.environ, "TF_CLI_CONFIG_FILE": str(Path("/app/terraform/terraformrc"))}
+        if extra_env:
+            env.update(extra_env)
         proc = await asyncio.create_subprocess_exec(
             "terraform", *args,
             cwd=str(cwd),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
-            env={**os.environ, "TF_CLI_CONFIG_FILE": str(Path("/app/terraform/terraformrc"))},
+            env=env,
         )
         lines: list[str] = []
         last_push = asyncio.get_running_loop().time()
@@ -171,13 +179,14 @@ class TerraformVcdAdapter:
         on_progress=None,
     ) -> dict:
         workspace_dir = self._workspace_dir(workspace_id)
+        cred_env = self._cred_env(api_token)
         self._write_workspace(workspace_dir, config, api_token)
 
-        await self._run("init", "-no-color", cwd=workspace_dir, on_progress=on_progress)
-        await self._run("workspace", "select", "-or-create", workspace_id, cwd=workspace_dir, on_progress=on_progress)
+        await self._run("init", "-no-color", cwd=workspace_dir, on_progress=on_progress, extra_env=cred_env)
+        await self._run("workspace", "select", "-or-create", workspace_id, cwd=workspace_dir, on_progress=on_progress, extra_env=cred_env)
 
         try:
-            await self._apply(workspace_dir, on_progress)
+            await self._apply(workspace_dir, on_progress, cred_env=cred_env)
         except TerraformError as exc:
             if not self._is_orphaned_vapp(str(exc), config["name"]):
                 raise
@@ -192,22 +201,23 @@ class TerraformVcdAdapter:
             if on_progress:
                 on_progress(f"Recovering orphaned vApp {config['name']}")
             import_id = f"{settings.VCD_ORG}.{settings.VCD_VDC}.{config['name']}"
-            await self._run("import", "-no-color", "vcd_vapp.this", import_id, cwd=workspace_dir, on_progress=on_progress)
-            await self._destroy_state(workspace_id, workspace_dir, on_progress=on_progress)
-            await self._apply(workspace_dir, on_progress)
+            await self._run("import", "-no-color", "vcd_vapp.this", import_id, cwd=workspace_dir, on_progress=on_progress, extra_env=cred_env)
+            await self._destroy_state(workspace_id, workspace_dir, on_progress=on_progress, cred_env=cred_env)
+            await self._apply(workspace_dir, on_progress, cred_env=cred_env)
 
-        output_json = await self._run("output", "-json", cwd=workspace_dir, on_progress=on_progress)
+        output_json = await self._run("output", "-json", cwd=workspace_dir, on_progress=on_progress, extra_env=cred_env)
         outputs = json.loads(output_json)
         ip = outputs["primary_ip"]["value"]
         return {"ip": ip}
 
-    async def _apply(self, workspace_dir: Path, on_progress=None) -> None:
+    async def _apply(self, workspace_dir: Path, on_progress=None, cred_env: dict | None = None) -> None:
         await self._run(
             "apply", "-auto-approve", "-no-color",
             f"-refresh={str(settings.TF_APPLY_REFRESH).lower()}",
             f"-parallelism={settings.TF_APPLY_PARALLELISM}",
             cwd=workspace_dir,
             on_progress=on_progress,
+            extra_env=cred_env,
         )
 
     @staticmethod
@@ -225,24 +235,26 @@ class TerraformVcdAdapter:
         force: bool = False,
     ) -> None:
         workspace_dir = self._workspace_dir(workspace_id)
+        cred_env = self._cred_env(api_token)
         self._write_workspace(workspace_dir, config, api_token)
 
-        await self._run("init", "-no-color", cwd=workspace_dir, on_progress=on_progress)
+        await self._run("init", "-no-color", cwd=workspace_dir, on_progress=on_progress, extra_env=cred_env)
         try:
-            await self._run("workspace", "select", workspace_id, cwd=workspace_dir, on_progress=on_progress)
+            await self._run("workspace", "select", workspace_id, cwd=workspace_dir, on_progress=on_progress, extra_env=cred_env)
         except TerraformError:
             # Workspace never existed in PG — nothing was provisioned, nothing to destroy.
             logger.info("No PG state found for workspace %s, skipping destroy", workspace_id)
             shutil.rmtree(workspace_dir, ignore_errors=True)
             return
 
-        await self._destroy_state(workspace_id, workspace_dir, on_progress=on_progress, force=force)
-        await self._run("workspace", "select", "default", cwd=workspace_dir, on_progress=on_progress)
-        await self._run("workspace", "delete", workspace_id, cwd=workspace_dir, on_progress=on_progress)
+        await self._destroy_state(workspace_id, workspace_dir, on_progress=on_progress, force=force, cred_env=cred_env)
+        await self._run("workspace", "select", "default", cwd=workspace_dir, on_progress=on_progress, extra_env=cred_env)
+        await self._run("workspace", "delete", workspace_id, cwd=workspace_dir, on_progress=on_progress, extra_env=cred_env)
         shutil.rmtree(workspace_dir, ignore_errors=True)
 
     async def _destroy_state(
         self, workspace_id: str, workspace_dir: Path, on_progress=None, force: bool = False,
+        cred_env: dict | None = None,
     ) -> None:
         """Run `terraform destroy`, recovering from a stale state lock.
 
@@ -260,7 +272,7 @@ class TerraformVcdAdapter:
         attempts = 3
         for attempt in range(attempts):
             try:
-                await self._run("destroy", "-auto-approve", "-no-color", cwd=workspace_dir, on_progress=on_progress)
+                await self._run("destroy", "-auto-approve", "-no-color", cwd=workspace_dir, on_progress=on_progress, extra_env=cred_env)
                 return
             except TerraformError as exc:
                 lock_id = self._stale_lock_id(str(exc))
@@ -279,7 +291,7 @@ class TerraformVcdAdapter:
                 if on_progress:
                     on_progress(f"Stale state lock {lock_id} — force-unlocking")
                 try:
-                    await self._run("force-unlock", "-force", lock_id, cwd=workspace_dir, on_progress=on_progress)
+                    await self._run("force-unlock", "-force", lock_id, cwd=workspace_dir, on_progress=on_progress, extra_env=cred_env)
                 except TerraformError as unlock_exc:
                     # Lock already released, or its id changed — the next destroy re-reads the
                     # current lock state, so log and carry on rather than aborting teardown.
