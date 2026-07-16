@@ -48,12 +48,20 @@ def _seed_admin_user() -> None:
         if repo.sync_list_all(session):
             return
 
-        pw_hash = bcrypt.hashpw(settings.ADMIN_PASSWORD.encode(), bcrypt.gensalt()).decode()
+        if not settings.ADMIN_PASSWORD:
+            if not settings.USE_STUB_TERRAFORM:
+                raise RuntimeError(
+                    "ADMIN_PASSWORD must be set in production (USE_STUB_TERRAFORM=False). "
+                    "Set it in your .env or vault."
+                )
+            effective_pw = "changeme"
+            logger.warning("ADMIN_PASSWORD not set — using 'changeme' (dev/stub mode only)")
+        else:
+            effective_pw = settings.ADMIN_PASSWORD
+
+        pw_hash = bcrypt.hashpw(effective_pw.encode(), bcrypt.gensalt()).decode()
         repo.sync_create(session, settings.ADMIN_USERNAME, pw_hash, "admin")
         logger.info("seeded admin user '%s'", settings.ADMIN_USERNAME)
-
-    if settings.ADMIN_PASSWORD == "changeme":
-        logger.warning("SECURITY: default admin password is still 'changeme' — change it")
 
 
 def _recover_in_progress_bookings() -> None:
