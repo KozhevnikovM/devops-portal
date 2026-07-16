@@ -841,7 +841,10 @@ it's **ordered**.
 > in a **"Reuse one of yours"** group. Selecting it (or passing it via the API) **adopts** your
 > existing booking into the new environment — no second reservation is created, and releasing the
 > environment releases that namespace too. A namespace held by another user or already inside
-> another environment is not adoptable and will report unavailable (`409`).
+> another environment is not adoptable and will report unavailable (`409`). A namespace whose
+> standalone booking is still `QUEUED` (i.e. waiting in the pool queue, not yet allocated) also
+> cannot be adopted — the environment order returns `409` with a message asking you to wait until
+> it reaches `READY` or choose a different namespace.
 
 #### Adding a blueprint
 

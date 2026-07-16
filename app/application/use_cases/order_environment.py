@@ -110,6 +110,12 @@ class OrderEnvironmentUseCase:
                 existing = await self._booking_repo.get_live_standalone_namespace_booking(
                     session, user_id, resolved_ns_id
                 )
+                if existing is not None and existing.status == BookingStatus.QUEUED:
+                    raise NamespaceUnavailableError(
+                        "Namespace is currently in the booking queue and cannot be adopted "
+                        "until it is allocated. Wait for it to reach READY, or pick a "
+                        "different namespace."
+                    )
                 if existing is not None:
                     # Mark for adoption: _create_child will call set_environment instead of
                     # book_namespace; rollback will detach rather than release.
