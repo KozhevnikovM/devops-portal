@@ -36,7 +36,7 @@ def test_apply_recovers_from_orphaned_vapp():
     adapter = TerraformVcdAdapter()
     calls: list[tuple] = []
 
-    async def fake_run(*args, cwd=None, on_progress=None):
+    async def fake_run(*args, cwd=None, on_progress=None, **kwargs):
         calls.append(args)
         # The first apply hits the orphaned-vApp conflict; everything after succeeds.
         if args[0] == "apply" and len([c for c in calls if c[0] == "apply"]) == 1:
@@ -67,7 +67,7 @@ def test_apply_non_conflict_error_propagates():
     adapter = TerraformVcdAdapter()
     calls: list[tuple] = []
 
-    async def fake_run(*args, cwd=None, on_progress=None):
+    async def fake_run(*args, cwd=None, on_progress=None, **kwargs):
         calls.append(args)
         if args[0] == "apply":
             raise TerraformError("terraform apply failed (exit 1):\nError: quota exceeded in vDC")

@@ -35,7 +35,7 @@ def test_destroy_force_unlocks_stale_lock_then_retries():
     adapter = TerraformVcdAdapter()
     calls: list[tuple] = []
 
-    async def fake_run(*args, cwd=None, on_progress=None):
+    async def fake_run(*args, cwd=None, on_progress=None, **kwargs):
         calls.append(args)
         # First destroy hits the stale lock; everything after it succeeds.
         if args[0] == "destroy" and len([c for c in calls if c[0] == "destroy"]) == 1:
@@ -61,7 +61,7 @@ def test_destroy_recovers_when_force_unlock_itself_fails():
     adapter = TerraformVcdAdapter()
     calls: list[tuple] = []
 
-    async def fake_run(*args, cwd=None, on_progress=None):
+    async def fake_run(*args, cwd=None, on_progress=None, **kwargs):
         calls.append(args)
         if args[0] == "destroy" and len([c for c in calls if c[0] == "destroy"]) == 1:
             raise TerraformError(f"terraform destroy failed (exit 1):\n{LOCK_ERROR}")
@@ -81,7 +81,7 @@ def test_destroy_without_lock_never_force_unlocks():
     adapter = TerraformVcdAdapter()
     calls: list[tuple] = []
 
-    async def fake_run(*args, cwd=None, on_progress=None):
+    async def fake_run(*args, cwd=None, on_progress=None, **kwargs):
         calls.append(args)
         return ""
 
@@ -97,7 +97,7 @@ def test_destroy_non_lock_error_propagates_unchanged():
     adapter = TerraformVcdAdapter()
     calls: list[tuple] = []
 
-    async def fake_run(*args, cwd=None, on_progress=None):
+    async def fake_run(*args, cwd=None, on_progress=None, **kwargs):
         calls.append(args)
         raise TerraformError("terraform destroy failed (exit 1):\nError: vApp not found (VCD-1041)")
 
