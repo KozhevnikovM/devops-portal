@@ -17,7 +17,7 @@ class Settings(BaseSettings):
 
     # Auth
     ADMIN_USERNAME: str = "admin"
-    ADMIN_PASSWORD: str = "changeme"
+    ADMIN_PASSWORD: str = ""
     SESSION_TTL: int = 86400
     # Send the session cookie only over HTTPS. Default True (production runs behind TLS);
     # set False for local development over plain http://localhost.

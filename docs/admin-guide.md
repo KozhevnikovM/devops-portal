@@ -23,7 +23,7 @@ docker compose up -d
 ```
 
 On startup the portal seeds an initial admin user from `ADMIN_USERNAME` / `ADMIN_PASSWORD`
-(defaults: `admin` / `changeme`). Navigate to `http://<host>:8000` — you will be redirected
+(defaults: `admin` / no default — must be set). Navigate to `http://<host>:8000` — you will be redirected
 to the login page.
 
 **Checking service health:**
@@ -59,7 +59,7 @@ inspected with `docker inspect <container-id>`.
 | `REDIS_URL` | Yes | Redis DSN for Celery broker, result backend, and session storage (e.g. `redis://redis:6379/0`) |
 | `USE_STUB_TERRAFORM` | No | `true` uses the stub adapter (default). Set `false` to use the real VMware adapter. |
 | `ADMIN_USERNAME` | No | Username for the seeded admin account. Default: `admin` |
-| `ADMIN_PASSWORD` | No | Password for the seeded admin account. Default: `changeme` — **always override in production** |
+| `ADMIN_PASSWORD` | **Yes (production)** | Password for the seeded admin account. No default — server refuses to start in production (`USE_STUB_TERRAFORM=False`) if unset and no users exist yet. In dev/stub mode defaults to `changeme` with a warning. |
 | `SESSION_TTL` | No | Browser session lifetime in seconds. Default: `86400` (24 h) |
 | `SESSION_COOKIE_SECURE` | No | Send the `session_id` cookie only over HTTPS. Default: `true`. Set `false` only for local development over plain `http://localhost`. |
 | `BASE_URL` | No | Canonical origin the browser uses to reach the portal (scheme + host, no trailing slash). Used by the CSRF origin check to reject requests from foreign origins. Default: `http://localhost:8000`. **Must be set in production** (e.g. `https://dp.my-domain.com`). |
@@ -340,21 +340,25 @@ The **▶ DevOps Portal** logo in the top-left header is a link back to the main
 dashboard from any page. Each sub-page shows a breadcrumb suffix (e.g. `/ Users`,
 `/ Catalog`, `/ Profile`) so you always know where you are.
 
-Sign in with the seeded admin credentials (`admin` / `changeme` by default), then
-immediately create a new password:
+Set a strong admin password before first deploy via `.env` or vault:
 
 ```bash
-# Option A — set a strong password before first deploy via .env
+# Required in production — server will not start without this
 ADMIN_PASSWORD=a-long-random-string-here
+```
 
-# Option B — create a new admin account and deactivate the default one (via API)
+After first login you can create additional admin accounts and deactivate the seeded one:
+
+```bash
 curl -s -X POST http://localhost:8000/api/users \
      -H "Content-Type: application/json" \
      -H "Authorization: Bearer dp_<api_key>" \
      -d '{"username": "alice", "password": "hunter2", "role": "admin"}'
 ```
 
-The startup log prints a `WARNING` if `ADMIN_PASSWORD` is still `changeme`.
+> **Production startup guard**: if `ADMIN_PASSWORD` is unset and no users exist yet, the
+> server raises a `RuntimeError` and exits immediately. In dev/stub mode (`USE_STUB_TERRAFORM=True`)
+> an unset password falls back to `changeme` with a warning logged — never run that in production.
 
 ### Creating users
 
