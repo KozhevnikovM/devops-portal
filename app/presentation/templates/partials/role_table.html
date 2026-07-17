@@ -30,8 +30,8 @@
                             class="bg-gray-900 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-40 font-mono">
                         <input name="description" value="{{ role.description or '' }}" placeholder="Description"
                             class="bg-gray-900 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-100 focus:outline-none focus:border-green-600 flex-1 min-w-48">
-                        <textarea name="default_vars" rows="2" placeholder='{"key": "value"}'
-                            class="bg-gray-900 border border-gray-600 rounded px-2 py-1.5 text-xs text-gray-100 focus:outline-none focus:border-green-600 w-full font-mono">{{ role.default_vars | tojson }}</textarea>
+                        <textarea name="default_vars" rows="4" placeholder="key: value"
+                            class="bg-gray-900 border border-gray-600 rounded px-2 py-1.5 text-xs text-gray-100 focus:outline-none focus:border-green-600 w-full font-mono">{{ role.default_vars | toyaml }}</textarea>
                         {% if settings.SECRET_VARS_ENABLED %}
                         <textarea name="secret_vars" rows="2" autocomplete="off"
                             placeholder='Leave blank to keep existing secrets. Provide JSON to replace all, e.g. {"db_password": "s3cr3t"}'
@@ -53,7 +53,7 @@
                 <td class="px-4 py-3 text-gray-200">{{ role.name }}</td>
                 <td class="px-4 py-3 text-gray-400 text-xs font-mono">{{ role.ansible_role }}</td>
                 <td class="px-4 py-3 text-gray-400">{{ role.description or '—' }}</td>
-                <td class="px-4 py-3 text-gray-400 text-xs font-mono">{{ role.default_vars | tojson if role.default_vars else '—' }}</td>
+                <td class="px-4 py-3 text-gray-400 text-xs font-mono whitespace-pre">{{ role.default_vars | toyaml if role.default_vars else '—' }}</td>
                 <td class="px-4 py-3 text-gray-400 text-xs font-mono">
                     {% if settings.SECRET_VARS_ENABLED and role.secret_vars %}
                         {% for k in role.secret_vars %}<span class="mr-1">{{ k }}=<span class="text-gray-600">●●●</span></span>{% endfor %}
