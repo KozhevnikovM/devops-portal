@@ -100,6 +100,18 @@
     {% endif %}
 
     <div class="flex flex-col gap-1">
+        <label for="booking-label" class="text-xs text-gray-500">Label <span class="text-gray-600">(optional)</span></label>
+        <input
+            id="booking-label"
+            name="label"
+            type="text"
+            maxlength="128"
+            autocomplete="off"
+            placeholder="e.g. my perf test"
+            class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-gray-100 focus:outline-none focus:border-green-500 text-sm w-44"
+        >
+    </div>
+    <div class="flex flex-col gap-1">
         <label for="ttl_minutes" class="text-xs text-gray-500">Duration</label>
         <select
             id="ttl_minutes"

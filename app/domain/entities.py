@@ -163,6 +163,7 @@ class Booking:
     config_failed: bool = False
     environment_id: UUID | None = None  # parent Environment, when ordered as part of a stack
     environment_label: str | None = None  # blueprint item label (e.g. "web") within the stack
+    label: str | None = None              # user-provided display name (e.g. "my perf test")
     created_by: str | None = None  # acting dispatcher's id when ordered on behalf of the owner
     created_by_username: str | None = None  # resolved username of created_by (display only)
     namespace_id: UUID | None = None

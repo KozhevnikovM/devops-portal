@@ -415,6 +415,7 @@ Create a new booking. A booking is one of:
 |-------|------|----------|-------------|
 | `resource_type` | string | No | `VM` (default), `STATIC_VM`, or `NAMESPACE` |
 | `ttl_minutes` | integer | Yes | Booking duration in minutes; `0` = no expiry |
+| `label` | string | No | Short display name (max 128 chars, e.g. `"my perf test"`); returned in list and detail responses; `null` if omitted |
 | `image_id` | UUID | VM | VM image to deploy (by id) |
 | `image_name` | string | VM | VM image by name (alternative to `image_id`) |
 | `hw_config_id` | UUID | VM | Hardware configuration (by id) |

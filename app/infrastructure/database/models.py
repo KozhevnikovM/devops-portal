@@ -155,6 +155,7 @@ class BookingModel(Base):
         UUID(as_uuid=True), ForeignKey("environments.id", ondelete="SET NULL"), nullable=True,
     )
     environment_label: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    label: Mapped[str | None] = mapped_column(String(128), nullable=True)
     created_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 

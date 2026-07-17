@@ -134,6 +134,7 @@ async def create_booking(
     request: Request,
     ttl_minutes: int = Form(...),
     resource_type: str = Form("VM"),
+    label: str = Form(""),
     image_id: UUID | None = Form(None),
     hw_config_id: UUID | None = Form(None),
     namespace_id: UUID | None = Form(None),
@@ -170,7 +171,10 @@ async def create_booking(
                 request, session, current_user, quota_error="Select an image and hardware config",
             )
         try:
-            booking = await _use_case.execute(session, ttl_minutes, image_id, hw_config_id, user_id=str(current_user.id))
+            booking = await _use_case.execute(
+                session, ttl_minutes, image_id, hw_config_id,
+                user_id=str(current_user.id), label=label.strip() or None,
+            )
         except QuotaExceededError as exc:
             return await _render_form_error(request, session, current_user, quota_error=str(exc))
 

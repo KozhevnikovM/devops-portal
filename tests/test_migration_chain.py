@@ -13,7 +13,7 @@ def _script() -> ScriptDirectory:
 
 
 def test_single_head():
-    assert _script().get_heads() == ["0029"]
+    assert _script().get_heads() == ["0030"]
 
 
 def test_startup_script_chain_is_linear():
@@ -32,6 +32,7 @@ def test_startup_script_chain_is_linear():
     assert down["0027"] == "0026"
     assert down["0028"] == "0027"
     assert down["0029"] == "0028"
+    assert down["0030"] == "0029"
 
 
 def test_namespace_per_cluster_chain_is_linear():

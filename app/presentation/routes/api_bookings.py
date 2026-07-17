@@ -62,6 +62,8 @@ class CreateBookingRequest(BaseModel):
     static_vm_id: UUID | None = None
     # Order a specific static VM by name instead of static_vm_id.
     static_vm_name: str | None = None
+    # Optional display label (e.g. "my perf test"), max 128 chars.
+    label: str | None = None
     # Dispatcher only: order on behalf of this user (username); the booking is owned by them.
     on_behalf_of: str | None = None
 
@@ -95,6 +97,7 @@ def _summary(b: Booking) -> dict:
         "static_vm": b.static_vm_name,
         "host": b.static_vm_host,
         "username": b.static_vm_username,
+        "label": b.label,
     }
 
 
@@ -107,6 +110,7 @@ def _created(b: Booking) -> dict:
         "ttl_minutes": b.ttl_minutes,
         "expires_at": b.expires_at.isoformat(),
         "created_at": b.created_at.isoformat(),
+        "label": b.label,
     }
     if b.resource_type == ResourceType.NAMESPACE:
         base.update({
@@ -251,6 +255,7 @@ async def create_booking(
                 session, body.ttl_minutes, image_id, hw_config_id,
                 user_id=owner_id, created_by=created_by, startup_script=body.startup_script,
                 config_roles=config_roles, extra_vars=extra_vars,
+                label=body.label[:128].strip() if body.label else None,
             )
         except QuotaExceededError as exc:
             raise HTTPException(status_code=409, detail=str(exc))
