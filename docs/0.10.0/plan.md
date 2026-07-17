@@ -296,6 +296,62 @@ This is a pure structural change — no behaviour change beyond D2 and I7 being 
 
 ---
 
+## Phase 4 — UI & UX improvements (#272, #285, #107)
+
+Three user-reported quality-of-life items, shipped after Phase 3 is stable.
+
+### Item 14 — #272: Owner column on the Environments table
+
+**Problem**: The environments list page has no Owner column. Admins and dispatchers cannot tell
+who owns an environment without navigating into it.
+
+**Fix**: Add an `Owner` column header to `environments.html` and render `owner_username` (with
+a muted `via <dispatcher>` sub-line when `created_by_username` is set) in `environment_row.html`.
+Template-only change — the field is already populated by the entity and returned by the route.
+
+**Files**: `app/presentation/templates/environments.html`,
+`app/presentation/templates/partials/environment_row.html`
+
+See `docs/features/owner-column-environments.md`.
+
+---
+
+### Item 15 — #285: YAML editor for Ansible vars in admin UI
+
+**Problem**: Role `default_vars` and blueprint `extra_vars` are edited as a single-line JSON
+`<input>`. JSON is error-prone for nested maps written by hand; operators want YAML.
+
+**Fix**: Replace the `<input>` with a multi-line `<textarea>`. Accept YAML on submit
+(`yaml.safe_load`); validate it is a dict; store as a Python dict (JSON column) as today.
+Render back as YAML on edit. Add `pyyaml` to `requirements.txt`.
+
+**Files**: `app/presentation/templates/admin/catalog.html`, relevant admin route handlers,
+`requirements.txt`
+
+See `docs/features/yaml-ansible-vars.md`.
+
+---
+
+### Item 16 — #107: Human-readable label on VM booking creation
+
+**Problem**: Bookings are identified only by UUID and resource name. Users with many bookings
+want a short label ("k8s node 3", "perf test") to distinguish them.
+
+**Fix**: Add an optional `label VARCHAR(128)` column to the `bookings` table (new migration).
+Expose it in the booking creation form and API. Display it in the booking row beneath the
+resource name.
+
+**Files**: migration (new), `app/domain/entities.py`, `app/infrastructure/database/models.py`,
+`app/infrastructure/repositories/booking_repo.py`,
+`app/application/use_cases/create_booking.py`,
+`app/presentation/routes/bookings.py`, `app/presentation/routes/api.py`,
+`app/presentation/templates/partials/booking_form.html`,
+`app/presentation/templates/partials/booking_row.html`
+
+See `docs/features/booking-label.md`.
+
+---
+
 ## Data / API summary
 
 | Item | Schema change | API change |
@@ -312,8 +368,11 @@ This is a pure structural change — no behaviour change beyond D2 and I7 being 
 | P3-A′ (status constants) | None | None |
 | P3-E (NotFoundError) | None | 404 responses become slightly more precise |
 | P1-A (aggregate transitions) | None | None |
+| #272 (owner column) | None | None (template only) |
+| #285 (YAML vars editor) | None | None (input format change only; stored value unchanged) |
+| #107 (booking label) | `bookings.label VARCHAR(128) NULL` | `POST /api/bookings` accepts `label`; GET responses include `label` field |
 
-No new migrations in this release. All schema changes landed with the already-merged PRs.
+One new migration in this release: `bookings.label` (nullable, backward-compatible). All schema changes landed with the already-merged PRs.
 
 ---
 
@@ -340,6 +399,11 @@ Phase 3 (architecture quick wins)
   → Item 11: P3-A′ status groups   [0.5 day]
   → Item 12: P3-E NotFoundError    [1 day]
   → Item 13: P1-A aggregate guard  [1–2 days]
+
+Phase 4 (UI & UX)
+  → Item 14: #272 owner column     [0.5 day]
+  → Item 15: #285 YAML vars editor [1 day]
+  → Item 16: #107 booking label    [1–2 days]
 ```
 
 Each item follows the CLAUDE.md workflow: branch from fresh `main`, a `docs/bugfix/` or
