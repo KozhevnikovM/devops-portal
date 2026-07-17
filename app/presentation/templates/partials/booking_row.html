@@ -16,6 +16,9 @@
         {% endif %}
     </td>
     <td class="px-4 py-3 text-gray-300 text-sm">
+        {% if booking.label %}
+        <div class="text-xs text-gray-400 mb-0.5">{{ booking.label }}</div>
+        {% endif %}
         {% if booking.status.value == 'QUEUED' %}
         <span class="text-gray-500">Queued — position {{ booking.queue_position or '—' }}</span>
         {% elif booking.resource_type.value == 'NAMESPACE' %}

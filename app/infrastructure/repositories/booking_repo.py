@@ -89,6 +89,7 @@ def _to_entity(
         config_failed=m.config_failed,
         environment_id=m.environment_id,
         environment_label=m.environment_label,
+        label=m.label,
         created_by=m.created_by,
         created_by_username=created_by_username,
         namespace_id=m.namespace_id,
@@ -199,6 +200,7 @@ class BookingRepository:
             extra_vars=booking.extra_vars or {},
             environment_id=booking.environment_id,
             environment_label=booking.environment_label,
+            label=booking.label,
             created_by=booking.created_by,
         )
         session.add(model)

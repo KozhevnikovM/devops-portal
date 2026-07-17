@@ -72,7 +72,7 @@ def test_list_bookings_response_shape(client):
         "expires_at", "created_at", "image_id", "image_name",
         "hw_config_id", "hw_config_name", "vm_ip", "config_failed", "roles",
         "namespace", "cluster", "api_url",
-        "static_vm", "host", "username",
+        "static_vm", "host", "username", "label",
     }
     # Secrets must never appear in the list payload (#137).
     assert "vm_password" not in row
