@@ -49,6 +49,47 @@ curl -s -X POST https://dp.my-domain.com/api/users/<user-id>/password \
 
 Or use **Admin → Users → ⋮ → Reset password** in the UI.
 
+#### Recovering if you are already locked out
+
+**You still know the password (e.g. `changeme`)** — log in normally. You will be
+redirected to the change-password page; set a new password there and continue.
+
+**You have forgotten the password entirely** — reset the hash directly in the database:
+
+```bash
+# 1. Generate a bcrypt hash for your new password
+docker compose exec app python -c "
+import bcrypt, sys
+pw = sys.argv[1].encode()
+print(bcrypt.hashpw(pw, bcrypt.gensalt()).decode())
+" 'your-new-password'
+
+# 2. Open a psql shell
+docker compose exec postgres psql -U portal -d portal
+
+# 3. Paste the hash printed in step 1 (replace the $2b$... value)
+UPDATE users SET password_hash = '$2b$12$...' WHERE username = 'admin';
+\q
+
+# 4. Restart to clear any cached sessions
+docker compose restart app worker
+```
+
+**You have a second admin account or an API key** — use the API to reset without
+touching the database:
+
+```bash
+# Find the admin user ID
+curl -s https://dp.my-domain.com/api/users \
+  -H "X-API-Key: <other-admin-key>" | jq '.[] | select(.username=="admin") | .id'
+
+# Reset the password
+curl -s -X POST https://dp.my-domain.com/api/users/<id>/password \
+  -H "X-API-Key: <other-admin-key>" \
+  -H "Content-Type: application/json" \
+  -d '{"new_password": "your-new-password"}'
+```
+
 ---
 
 ## Upgrade procedure
