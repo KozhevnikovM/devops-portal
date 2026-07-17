@@ -23,20 +23,17 @@ _CreatorUser = aliased(UserModel)
 logger = logging.getLogger(__name__)
 
 
-def _guard_transition(old_value: str, new: BookingStatus, booking_id: UUID) -> None:
-    """Enforce the status-invariant (#238 Phase 2): raise IllegalStatusTransitionError on a
-    disallowed move. A no-op (old == new) is allowed — the recovery/retry paths can legitimately
-    re-write the same status. The map was validated in observe-only mode (#243) against the real
-    transitions; this flips it from logging to enforcing."""
+
+def _check_transition(old_value: str, new: BookingStatus, booking_id: UUID) -> None:
+    """Raise IllegalStatusTransitionError on a disallowed move; raise ValueError on unknown
+    stored status (fail-closed — I7). A no-op (old == new) is always allowed."""
     try:
         old = BookingStatus(old_value)
     except ValueError:
-        return
-    if old != new and not can_transition(old, new):
-        logger.warning(
-            "Disallowed booking status transition %s -> %s for booking %s",
-            old.value, new.value, booking_id,
+        raise ValueError(
+            f"Booking {booking_id} has unrecognised status {old_value!r} in the database"
         )
+    if old != new and not can_transition(old, new):
         raise IllegalStatusTransitionError(
             f"Cannot move booking {booking_id} from {old.value} to {new.value}"
         )
@@ -62,10 +59,14 @@ def _to_entity(
     static_vm: StaticVMModel | None = None,
     created_by_username: str | None = None,
 ) -> Booking:
+    try:
+        _status = BookingStatus(m.status)
+    except ValueError:
+        raise ValueError(f"Booking {m.id} has unrecognised status {m.status!r} in the database")
     return Booking(
         id=m.id,
         user_id=m.user_id,
-        status=BookingStatus(m.status),
+        status=_status,
         resource_type=ResourceType(m.resource_type),
         ttl_minutes=m.ttl_minutes,
         expires_at=m.expires_at,
@@ -161,6 +162,7 @@ def _assign_resource_and_ready(session, booking_model, resource_type: str, resou
     _, fk = _POOLED_RESOURCE[resource_type]
     setattr(booking_model, fk.key, resource.id)
     old_status = booking_model.status
+    _check_transition(old_status, BookingStatus.READY, booking_model.id)
     booking_model.status = BookingStatus.READY.value
     booking_model.expires_at = Lease.starting_now(booking_model.ttl_minutes).expires_at
     session.add(BookingAuditModel(
@@ -240,7 +242,7 @@ class BookingRepository:
         if model is None:
             raise BookingNotFoundError(booking_id)
         old_status = model.status
-        _guard_transition(old_status, status, booking_id)
+        _check_transition(old_status, status, booking_id)
         model.status = status.value
         if vm_ip is not None:
             model.vm_ip = vm_ip
@@ -419,7 +421,7 @@ class BookingRepository:
         if model is None:
             raise BookingNotFoundError(booking_id)
         old_status = model.status
-        _guard_transition(old_status, status, booking_id)
+        _check_transition(old_status, status, booking_id)
         model.status = status.value
         if vm_ip is not None:
             model.vm_ip = vm_ip

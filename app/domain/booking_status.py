@@ -1,9 +1,7 @@
 """The Booking status transition invariant (#238).
 
-`CLAUDE.md` / `docs/architecure.md` promise a status machine but no code guarded it. This models the
-allowed transitions so a violation can be detected. The map is seeded from the **real** transitions
-emitted by the code (`provision.py`, `teardown.py`, `beat_tasks.py`, the release/extend use cases and
-the queue-promotion path), not invented:
+The map is seeded from the **real** transitions emitted by the code (`provision.py`, `teardown.py`,
+`beat_tasks.py`, the release/extend use cases and the queue-promotion path), not invented:
 
     PENDING      → PROVISIONING | FAILED | RELEASING        (provision start; stale→FAILED; force-delete)
     PROVISIONING → CONFIGURING | READY | RETRY | FAILED | RELEASING
@@ -15,8 +13,8 @@ the queue-promotion path), not invented:
     RELEASING    → RELEASED | FAILED                          (teardown success / final failure)
     RELEASED     → ∅                                          (terminal)
 
-Per the staged rollout in the spec this is consumed in **observe-only** mode first (log a warning, do
-not raise); enforcement is a later step, after the map is confirmed against `booking_audit` history.
+Enforcement is active (#244); `Booking.transition_to()` and the repo write paths raise
+`IllegalStatusTransitionError` on a disallowed move.
 """
 from app.domain.enums import BookingStatus
 

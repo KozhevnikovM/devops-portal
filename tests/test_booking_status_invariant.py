@@ -45,16 +45,16 @@ def test_released_is_terminal():
 
 # ── enforce wiring raises on disallowed, allows legit + no-op (#238 Phase 2) ─────
 def test_guard_transition_raises_on_disallowed():
-    from app.infrastructure.repositories.booking_repo import _guard_transition
+    from app.infrastructure.repositories.booking_repo import _check_transition
     from app.domain.exceptions import IllegalStatusTransitionError
     with pytest.raises(IllegalStatusTransitionError):
-        _guard_transition("RELEASED", BookingStatus.READY, uuid4())  # terminal can't revive
+        _check_transition("RELEASED", BookingStatus.READY, uuid4())  # terminal can't revive
 
 
 def test_guard_transition_allows_legit_and_noop():
-    from app.infrastructure.repositories.booking_repo import _guard_transition
-    _guard_transition("PENDING", BookingStatus.PROVISIONING, uuid4())  # allowed → no raise
-    _guard_transition("READY", BookingStatus.READY, uuid4())           # no-op → no raise
+    from app.infrastructure.repositories.booking_repo import _check_transition
+    _check_transition("PENDING", BookingStatus.PROVISIONING, uuid4())  # allowed → no raise
+    _check_transition("READY", BookingStatus.READY, uuid4())           # no-op → no raise
 
 
 def test_illegal_transition_is_a_booking_error():

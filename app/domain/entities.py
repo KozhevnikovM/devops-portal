@@ -2,7 +2,9 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from uuid import UUID
 
+from app.domain.booking_status import can_transition
 from app.domain.enums import BookingStatus, DriveType, ResourceType
+from app.domain.exceptions import IllegalStatusTransitionError
 
 
 @dataclass
@@ -174,6 +176,20 @@ class Booking:
     static_vm_password: str | None = None
     static_vm_ssh_key: str | None = None
     queue_position: int | None = None  # FIFO rank for QUEUED bookings (display only)
+
+    def transition_to(self, new: BookingStatus) -> None:
+        """Enforce the status-transition invariant and advance self.status.
+
+        No-op when old == new (idempotent re-write). Raises IllegalStatusTransitionError
+        for any disallowed move.
+        """
+        if self.status == new:
+            return
+        if not can_transition(self.status, new):
+            raise IllegalStatusTransitionError(
+                f"Cannot move booking {self.id} from {self.status.value} to {new.value}"
+            )
+        self.status = new
 
 
 @dataclass
