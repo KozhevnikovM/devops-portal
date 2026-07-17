@@ -356,10 +356,10 @@
                         placeholder="Install Docker Engine">
                 </div>
                 <div class="flex flex-col gap-1.5">
-                    <label class="text-xs text-gray-500" for="new-role-vars">Default vars (JSON)</label>
-                    <input id="new-role-vars" name="default_vars" type="text" autocomplete="off"
+                    <label class="text-xs text-gray-500" for="new-role-vars">Default vars (YAML)</label>
+                    <textarea id="new-role-vars" name="default_vars" rows="3" autocomplete="off"
                         class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-56 font-mono"
-                        placeholder='{"version": "latest"}'>
+                        placeholder="version: latest"></textarea>
                 </div>
                 <div class="flex flex-col gap-1.5">
                     <div id="role-create-error" class="text-xs h-4"></div>

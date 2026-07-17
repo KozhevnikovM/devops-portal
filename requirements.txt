@@ -13,3 +13,4 @@ bcrypt>=4.0.0
 paramiko>=3.4.0
 ansible-core>=2.16
 cryptography>=42.0.0
+PyYAML>=6.0

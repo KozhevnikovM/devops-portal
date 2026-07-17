@@ -1,6 +1,8 @@
 import json
 from uuid import UUID
 
+import yaml
+
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from markupsafe import escape
@@ -37,16 +39,18 @@ _VALID_RESOURCE_TYPES = {"VM", "STATIC_VM", "NAMESPACE"}
 
 
 def _parse_default_vars(raw: str) -> dict:
-    """Parse the default_vars JSON textarea; raise ValueError on bad JSON or a non-object."""
+    """Parse the default_vars YAML textarea; raise ValueError on bad YAML or a non-mapping."""
     raw = (raw or "").strip()
     if not raw:
         return {}
     try:
-        parsed = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"default_vars must be valid JSON: {exc}")
+        parsed = yaml.safe_load(raw)
+    except yaml.YAMLError as exc:
+        raise ValueError(f"default_vars must be valid YAML: {exc}")
+    if parsed is None:
+        return {}
     if not isinstance(parsed, dict):
-        raise ValueError("default_vars must be a JSON object")
+        raise ValueError("default_vars must be a YAML mapping (key: value pairs)")
     return parsed
 
 

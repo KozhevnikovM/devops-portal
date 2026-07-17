@@ -116,15 +116,16 @@ def test_admin_create_role_via_ui(admin_client):
     assert "docker-machine" in resp.text
 
 
-def test_admin_create_role_invalid_json_shows_error(admin_client):
+def test_admin_create_role_invalid_yaml_shows_error(admin_client):
     with patch("app.presentation.routes.admin._role_repo") as repo:
         repo.create = AsyncMock()
+        # A YAML list is not a mapping — expect a validation error
         resp = admin_client.post("/admin/catalog/roles", data={
-            "name": "x", "ansible_role": "x", "default_vars": "not json",
+            "name": "x", "ansible_role": "x", "default_vars": "- item1\n- item2",
         })
     assert resp.status_code == 200
     assert resp.headers.get("HX-Retarget") == "#role-create-error"
-    assert "valid JSON" in resp.text
+    assert "mapping" in resp.text
     repo.create.assert_not_called()
 
 

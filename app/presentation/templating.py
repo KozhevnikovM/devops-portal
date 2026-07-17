@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+import yaml
 from fastapi.templating import Jinja2Templates
 
 templates = Jinja2Templates(directory="app/presentation/templates")
@@ -20,3 +21,12 @@ def _as_tz(dt: datetime, tz_name: str) -> str:
 
 
 templates.env.filters["as_tz"] = _as_tz
+
+
+def _toyaml(value: dict | None) -> str:
+    if not value:
+        return ""
+    return yaml.dump(value, default_flow_style=False, allow_unicode=True).rstrip()
+
+
+templates.env.filters["toyaml"] = _toyaml
