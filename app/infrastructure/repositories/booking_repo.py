@@ -6,7 +6,7 @@ from sqlalchemy import cast, func, or_, select, String
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session, aliased
 
-from app.domain.booking_status import can_transition
+from app.domain.booking_status import LIVE_STATUSES, can_transition
 from app.domain.entities import Booking, BookingAuditEntry
 from app.domain.enums import BookingStatus, ResourceType
 from app.domain.exceptions import BookingNotFoundError, IllegalStatusTransitionError
@@ -112,10 +112,7 @@ def _apply_resource_type_filter(stmt, resource_type: str | list[str] | None):
     return stmt.where(BookingModel.resource_type == resource_type)
 
 
-# Statuses in which a booking still holds its resource (everything but the terminal ones).
-_POOLED_LIVE_STATUSES = [
-    s.value for s in BookingStatus if s not in (BookingStatus.RELEASED, BookingStatus.FAILED)
-]
+_POOLED_LIVE_STATUSES = [s.value for s in LIVE_STATUSES]
 
 # Pooled resource model + the booking FK that references it, keyed by resource_type.
 _POOLED_RESOURCE = {

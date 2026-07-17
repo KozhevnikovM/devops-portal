@@ -20,6 +20,21 @@ not raise); enforcement is a later step, after the map is confirmed against `boo
 """
 from app.domain.enums import BookingStatus
 
+# All non-terminal statuses: a booking that has not been released or failed.
+# Used for pooled-resource availability checks (is this namespace/VM held?)
+# and quota counting (does this booking consume CPU/RAM/disk?).
+LIVE_STATUSES: frozenset[BookingStatus] = frozenset(
+    s for s in BookingStatus
+    if s not in {BookingStatus.RELEASED, BookingStatus.FAILED}
+)
+
+# Non-terminal statuses that exclude RELEASING: a child booking still
+# "owned" by its parent environment (RELEASING means teardown is in flight).
+LIVE_CHILD_STATUSES: frozenset[BookingStatus] = frozenset(
+    s for s in BookingStatus
+    if s not in {BookingStatus.RELEASED, BookingStatus.RELEASING, BookingStatus.FAILED}
+)
+
 ALLOWED_TRANSITIONS: dict[BookingStatus, set[BookingStatus]] = {
     BookingStatus.QUEUED:       {BookingStatus.READY, BookingStatus.RELEASED},
     BookingStatus.PENDING:      {BookingStatus.PROVISIONING, BookingStatus.FAILED, BookingStatus.RELEASING,

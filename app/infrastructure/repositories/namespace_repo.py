@@ -3,14 +3,11 @@ from uuid import UUID, uuid4
 from sqlalchemy import String, cast, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.booking_status import LIVE_STATUSES
 from app.domain.entities import Namespace
-from app.domain.enums import BookingStatus
 from app.infrastructure.database.models import BookingModel, NamespaceModel, UserModel
 
-# A namespace is "held" while a booking referencing it is in a non-terminal state.
-_LIVE_STATUSES = [
-    s.value for s in BookingStatus if s not in (BookingStatus.RELEASED, BookingStatus.FAILED)
-]
+_LIVE_STATUSES = [s.value for s in LIVE_STATUSES]
 
 
 def _to_entity(m: NamespaceModel) -> Namespace:
