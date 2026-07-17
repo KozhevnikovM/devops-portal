@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.domain.entities import User
 from app.domain.enums import BookingStatus, ResourceType
-from app.domain.exceptions import BookingNotFoundError
+from app.domain.exceptions import BookingNotFoundError, NotFoundError
 from app.infrastructure.auth import require_admin
 from app.infrastructure.database.session import get_async_session
 from app.infrastructure.repositories.booking_repo import BookingRepository
@@ -226,7 +226,7 @@ async def admin_update_image(
 ):
     try:
         await _image_repo.update(session, image_id, {"name": name, "vapp_template_id": vapp_template_id})
-    except ValueError as exc:
+    except NotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     images = await _image_repo.list_all(session)
     return templates.TemplateResponse(
@@ -244,7 +244,7 @@ async def admin_activate_image(
 ):
     try:
         await _image_repo.activate(session, image_id)
-    except ValueError as exc:
+    except NotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     images = await _image_repo.list_all(session)
     return templates.TemplateResponse(
@@ -262,7 +262,7 @@ async def admin_delete_image(
 ):
     try:
         await _image_repo.delete(session, image_id)
-    except ValueError as exc:
+    except NotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     except IntegrityError:
         await session.rollback()
@@ -286,7 +286,7 @@ async def admin_deactivate_image(
 ):
     try:
         await _image_repo.deactivate(session, image_id)
-    except ValueError as exc:
+    except NotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     images = await _image_repo.list_all(session)
     return templates.TemplateResponse(
@@ -374,7 +374,7 @@ async def admin_update_hw_config(
             {"name": name, "cpus": cpus, "memory_mb": memory_gb * 1024,
              "disk_mb": disk_gb * 1024, "drive_type": drive_type},
         )
-    except ValueError as exc:
+    except NotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     hw_configs = await _hw_config_repo.list_all(session)
     return templates.TemplateResponse(
@@ -392,7 +392,7 @@ async def admin_activate_hw_config(
 ):
     try:
         await _hw_config_repo.activate(session, hw_config_id)
-    except ValueError as exc:
+    except NotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     hw_configs = await _hw_config_repo.list_all(session)
     return templates.TemplateResponse(
@@ -410,7 +410,7 @@ async def admin_delete_hw_config(
 ):
     try:
         await _hw_config_repo.delete(session, hw_config_id)
-    except ValueError as exc:
+    except NotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     except IntegrityError:
         await session.rollback()
@@ -434,7 +434,7 @@ async def admin_deactivate_hw_config(
 ):
     try:
         await _hw_config_repo.deactivate(session, hw_config_id)
-    except ValueError as exc:
+    except NotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     hw_configs = await _hw_config_repo.list_all(session)
     return templates.TemplateResponse(
@@ -525,7 +525,7 @@ async def admin_update_namespace(
             session, namespace_id,
             {"name": name, "cluster_name": cluster_name, "api_url": api_url.strip() or None},
         )
-    except ValueError as exc:
+    except NotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     except IntegrityError:
         await session.rollback()
@@ -549,7 +549,7 @@ async def admin_activate_namespace(
 ):
     try:
         await _namespace_repo.activate(session, namespace_id)
-    except ValueError as exc:
+    except NotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     return await _namespace_table(request, session, current_user)
 
@@ -563,7 +563,7 @@ async def admin_delete_namespace(
 ):
     try:
         await _namespace_repo.delete(session, namespace_id)
-    except ValueError as exc:
+    except NotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     except IntegrityError:
         await session.rollback()
@@ -583,7 +583,7 @@ async def admin_deactivate_namespace(
 ):
     try:
         await _namespace_repo.deactivate(session, namespace_id)
-    except ValueError as exc:
+    except NotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     return await _namespace_table(request, session, current_user)
 
@@ -705,7 +705,7 @@ async def admin_update_static_vm(
                 "memory_mb": _gb_to_mb(memory_gb),
             },
         )
-    except ValueError as exc:
+    except NotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     except IntegrityError:
         await session.rollback()
@@ -726,7 +726,7 @@ async def admin_activate_static_vm(
 ):
     try:
         await _static_vm_repo.activate(session, static_vm_id)
-    except ValueError as exc:
+    except NotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     return await _static_vm_table(request, session, current_user)
 
@@ -740,7 +740,7 @@ async def admin_delete_static_vm(
 ):
     try:
         await _static_vm_repo.delete(session, static_vm_id)
-    except ValueError as exc:
+    except NotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     except IntegrityError:
         await session.rollback()
@@ -760,7 +760,7 @@ async def admin_deactivate_static_vm(
 ):
     try:
         await _static_vm_repo.deactivate(session, static_vm_id)
-    except ValueError as exc:
+    except NotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     return await _static_vm_table(request, session, current_user)
 
@@ -862,9 +862,9 @@ async def admin_update_role(
         fields["secret_vars"] = parsed_secrets
     try:
         await _role_repo.update(session, role_id, fields, actor=current_user.username)
+    except NotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
     except ValueError as exc:
-        if "not found" in str(exc).lower():
-            raise HTTPException(status_code=404, detail=str(exc))
         return _role_error(str(exc))
     except IntegrityError:
         await session.rollback()
@@ -881,7 +881,7 @@ async def admin_activate_role(
 ):
     try:
         await _role_repo.activate(session, role_id)
-    except ValueError as exc:
+    except NotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     return await _role_table(request, session, current_user)
 
@@ -895,7 +895,7 @@ async def admin_delete_role(
 ):
     try:
         await _role_repo.delete(session, role_id)
-    except ValueError as exc:
+    except NotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     return await _role_table(request, session, current_user)
 
@@ -909,7 +909,7 @@ async def admin_deactivate_role(
 ):
     try:
         await _role_repo.deactivate(session, role_id)
-    except ValueError as exc:
+    except NotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     return await _role_table(request, session, current_user)
 
@@ -982,7 +982,7 @@ async def admin_edit_blueprint_form(
 ):
     try:
         editing = await _blueprint_repo.get(session, blueprint_id)
-    except ValueError:
+    except NotFoundError:
         raise HTTPException(status_code=404, detail="Blueprint not found")
     return await _blueprint_table(request, session, current_user, editing_blueprint=editing)
 
@@ -1006,7 +1006,7 @@ async def admin_update_blueprint(
             session, blueprint_id,
             {"name": name, "description": description.strip() or None}, parsed_items,
         )
-    except ValueError as exc:
+    except NotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     except IntegrityError:
         await session.rollback()
@@ -1023,7 +1023,7 @@ async def admin_activate_blueprint(
 ):
     try:
         await _blueprint_repo.activate(session, blueprint_id)
-    except ValueError as exc:
+    except NotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     return await _blueprint_table(request, session, current_user)
 
@@ -1037,7 +1037,7 @@ async def admin_delete_blueprint(
 ):
     try:
         await _blueprint_repo.delete(session, blueprint_id)
-    except ValueError as exc:
+    except NotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     return await _blueprint_table(request, session, current_user)
 
@@ -1051,6 +1051,6 @@ async def admin_deactivate_blueprint(
 ):
     try:
         await _blueprint_repo.deactivate(session, blueprint_id)
-    except ValueError as exc:
+    except NotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     return await _blueprint_table(request, session, current_user)

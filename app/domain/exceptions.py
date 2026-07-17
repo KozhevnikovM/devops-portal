@@ -1,8 +1,12 @@
+class NotFoundError(Exception):
+    pass
+
+
 class BookingError(Exception):
     pass
 
 
-class BookingNotFoundError(BookingError):
+class BookingNotFoundError(NotFoundError, BookingError):
     pass
 
 
@@ -27,12 +31,36 @@ class EnvironmentError(Exception):
     pass
 
 
-class BlueprintNotFoundError(EnvironmentError):
+class BlueprintNotFoundError(NotFoundError, EnvironmentError):
     pass
 
 
 class EnvironmentItemError(EnvironmentError):
     """A blueprint item references a catalog entry that doesn't exist / isn't active."""
+
+
+class EnvironmentNotFoundError(NotFoundError):
+    pass
+
+
+class NamespaceNotFoundError(NotFoundError):
+    pass
+
+
+class StaticVMNotFoundError(NotFoundError):
+    pass
+
+
+class ImageNotFoundError(NotFoundError):
+    pass
+
+
+class HWConfigNotFoundError(NotFoundError):
+    pass
+
+
+class RoleNotFoundError(NotFoundError):
+    pass
 
 
 class AuthenticationError(Exception):

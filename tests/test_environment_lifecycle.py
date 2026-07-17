@@ -95,9 +95,10 @@ async def test_release_environment_non_owner_403():
 
 @pytest.mark.asyncio
 async def test_release_environment_missing_404():
-    from app.application.use_cases.release_environment import EnvironmentNotFoundError, ReleaseEnvironmentUseCase
+    from app.application.use_cases.release_environment import ReleaseEnvironmentUseCase
+    from app.domain.exceptions import EnvironmentNotFoundError
     env_repo = MagicMock()
-    env_repo.get = AsyncMock(side_effect=ValueError("nope"))
+    env_repo.get = AsyncMock(side_effect=EnvironmentNotFoundError("nope"))
     uc = ReleaseEnvironmentUseCase(env_repo, MagicMock())
     with pytest.raises(EnvironmentNotFoundError):
         await uc.execute(MagicMock(), uuid4(), _owner(role='admin'))
@@ -166,7 +167,7 @@ def test_api_release_environment_202(client):
 
 
 def test_api_release_environment_404(client):
-    from app.application.use_cases.release_environment import EnvironmentNotFoundError
+    from app.domain.exceptions import EnvironmentNotFoundError
     with patch("app.presentation.routes.api_environments._release_use_case") as uc:
         uc.execute = AsyncMock(side_effect=EnvironmentNotFoundError("nope"))
         resp = client.delete(f"/api/environments/{uuid4()}")

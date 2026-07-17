@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.exc import IntegrityError
 
 from app.domain.entities import HWConfig, VMImage
+from app.domain.exceptions import HWConfigNotFoundError, ImageNotFoundError
 
 
 def _make_image(**kwargs) -> VMImage:
@@ -169,7 +170,7 @@ def test_update_image_returns_updated_table(client):
 
 def test_update_image_404_for_missing(client):
     with patch("app.presentation.routes.admin._image_repo") as mock_img:
-        mock_img.update = AsyncMock(side_effect=ValueError("not found"))
+        mock_img.update = AsyncMock(side_effect=ImageNotFoundError("not found"))
         resp = client.patch(
             f"/admin/catalog/images/{uuid4()}",
             data={"name": "X", "vapp_template_id": "urn:x"},
@@ -194,7 +195,7 @@ def test_deactivate_image_returns_updated_table(client):
 
 def test_deactivate_image_404_for_missing(client):
     with patch("app.presentation.routes.admin._image_repo") as mock_img:
-        mock_img.deactivate = AsyncMock(side_effect=ValueError("not found"))
+        mock_img.deactivate = AsyncMock(side_effect=ImageNotFoundError("not found"))
         resp = client.delete(f"/admin/catalog/images/{uuid4()}")
 
     assert resp.status_code == 404
@@ -269,7 +270,7 @@ def test_update_hw_config_returns_updated_table(client):
 
 def test_update_hw_config_404_for_missing(client):
     with patch("app.presentation.routes.admin._hw_config_repo") as mock_hw:
-        mock_hw.update = AsyncMock(side_effect=ValueError("not found"))
+        mock_hw.update = AsyncMock(side_effect=HWConfigNotFoundError("not found"))
         resp = client.patch(
             f"/admin/catalog/hardware/{uuid4()}",
             data={"name": "x", "cpus": "1", "memory_gb": "1", "disk_gb": "1"},
@@ -294,7 +295,7 @@ def test_deactivate_hw_config_returns_updated_table(client):
 
 def test_deactivate_hw_config_404_for_missing(client):
     with patch("app.presentation.routes.admin._hw_config_repo") as mock_hw:
-        mock_hw.deactivate = AsyncMock(side_effect=ValueError("not found"))
+        mock_hw.deactivate = AsyncMock(side_effect=HWConfigNotFoundError("not found"))
         resp = client.delete(f"/admin/catalog/hardware/{uuid4()}")
 
     assert resp.status_code == 404
@@ -316,7 +317,7 @@ def test_activate_image_returns_updated_table(client):
 
 def test_activate_image_404_for_missing(client):
     with patch("app.presentation.routes.admin._image_repo") as mock_img:
-        mock_img.activate = AsyncMock(side_effect=ValueError("not found"))
+        mock_img.activate = AsyncMock(side_effect=ImageNotFoundError("not found"))
         resp = client.post(f"/admin/catalog/images/{uuid4()}/activate")
 
     assert resp.status_code == 404
@@ -337,7 +338,7 @@ def test_hard_delete_image_returns_updated_table(client):
 
 def test_hard_delete_image_404_for_missing(client):
     with patch("app.presentation.routes.admin._image_repo") as mock_img:
-        mock_img.delete = AsyncMock(side_effect=ValueError("not found"))
+        mock_img.delete = AsyncMock(side_effect=ImageNotFoundError("not found"))
         resp = client.delete(f"/admin/catalog/images/{uuid4()}/permanent")
 
     assert resp.status_code == 404
@@ -370,7 +371,7 @@ def test_activate_hw_config_returns_updated_table(client):
 
 def test_activate_hw_config_404_for_missing(client):
     with patch("app.presentation.routes.admin._hw_config_repo") as mock_hw:
-        mock_hw.activate = AsyncMock(side_effect=ValueError("not found"))
+        mock_hw.activate = AsyncMock(side_effect=HWConfigNotFoundError("not found"))
         resp = client.post(f"/admin/catalog/hardware/{uuid4()}/activate")
 
     assert resp.status_code == 404
@@ -390,7 +391,7 @@ def test_hard_delete_hw_config_returns_updated_table(client):
 
 def test_hard_delete_hw_config_404_for_missing(client):
     with patch("app.presentation.routes.admin._hw_config_repo") as mock_hw:
-        mock_hw.delete = AsyncMock(side_effect=ValueError("not found"))
+        mock_hw.delete = AsyncMock(side_effect=HWConfigNotFoundError("not found"))
         resp = client.delete(f"/admin/catalog/hardware/{uuid4()}/permanent")
 
     assert resp.status_code == 404

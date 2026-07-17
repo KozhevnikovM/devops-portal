@@ -4,6 +4,7 @@ from uuid import uuid4
 from datetime import datetime, timezone
 
 from app.domain.entities import VMImage, HWConfig
+from app.domain.exceptions import HWConfigNotFoundError, ImageNotFoundError
 from app.infrastructure.repositories.image_repo import ImageRepository, _to_entity as _image_to_entity
 from app.infrastructure.repositories.hw_config_repo import HWConfigRepository, _to_entity as _hw_to_entity
 from app.infrastructure.database.models import VMImageModel, HWConfigModel
@@ -65,7 +66,7 @@ async def test_image_get_raises_for_missing():
     mock_session = AsyncMock()
     mock_session.get = AsyncMock(return_value=None)
 
-    with pytest.raises(ValueError, match="not found"):
+    with pytest.raises(ImageNotFoundError, match="not found"):
         await repo.get(mock_session, uuid4())
 
 
@@ -75,7 +76,7 @@ async def test_image_get_raises_for_inactive():
     mock_session = AsyncMock()
     mock_session.get = AsyncMock(return_value=_make_image_model(is_active=False))
 
-    with pytest.raises(ValueError, match="inactive"):
+    with pytest.raises(ImageNotFoundError, match="inactive"):
         await repo.get(mock_session, uuid4())
 
 
@@ -96,7 +97,7 @@ def test_image_sync_get_raises_for_missing():
     mock_session = MagicMock()
     mock_session.get.return_value = None
 
-    with pytest.raises(ValueError, match="not found"):
+    with pytest.raises(ImageNotFoundError, match="not found"):
         repo.sync_get(mock_session, uuid4())
 
 
@@ -130,7 +131,7 @@ async def test_hw_get_raises_for_missing():
     mock_session = AsyncMock()
     mock_session.get = AsyncMock(return_value=None)
 
-    with pytest.raises(ValueError, match="not found"):
+    with pytest.raises(HWConfigNotFoundError, match="not found"):
         await repo.get(mock_session, uuid4())
 
 
@@ -140,7 +141,7 @@ async def test_hw_get_raises_for_inactive():
     mock_session = AsyncMock()
     mock_session.get = AsyncMock(return_value=_make_hw_model(is_active=False))
 
-    with pytest.raises(ValueError, match="inactive"):
+    with pytest.raises(HWConfigNotFoundError, match="inactive"):
         await repo.get(mock_session, uuid4())
 
 
@@ -161,7 +162,7 @@ def test_hw_sync_get_raises_for_missing():
     mock_session = MagicMock()
     mock_session.get.return_value = None
 
-    with pytest.raises(ValueError, match="not found"):
+    with pytest.raises(HWConfigNotFoundError, match="not found"):
         repo.sync_get(mock_session, uuid4())
 
 

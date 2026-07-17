@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.domain.entities import EnvironmentBlueprint, EnvironmentBlueprintItem
+from app.domain.exceptions import BlueprintNotFoundError
 from app.infrastructure.database.models import (
     EnvironmentBlueprintItemModel, EnvironmentBlueprintModel,
 )
@@ -62,7 +63,7 @@ class EnvironmentBlueprintRepository:
         )
         model = result.scalar_one_or_none()
         if model is None:
-            raise ValueError(f"Environment blueprint {blueprint_id} not found")
+            raise BlueprintNotFoundError(f"Environment blueprint {blueprint_id} not found")
         return _to_entity(model)
 
     async def get_by_name(self, session: AsyncSession, name: str) -> EnvironmentBlueprint | None:
@@ -92,7 +93,7 @@ class EnvironmentBlueprintRepository:
         )
         model = result.scalar_one_or_none()
         if model is None:
-            raise ValueError(f"Environment blueprint {blueprint_id} not found")
+            raise BlueprintNotFoundError(f"Environment blueprint {blueprint_id} not found")
         for key, value in fields.items():
             setattr(model, key, value)
         if items is not None:
@@ -109,13 +110,13 @@ class EnvironmentBlueprintRepository:
     async def _set_active(self, session: AsyncSession, blueprint_id: UUID, active: bool) -> None:
         model = await session.get(EnvironmentBlueprintModel, blueprint_id)
         if model is None:
-            raise ValueError(f"Environment blueprint {blueprint_id} not found")
+            raise BlueprintNotFoundError(f"Environment blueprint {blueprint_id} not found")
         model.is_active = active
         await session.commit()
 
     async def delete(self, session: AsyncSession, blueprint_id: UUID) -> None:
         model = await session.get(EnvironmentBlueprintModel, blueprint_id)
         if model is None:
-            raise ValueError(f"Environment blueprint {blueprint_id} not found")
+            raise BlueprintNotFoundError(f"Environment blueprint {blueprint_id} not found")
         await session.delete(model)
         await session.commit()

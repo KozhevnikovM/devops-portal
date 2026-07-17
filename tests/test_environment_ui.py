@@ -175,7 +175,7 @@ def test_release_environment_returns_row(client):
 
 
 def test_release_environment_404(client):
-    from app.application.use_cases.release_environment import EnvironmentNotFoundError
+    from app.domain.exceptions import EnvironmentNotFoundError
     with patch("app.presentation.routes.environments._release_use_case") as uc:
         uc.execute = AsyncMock(side_effect=EnvironmentNotFoundError("nope"))
         resp = client.delete(f"/environments/{uuid4()}")

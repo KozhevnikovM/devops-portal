@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.booking_status import LIVE_STATUSES
 from app.domain.entities import StaticVM
+from app.domain.exceptions import StaticVMNotFoundError
 from app.infrastructure.database.models import BookingModel, StaticVMModel, UserModel
 
 _LIVE_STATUSES = [s.value for s in LIVE_STATUSES]
@@ -85,7 +86,7 @@ class StaticVMRepository:
     async def get(self, session: AsyncSession, static_vm_id: UUID) -> StaticVM:
         model = await session.get(StaticVMModel, static_vm_id)
         if model is None:
-            raise ValueError(f"Static VM {static_vm_id} not found")
+            raise StaticVMNotFoundError(f"Static VM {static_vm_id} not found")
         return _to_entity(model)
 
     async def get_by_name(self, session: AsyncSession, name: str) -> StaticVM | None:
@@ -128,7 +129,7 @@ class StaticVMRepository:
     async def update(self, session: AsyncSession, static_vm_id: UUID, fields: dict) -> StaticVM:
         model = await session.get(StaticVMModel, static_vm_id)
         if model is None:
-            raise ValueError(f"Static VM {static_vm_id} not found")
+            raise StaticVMNotFoundError(f"Static VM {static_vm_id} not found")
         for key, value in fields.items():
             setattr(model, key, value)
         await session.commit()
@@ -138,21 +139,21 @@ class StaticVMRepository:
     async def activate(self, session: AsyncSession, static_vm_id: UUID) -> None:
         model = await session.get(StaticVMModel, static_vm_id)
         if model is None:
-            raise ValueError(f"Static VM {static_vm_id} not found")
+            raise StaticVMNotFoundError(f"Static VM {static_vm_id} not found")
         model.is_active = True
         await session.commit()
 
     async def deactivate(self, session: AsyncSession, static_vm_id: UUID) -> None:
         model = await session.get(StaticVMModel, static_vm_id)
         if model is None:
-            raise ValueError(f"Static VM {static_vm_id} not found")
+            raise StaticVMNotFoundError(f"Static VM {static_vm_id} not found")
         model.is_active = False
         await session.commit()
 
     async def delete(self, session: AsyncSession, static_vm_id: UUID) -> None:
         model = await session.get(StaticVMModel, static_vm_id)
         if model is None:
-            raise ValueError(f"Static VM {static_vm_id} not found")
+            raise StaticVMNotFoundError(f"Static VM {static_vm_id} not found")
         await session.delete(model)
         await session.commit()
 
