@@ -448,6 +448,50 @@ curl -s -X POST http://localhost:8000/api/users/<user-id>/password \
 
 The reset invalidates every active session for that user — they must log in again.
 
+#### Recovering the admin password when locked out
+
+Setting `ADMIN_PASSWORD` in `.env` and restarting does **not** reset an existing account —
+the seed only runs when the database has no users at all. Use one of the paths below.
+
+**You still know the password** — log in normally and use **Profile → Change Password**.
+
+**You have a second admin account or an API key** — find the user ID and call the reset
+endpoint:
+
+```bash
+# Find the admin user ID
+curl -s http://localhost:8000/api/users \
+  -H "Authorization: Bearer dp_<other-admin-key>" | jq '.[] | select(.username=="admin") | .id'
+
+# Reset the password
+curl -s -X POST http://localhost:8000/api/users/<id>/password \
+  -H "Authorization: Bearer dp_<other-admin-key>" \
+  -H "Content-Type: application/json" \
+  -d '{"new_password": "your-new-password"}'
+```
+
+**Completely locked out (no other admin, password unknown)** — reset the hash directly
+in the database:
+
+```bash
+# 1. Generate a bcrypt hash for your new password
+docker compose exec app python -c "
+import bcrypt, sys
+pw = sys.argv[1].encode()
+print(bcrypt.hashpw(pw, bcrypt.gensalt()).decode())
+" 'your-new-password'
+
+# 2. Open a psql shell
+docker compose exec postgres psql -U portal -d portal
+
+# 3. Paste the hash printed in step 1 (replace the $2b$... value)
+UPDATE users SET password_hash = '$2b$12$...' WHERE username = 'admin';
+\q
+
+# 4. Restart to invalidate any cached sessions
+docker compose restart app worker
+```
+
 ### Dispatcher role (order on behalf of others)
 
 A user whose role is **`dispatcher`** can order resources **for another user** — a CI pipeline holds
