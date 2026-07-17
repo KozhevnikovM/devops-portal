@@ -34,7 +34,7 @@ class TerraformVcdAdapter:
     def _provider_block(self, api_token: str | None = None) -> str:
         ssl = str(settings.VCD_ALLOW_UNVERIFIED_SSL).lower()
         if api_token or settings.VCD_API_TOKEN:
-            # Credentials supplied via VCD_TOKEN env var at subprocess time — not written to disk.
+            # Credentials supplied via VCD_API_TOKEN env var at subprocess time — not written to disk.
             return textwrap.dedent(f"""\
                 provider "vcd" {{
                   url                  = "{settings.VCD_URL}"
@@ -62,7 +62,7 @@ class TerraformVcdAdapter:
         """Credential env vars for the terraform subprocess — never written to disk."""
         token = api_token or settings.VCD_API_TOKEN
         if token:
-            return {"VCD_TOKEN": token}
+            return {"VCD_API_TOKEN": token}
         return {"VCD_USER": settings.VCD_USER, "VCD_PASSWORD": settings.VCD_PASSWORD}
 
     def _write_workspace(self, workspace_dir: Path, config: dict, api_token: str | None = None) -> None:
