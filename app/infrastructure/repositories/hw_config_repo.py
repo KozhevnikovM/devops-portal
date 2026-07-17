@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
 from app.domain.entities import HWConfig
+from app.domain.exceptions import HWConfigNotFoundError
 from app.infrastructure.database.models import HWConfigModel
 
 
@@ -39,7 +40,7 @@ class HWConfigRepository:
     async def get(self, session: AsyncSession, hw_config_id: UUID) -> HWConfig:
         model = await session.get(HWConfigModel, hw_config_id)
         if model is None or not model.is_active:
-            raise ValueError(f"Hardware config {hw_config_id} not found or inactive")
+            raise HWConfigNotFoundError(f"Hardware config {hw_config_id} not found or inactive")
         return _to_entity(model)
 
     async def get_by_name(self, session: AsyncSession, name: str) -> HWConfig | None:
@@ -74,7 +75,7 @@ class HWConfigRepository:
     async def update(self, session: AsyncSession, hw_config_id: UUID, fields: dict) -> HWConfig:
         model = await session.get(HWConfigModel, hw_config_id)
         if model is None:
-            raise ValueError(f"Hardware config {hw_config_id} not found")
+            raise HWConfigNotFoundError(f"Hardware config {hw_config_id} not found")
         for key, value in fields.items():
             setattr(model, key, value)
         await session.commit()
@@ -84,26 +85,26 @@ class HWConfigRepository:
     async def activate(self, session: AsyncSession, hw_config_id: UUID) -> None:
         model = await session.get(HWConfigModel, hw_config_id)
         if model is None:
-            raise ValueError(f"Hardware config {hw_config_id} not found")
+            raise HWConfigNotFoundError(f"Hardware config {hw_config_id} not found")
         model.is_active = True
         await session.commit()
 
     async def deactivate(self, session: AsyncSession, hw_config_id: UUID) -> None:
         model = await session.get(HWConfigModel, hw_config_id)
         if model is None:
-            raise ValueError(f"Hardware config {hw_config_id} not found")
+            raise HWConfigNotFoundError(f"Hardware config {hw_config_id} not found")
         model.is_active = False
         await session.commit()
 
     async def delete(self, session: AsyncSession, hw_config_id: UUID) -> None:
         model = await session.get(HWConfigModel, hw_config_id)
         if model is None:
-            raise ValueError(f"Hardware config {hw_config_id} not found")
+            raise HWConfigNotFoundError(f"Hardware config {hw_config_id} not found")
         await session.delete(model)
         await session.commit()
 
     def sync_get(self, session: Session, hw_config_id: UUID) -> HWConfig:
         model = session.get(HWConfigModel, hw_config_id)
         if model is None:
-            raise ValueError(f"Hardware config {hw_config_id} not found")
+            raise HWConfigNotFoundError(f"Hardware config {hw_config_id} not found")
         return _to_entity(model)

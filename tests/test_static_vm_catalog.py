@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.exc import IntegrityError
 
 from app.domain.entities import StaticVM
+from app.domain.exceptions import StaticVMNotFoundError
 
 
 def _make_svm(**kwargs) -> StaticVM:
@@ -211,7 +212,7 @@ def test_update_static_vm_returns_updated_table(client):
 
 def test_update_static_vm_404_for_missing(client):
     with patch("app.presentation.routes.admin._static_vm_repo") as mock_svm:
-        mock_svm.update = AsyncMock(side_effect=ValueError("not found"))
+        mock_svm.update = AsyncMock(side_effect=StaticVMNotFoundError("not found"))
         resp = client.patch(
             f"/admin/catalog/static-vms/{uuid4()}",
             data={
@@ -253,7 +254,7 @@ def test_activate_static_vm_returns_updated_table(client):
 
 def test_activate_static_vm_404_for_missing(client):
     with patch("app.presentation.routes.admin._static_vm_repo") as mock_svm:
-        mock_svm.activate = AsyncMock(side_effect=ValueError("not found"))
+        mock_svm.activate = AsyncMock(side_effect=StaticVMNotFoundError("not found"))
         resp = client.post(f"/admin/catalog/static-vms/{uuid4()}/activate")
 
     assert resp.status_code == 404
@@ -273,7 +274,7 @@ def test_hard_delete_static_vm_returns_updated_table(client):
 
 def test_hard_delete_static_vm_404_for_missing(client):
     with patch("app.presentation.routes.admin._static_vm_repo") as mock_svm:
-        mock_svm.delete = AsyncMock(side_effect=ValueError("not found"))
+        mock_svm.delete = AsyncMock(side_effect=StaticVMNotFoundError("not found"))
         resp = client.delete(f"/admin/catalog/static-vms/{uuid4()}/permanent")
 
     assert resp.status_code == 404

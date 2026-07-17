@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.booking_status import LIVE_STATUSES
 from app.domain.entities import Namespace
+from app.domain.exceptions import NamespaceNotFoundError
 from app.infrastructure.database.models import BookingModel, NamespaceModel, UserModel
 
 _LIVE_STATUSES = [s.value for s in LIVE_STATUSES]
@@ -71,7 +72,7 @@ class NamespaceRepository:
     async def get(self, session: AsyncSession, namespace_id: UUID) -> Namespace:
         model = await session.get(NamespaceModel, namespace_id)
         if model is None:
-            raise ValueError(f"Namespace {namespace_id} not found")
+            raise NamespaceNotFoundError(f"Namespace {namespace_id} not found")
         return _to_entity(model)
 
     async def get_by_name(self, session: AsyncSession, name: str) -> list[Namespace]:
@@ -108,7 +109,7 @@ class NamespaceRepository:
     async def update(self, session: AsyncSession, namespace_id: UUID, fields: dict) -> Namespace:
         model = await session.get(NamespaceModel, namespace_id)
         if model is None:
-            raise ValueError(f"Namespace {namespace_id} not found")
+            raise NamespaceNotFoundError(f"Namespace {namespace_id} not found")
         for key, value in fields.items():
             setattr(model, key, value)
         await session.commit()
@@ -118,21 +119,21 @@ class NamespaceRepository:
     async def activate(self, session: AsyncSession, namespace_id: UUID) -> None:
         model = await session.get(NamespaceModel, namespace_id)
         if model is None:
-            raise ValueError(f"Namespace {namespace_id} not found")
+            raise NamespaceNotFoundError(f"Namespace {namespace_id} not found")
         model.is_active = True
         await session.commit()
 
     async def deactivate(self, session: AsyncSession, namespace_id: UUID) -> None:
         model = await session.get(NamespaceModel, namespace_id)
         if model is None:
-            raise ValueError(f"Namespace {namespace_id} not found")
+            raise NamespaceNotFoundError(f"Namespace {namespace_id} not found")
         model.is_active = False
         await session.commit()
 
     async def delete(self, session: AsyncSession, namespace_id: UUID) -> None:
         model = await session.get(NamespaceModel, namespace_id)
         if model is None:
-            raise ValueError(f"Namespace {namespace_id} not found")
+            raise NamespaceNotFoundError(f"Namespace {namespace_id} not found")
         await session.delete(model)
         await session.commit()
 

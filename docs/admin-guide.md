@@ -629,6 +629,15 @@ admin catalog hardware form). A booking's disk counts toward the matching drive-
 
 Release a `READY` or `FAILED` booking to free up its resources and retry.
 
+### Not-found errors (HTTP 404)
+
+Repositories raise typed `NotFoundError` subclasses when a catalog entry or resource cannot be
+located.  Each entity has its own subclass (`EnvironmentNotFoundError`, `ImageNotFoundError`,
+`HWConfigNotFoundError`, `NamespaceNotFoundError`, `StaticVMNotFoundError`, `RoleNotFoundError`,
+`BlueprintNotFoundError`, `BookingNotFoundError`).  All are subclasses of `NotFoundError` so a
+single `except NotFoundError` in route code is sufficient.  The API surfaces these as
+`HTTP 404` with the exception message in `detail`.
+
 ### Inspecting a failed booking
 
 A `FAILED` booking row shows the failure message inline, and its **⋮** menu has an **Audit log**

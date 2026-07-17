@@ -6,13 +6,9 @@ from app.application.ports import EnvironmentRepositoryPort
 from app.application.use_cases._permissions import can_manage
 from app.domain.entities import Environment, User
 from app.domain.enums import BookingStatus
-from app.domain.exceptions import BookingPermissionError, EnvironmentError
+from app.domain.exceptions import BookingPermissionError, EnvironmentError, EnvironmentNotFoundError
 
 _TERMINAL = {BookingStatus.RELEASED, BookingStatus.FAILED}
-
-
-class EnvironmentNotFoundError(EnvironmentError):
-    pass
 
 
 class ReleaseEnvironmentUseCase:
@@ -30,10 +26,7 @@ class ReleaseEnvironmentUseCase:
     async def execute(
         self, session: AsyncSession, environment_id: UUID, current_user: User, *, force: bool = False
     ) -> Environment:
-        try:
-            env = await self._env_repo.get(session, environment_id)
-        except ValueError:
-            raise EnvironmentNotFoundError(f"Environment {environment_id} not found")
+        env = await self._env_repo.get(session, environment_id)
 
         if not force and not can_manage(owner_id=env.user_id, created_by=env.created_by, user=current_user):
             raise BookingPermissionError("Not the environment owner")

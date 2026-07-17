@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.domain.entities import User
 from app.domain.enums import DriveType
+from app.domain.exceptions import NotFoundError
 from app.infrastructure.auth import require_admin, require_user
 from app.infrastructure.database.session import get_async_session
 from app.infrastructure.repositories.image_repo import ImageRepository
@@ -222,7 +223,7 @@ async def update_image(
         raise HTTPException(status_code=422, detail="No fields to update")
     try:
         return await _image_repo.update(session, image_id, fields)
-    except ValueError as exc:
+    except NotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
 
 
@@ -234,7 +235,7 @@ async def deactivate_image(
 ):
     try:
         await _image_repo.deactivate(session, image_id)
-    except ValueError as exc:
+    except NotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
 
 
@@ -272,7 +273,7 @@ async def update_hardware(
         raise HTTPException(status_code=422, detail="No fields to update")
     try:
         return await _hw_config_repo.update(session, hw_config_id, fields)
-    except ValueError as exc:
+    except NotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
 
 
@@ -284,7 +285,7 @@ async def deactivate_hardware(
 ):
     try:
         await _hw_config_repo.deactivate(session, hw_config_id)
-    except ValueError as exc:
+    except NotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
 
 
@@ -383,9 +384,9 @@ async def update_role(
         raise HTTPException(status_code=422, detail="No fields to update")
     try:
         return await _role_repo.update(session, role_id, fields, actor=current_user.username)
+    except NotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
     except ValueError as exc:
-        if "not found" in str(exc).lower():
-            raise HTTPException(status_code=404, detail=str(exc))
         raise HTTPException(status_code=422, detail=str(exc))
 
 
@@ -397,7 +398,7 @@ async def deactivate_role(
 ):
     try:
         await _role_repo.deactivate(session, role_id)
-    except ValueError as exc:
+    except NotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
 
 
@@ -438,7 +439,7 @@ async def update_blueprint(
         raise HTTPException(status_code=422, detail="No fields to update")
     try:
         return await _blueprint_repo.update(session, blueprint_id, fields, items)
-    except ValueError as exc:
+    except NotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     except IntegrityError:
         await session.rollback()
@@ -453,5 +454,5 @@ async def deactivate_blueprint(
 ):
     try:
         await _blueprint_repo.deactivate(session, blueprint_id)
-    except ValueError as exc:
+    except NotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))

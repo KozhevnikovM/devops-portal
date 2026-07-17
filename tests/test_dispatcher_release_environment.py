@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 
 from app.domain.entities import Booking, Environment, User
 from app.domain.enums import BookingStatus, ResourceType
-from app.domain.exceptions import BookingPermissionError
+from app.domain.exceptions import BookingPermissionError, EnvironmentNotFoundError
 
 
 def _user(role="user", username="alice"):
@@ -110,7 +110,7 @@ def test_dispatcher_nonexistent_environment_gets_404():
     try:
         with patch("app.presentation.routes.environments._env_repo") as er, \
              patch("app.presentation.routes.environments._release_use_case") as uc:
-            er.get = AsyncMock(side_effect=ValueError("not found"))
+            er.get = AsyncMock(side_effect=EnvironmentNotFoundError("not found"))
             resp = cl.delete(f"/environments/{uuid4()}?on_behalf_of=alice")
     finally:
         app.dependency_overrides.clear()

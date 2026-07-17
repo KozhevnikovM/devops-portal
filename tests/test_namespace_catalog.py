@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.exc import IntegrityError
 
 from app.domain.entities import Namespace
+from app.domain.exceptions import NamespaceNotFoundError
 
 
 def _make_ns(**kwargs) -> Namespace:
@@ -136,7 +137,7 @@ def test_update_namespace_returns_updated_table(client):
 
 def test_update_namespace_404_for_missing(client):
     with patch("app.presentation.routes.admin._namespace_repo") as mock_ns:
-        mock_ns.update = AsyncMock(side_effect=ValueError("not found"))
+        mock_ns.update = AsyncMock(side_effect=NamespaceNotFoundError("not found"))
         resp = client.patch(
             f"/admin/catalog/namespaces/{uuid4()}",
             data={"name": "x", "cluster_name": "c", "api_url": ""},
@@ -175,7 +176,7 @@ def test_activate_namespace_returns_updated_table(client):
 
 def test_activate_namespace_404_for_missing(client):
     with patch("app.presentation.routes.admin._namespace_repo") as mock_ns:
-        mock_ns.activate = AsyncMock(side_effect=ValueError("not found"))
+        mock_ns.activate = AsyncMock(side_effect=NamespaceNotFoundError("not found"))
         resp = client.post(f"/admin/catalog/namespaces/{uuid4()}/activate")
 
     assert resp.status_code == 404
@@ -195,7 +196,7 @@ def test_hard_delete_namespace_returns_updated_table(client):
 
 def test_hard_delete_namespace_404_for_missing(client):
     with patch("app.presentation.routes.admin._namespace_repo") as mock_ns:
-        mock_ns.delete = AsyncMock(side_effect=ValueError("not found"))
+        mock_ns.delete = AsyncMock(side_effect=NamespaceNotFoundError("not found"))
         resp = client.delete(f"/admin/catalog/namespaces/{uuid4()}/permanent")
 
     assert resp.status_code == 404

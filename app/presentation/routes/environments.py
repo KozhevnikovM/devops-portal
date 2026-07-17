@@ -10,7 +10,8 @@ from app.domain.entities import User
 from app.domain.enums import BookingStatus
 from app.domain.exceptions import (
     BlueprintNotFoundError, BookingPermissionError, EnvironmentItemError,
-    NamespaceUnavailableError, QuotaExceededError, StaticVMUnavailableError,
+    EnvironmentNotFoundError, NamespaceUnavailableError, NotFoundError,
+    QuotaExceededError, StaticVMUnavailableError,
 )
 from app.infrastructure.auth import require_user
 from app.infrastructure.database.session import get_async_session
@@ -18,7 +19,6 @@ from app.presentation.routes.api_environments import (
     _blueprint_repo, _derived_status, _env_repo, _namespace_repo, _order_use_case, _release_use_case,
 )
 from app.application.use_cases._permissions import can_manage
-from app.application.use_cases.release_environment import EnvironmentNotFoundError
 from app.presentation.templating import templates
 
 router = APIRouter()
@@ -121,7 +121,7 @@ async def environment_row(
 ):
     try:
         env = await _env_repo.get(session, environment_id)
-    except ValueError:
+    except NotFoundError:
         raise HTTPException(status_code=404, detail="Environment not found")
     if not can_manage(owner_id=env.user_id, created_by=env.created_by, user=current_user):
         raise HTTPException(status_code=403, detail="Not the environment owner")
@@ -148,7 +148,7 @@ async def release_environment(
             raise HTTPException(status_code=403, detail="Only a dispatcher may act on behalf of another user")
         try:
             env = await _env_repo.get(session, environment_id)
-        except ValueError:
+        except NotFoundError:
             raise HTTPException(status_code=404, detail="Environment not found")
         if env.owner_username != on_behalf_of:
             raise HTTPException(status_code=403, detail=f"Environment is not owned by '{on_behalf_of}'")

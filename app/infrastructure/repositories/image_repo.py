@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
 from app.domain.entities import VMImage
+from app.domain.exceptions import ImageNotFoundError
 from app.infrastructure.database.models import VMImageModel
 
 
@@ -36,7 +37,7 @@ class ImageRepository:
     async def get(self, session: AsyncSession, image_id: UUID) -> VMImage:
         model = await session.get(VMImageModel, image_id)
         if model is None or not model.is_active:
-            raise ValueError(f"VM image {image_id} not found or inactive")
+            raise ImageNotFoundError(f"VM image {image_id} not found or inactive")
         return _to_entity(model)
 
     async def get_by_name(self, session: AsyncSession, name: str) -> VMImage | None:
@@ -60,7 +61,7 @@ class ImageRepository:
     async def update(self, session: AsyncSession, image_id: UUID, fields: dict) -> VMImage:
         model = await session.get(VMImageModel, image_id)
         if model is None:
-            raise ValueError(f"VM image {image_id} not found")
+            raise ImageNotFoundError(f"VM image {image_id} not found")
         for key, value in fields.items():
             setattr(model, key, value)
         await session.commit()
@@ -70,26 +71,26 @@ class ImageRepository:
     async def activate(self, session: AsyncSession, image_id: UUID) -> None:
         model = await session.get(VMImageModel, image_id)
         if model is None:
-            raise ValueError(f"VM image {image_id} not found")
+            raise ImageNotFoundError(f"VM image {image_id} not found")
         model.is_active = True
         await session.commit()
 
     async def deactivate(self, session: AsyncSession, image_id: UUID) -> None:
         model = await session.get(VMImageModel, image_id)
         if model is None:
-            raise ValueError(f"VM image {image_id} not found")
+            raise ImageNotFoundError(f"VM image {image_id} not found")
         model.is_active = False
         await session.commit()
 
     async def delete(self, session: AsyncSession, image_id: UUID) -> None:
         model = await session.get(VMImageModel, image_id)
         if model is None:
-            raise ValueError(f"VM image {image_id} not found")
+            raise ImageNotFoundError(f"VM image {image_id} not found")
         await session.delete(model)
         await session.commit()
 
     def sync_get(self, session: Session, image_id: UUID) -> VMImage:
         model = session.get(VMImageModel, image_id)
         if model is None:
-            raise ValueError(f"VM image {image_id} not found")
+            raise ImageNotFoundError(f"VM image {image_id} not found")
         return _to_entity(model)

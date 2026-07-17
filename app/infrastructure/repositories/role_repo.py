@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.domain.entities import Role
+from app.domain.exceptions import RoleNotFoundError
 from app.infrastructure.crypto import encrypt_dict
 from app.infrastructure.database.models import RoleModel
 
@@ -44,7 +45,7 @@ class RoleRepository:
     async def get(self, session: AsyncSession, role_id: UUID) -> Role:
         model = await session.get(RoleModel, role_id)
         if model is None:
-            raise ValueError(f"Role {role_id} not found")
+            raise RoleNotFoundError(f"Role {role_id} not found")
         return _to_entity(model)
 
     async def get_by_name(self, session: AsyncSession, name: str) -> Role | None:
@@ -81,7 +82,7 @@ class RoleRepository:
                      actor: str = "unknown") -> Role:
         model = await session.get(RoleModel, role_id)
         if model is None:
-            raise ValueError(f"Role {role_id} not found")
+            raise RoleNotFoundError(f"Role {role_id} not found")
         secret_vars = fields.pop("secret_vars", None)
         for key, value in fields.items():
             setattr(model, key, value)
@@ -101,20 +102,20 @@ class RoleRepository:
     async def activate(self, session: AsyncSession, role_id: UUID) -> None:
         model = await session.get(RoleModel, role_id)
         if model is None:
-            raise ValueError(f"Role {role_id} not found")
+            raise RoleNotFoundError(f"Role {role_id} not found")
         model.is_active = True
         await session.commit()
 
     async def deactivate(self, session: AsyncSession, role_id: UUID) -> None:
         model = await session.get(RoleModel, role_id)
         if model is None:
-            raise ValueError(f"Role {role_id} not found")
+            raise RoleNotFoundError(f"Role {role_id} not found")
         model.is_active = False
         await session.commit()
 
     async def delete(self, session: AsyncSession, role_id: UUID) -> None:
         model = await session.get(RoleModel, role_id)
         if model is None:
-            raise ValueError(f"Role {role_id} not found")
+            raise RoleNotFoundError(f"Role {role_id} not found")
         await session.delete(model)
         await session.commit()

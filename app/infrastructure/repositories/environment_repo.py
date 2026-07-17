@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session, aliased
 from app.domain.booking_status import LIVE_CHILD_STATUSES
 from app.domain.entities import Environment
 from app.domain.enums import BookingStatus, ResourceType
+from app.domain.exceptions import EnvironmentNotFoundError
 from app.domain.lease import Lease
 from app.infrastructure.database.models import (
     BookingModel, EnvironmentModel, NamespaceModel, StaticVMModel, UserModel,
@@ -91,7 +92,7 @@ class EnvironmentRepository:
         )
         row = result.first()
         if row is None:
-            raise ValueError(f"Environment {environment_id} not found")
+            raise EnvironmentNotFoundError(f"Environment {environment_id} not found")
         model, owner, creator = row
         children = await self._children(session, environment_id)
         return _to_entity(model, bookings=children, owner_username=owner, created_by_username=creator)

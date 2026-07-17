@@ -5,13 +5,12 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.application.use_cases.release_environment import EnvironmentNotFoundError
 from app.presentation.routes._dispatch import resolve_owner
 from app.domain.entities import Environment, User
 from app.domain.enums import BookingStatus, ResourceType
 from app.domain.exceptions import (
-    BlueprintNotFoundError, BookingPermissionError, EnvironmentItemError, NamespaceUnavailableError,
-    QuotaExceededError, StaticVMUnavailableError,
+    BlueprintNotFoundError, BookingPermissionError, EnvironmentItemError, EnvironmentNotFoundError,
+    NamespaceUnavailableError, NotFoundError, QuotaExceededError, StaticVMUnavailableError,
 )
 from app.infrastructure.auth import require_user
 from app.infrastructure.database.session import get_async_session
@@ -227,7 +226,7 @@ async def get_environment(
 ):
     try:
         env = await _env_repo.get(session, environment_id)
-    except ValueError:
+    except NotFoundError:
         raise HTTPException(status_code=404, detail="Environment not found")
     return _serialize(env)
 
