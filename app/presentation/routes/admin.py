@@ -55,21 +55,23 @@ def _parse_default_vars(raw: str) -> dict:
 
 
 def _parse_secret_vars(raw: str) -> dict | None:
-    """Parse the secret_vars JSON textarea.
+    """Parse the secret_vars YAML textarea.
 
     Returns None when blank (meaning "keep existing").
-    Returns {} when the field is explicitly ``{}``.
-    Raises ValueError on bad JSON or non-object.
+    Returns {} when the field is explicitly empty mapping.
+    Raises ValueError on bad YAML or a non-mapping.
     """
     raw = (raw or "").strip()
     if not raw:
         return None
     try:
-        parsed = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"secret_vars must be valid JSON: {exc}")
+        parsed = yaml.safe_load(raw)
+    except yaml.YAMLError as exc:
+        raise ValueError(f"secret_vars must be valid YAML: {exc}")
+    if parsed is None:
+        return {}
     if not isinstance(parsed, dict):
-        raise ValueError("secret_vars must be a JSON object")
+        raise ValueError("secret_vars must be a YAML mapping (key: value pairs)")
     return parsed
 
 

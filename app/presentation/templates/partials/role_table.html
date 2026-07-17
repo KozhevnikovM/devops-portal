@@ -33,9 +33,9 @@
                         <textarea name="default_vars" rows="4" placeholder="key: value"
                             class="bg-gray-900 border border-gray-600 rounded px-2 py-1.5 text-xs text-gray-100 focus:outline-none focus:border-green-600 w-full font-mono">{{ role.default_vars | toyaml }}</textarea>
                         {% if settings.SECRET_VARS_ENABLED %}
-                        <textarea name="secret_vars" rows="2" autocomplete="off"
-                            placeholder='Leave blank to keep existing secrets. Provide JSON to replace all, e.g. {"db_password": "s3cr3t"}'
-                            class="bg-gray-900 border border-gray-600 rounded px-2 py-1.5 text-xs text-gray-100 focus:outline-none focus:border-yellow-600 w-full font-mono placeholder-gray-600">{{ secret_vars_scaffold | tojson if secret_vars_scaffold else '' }}</textarea>
+                        <textarea name="secret_vars" rows="4" autocomplete="off"
+                            placeholder="Leave blank to keep existing secrets. Provide YAML to replace all, e.g.&#10;db_password: s3cr3t"
+                            class="bg-gray-900 border border-gray-600 rounded px-2 py-1.5 text-xs text-gray-100 focus:outline-none focus:border-yellow-600 w-full font-mono placeholder-gray-600">{{ secret_vars_scaffold | toyaml if secret_vars_scaffold else '' }}</textarea>
                         <p class="text-xs text-gray-500 w-full -mt-1">Secret vars: blank = keep existing; <code>{}</code> = clear all; JSON = replace all (values will be encrypted)</p>
                         {% endif %}
                         <button type="submit" class="text-xs px-3 py-1.5 rounded bg-green-700 text-green-100 hover:bg-green-600 transition-colors">Save</button>
