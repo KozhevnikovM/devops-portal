@@ -22,9 +22,6 @@
         {% if ns.name %}
         <div class="text-xs text-cyan-400/80 font-mono" title="Namespace">ns: {{ ns.name }}</div>
         {% endif %}
-        {% if environment.created_by_username %}
-        <div class="text-[10px] text-purple-400/80" title="Ordered on behalf of {{ environment.owner_username }} by a dispatcher">via {{ environment.created_by_username }}</div>
-        {% endif %}
     </td>
     <td class="px-4 py-3">
         <span class="text-xs px-2 py-1 rounded font-semibold status-{{ environment.derived_status }}">
@@ -49,6 +46,12 @@
             <span class="text-gray-600 text-xs">no resources</span>
             {% endfor %}
         </div>
+    </td>
+    <td class="px-4 py-3 text-gray-300 text-sm">
+        {{ environment.owner_username or '—' }}
+        {% if environment.created_by_username %}
+        <div class="text-[10px] text-purple-400/80">via {{ environment.created_by_username }}</div>
+        {% endif %}
     </td>
     <td class="px-4 py-3 text-gray-400 text-xs">
         {% if environment.derived_status == 'PROVISIONING' %}
