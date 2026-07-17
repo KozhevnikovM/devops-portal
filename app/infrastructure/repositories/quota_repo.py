@@ -6,18 +6,12 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.domain.booking_status import LIVE_STATUSES
 from app.domain.entities import Quota
-from app.domain.enums import BookingStatus, DriveType
+from app.domain.enums import DriveType
 from app.infrastructure.database.models import BookingModel, QuotaModel
 
-_ACTIVE_STATUSES = [
-    BookingStatus.PENDING.value,
-    BookingStatus.PROVISIONING.value,
-    BookingStatus.CONFIGURING.value,
-    BookingStatus.RETRY.value,
-    BookingStatus.READY.value,
-    BookingStatus.RELEASING.value,
-]
+_ACTIVE_STATUSES = [s.value for s in LIVE_STATUSES]
 
 
 def _to_entity(m: QuotaModel) -> Quota:

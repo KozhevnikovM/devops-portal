@@ -5,6 +5,7 @@ from sqlalchemy import String, cast, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session, aliased
 
+from app.domain.booking_status import LIVE_CHILD_STATUSES
 from app.domain.entities import Environment
 from app.domain.enums import BookingStatus, ResourceType
 from app.domain.lease import Lease
@@ -36,11 +37,7 @@ def _stamp_lease_if_all_ready(session: Session, env: EnvironmentModel) -> bool:
         c.expires_at = deadline
     return True
 
-# Child statuses still worth releasing (everything but the terminal/already-tearing-down ones).
-_LIVE_CHILD_STATUSES = [
-    s.value for s in BookingStatus
-    if s not in (BookingStatus.RELEASED, BookingStatus.RELEASING, BookingStatus.FAILED)
-]
+_LIVE_CHILD_STATUSES = [s.value for s in LIVE_CHILD_STATUSES]
 
 
 def _to_entity(m: EnvironmentModel, bookings=None, owner_username=None, created_by_username=None) -> Environment:
