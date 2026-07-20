@@ -213,9 +213,8 @@ async def test_resolve_item_reads_spec_vars():
             "vars": {"deploy_env": "prod", "replicas": 2},
         },
     )
-    with patch("app.application.use_cases.order_environment.settings") as s:
-        s.SECRET_VARS_ENABLED = True
-        result = await uc._resolve_item(None, item)
+    uc._secret_vars_enabled = True
+    result = await uc._resolve_item(None, item)
 
     assert result["extra_vars"] == {"deploy_env": "prod", "replicas": 2}
 
@@ -240,7 +239,6 @@ async def test_resolve_item_rejects_invalid_var_name():
             "vars": {"bad-key": "value"},
         },
     )
-    with patch("app.application.use_cases.order_environment.settings") as s:
-        s.SECRET_VARS_ENABLED = True
-        with pytest.raises(EnvironmentItemError, match="bad-key"):
-            await uc._resolve_item(None, item)
+    uc._secret_vars_enabled = True
+    with pytest.raises(EnvironmentItemError, match="bad-key"):
+        await uc._resolve_item(None, item)

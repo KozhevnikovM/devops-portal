@@ -169,7 +169,13 @@ services:
         APT_REPO_HOST: ${APT_REPO_HOST:-}
         APT_REPO_USER: ${APT_REPO_USER:-token}
         ANSIBLE_COLLECTIONS_REQUIREMENTS: ${ANSIBLE_COLLECTIONS_REQUIREMENTS:-ansible/requirements.yml}
-    command: celery -A app.infrastructure.celery_app beat -l info
+    command: celery -A app.infrastructure.celery_app beat -l info --pidfile /tmp/celerybeat.pid
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /tmp/celerybeat.pid && kill -0 $(cat /tmp/celerybeat.pid) 2>/dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
     env_file: .env
     depends_on:
       init:

@@ -8,7 +8,6 @@ from app.application.ports import (
     BookingRepositoryPort, HWConfigRepositoryPort, ImageRepositoryPort, QuotaRepositoryPort,
     TaskDispatcher,
 )
-from app.config import settings
 from app.domain.entities import Booking
 from app.domain.lease import Lease
 from app.domain.enums import BookingStatus, DriveType
@@ -22,7 +21,7 @@ class CreateBookingUseCase:
         image_repo: ImageRepositoryPort,
         hw_config_repo: HWConfigRepositoryPort,
         quota_repo: QuotaRepositoryPort,
-        dispatcher: TaskDispatcher | None = None,
+        dispatcher: TaskDispatcher,
     ) -> None:
         self._repo = repo
         self._image_repo = image_repo
@@ -30,20 +29,13 @@ class CreateBookingUseCase:
         self._quota_repo = quota_repo
         self._dispatcher = dispatcher
 
-    def _dispatch(self) -> TaskDispatcher:
-        # Lazy default so the application layer never imports the Celery adapter at module load.
-        if self._dispatcher is None:
-            from app.infrastructure.celery_dispatcher import CeleryTaskDispatcher
-            self._dispatcher = CeleryTaskDispatcher()
-        return self._dispatcher
-
     async def execute(
         self,
         session: AsyncSession,
         ttl_minutes: int,
         image_id: UUID,
         hw_config_id: UUID,
-        user_id: str | None = None,
+        user_id: str,
         startup_script: str | None = None,
         config_roles: list | None = None,
         extra_vars: dict | None = None,
@@ -56,7 +48,7 @@ class CreateBookingUseCase:
         image = await self._image_repo.get(session, image_id)
         hw = await self._hw_config_repo.get(session, hw_config_id)
 
-        uid = user_id or settings.DEV_USER_ID
+        uid = user_id
 
         # Quota check — inside the same transaction as the booking insert.
         # Take the quota-row lock *before* counting usage, so a concurrent booking for the
@@ -114,5 +106,5 @@ class CreateBookingUseCase:
         booking = await self._repo.create(session, booking)
         # Ordering an environment defers dispatch until all children are created (clean rollback).
         if dispatch:
-            self._dispatch().dispatch_provision(str(booking.id), str(image.id), str(hw.id))
+            self._dispatcher.dispatch_provision(str(booking.id), str(image.id), str(hw.id))
         return booking

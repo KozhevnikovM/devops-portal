@@ -115,7 +115,7 @@ def test_cred_env_token_auth_returns_vcd_token():
     with patch("app.infrastructure.terraform.vcd_adapter.settings") as s:
         s.VCD_API_TOKEN = ""
         env = adapter._cred_env(api_token="my-token")
-    assert env == {"VCD_TOKEN": "my-token"}
+    assert env == {"VCD_API_TOKEN": "my-token"}
 
 
 def test_cred_env_token_falls_back_to_settings_vcd_api_token():
@@ -123,7 +123,7 @@ def test_cred_env_token_falls_back_to_settings_vcd_api_token():
     with patch("app.infrastructure.terraform.vcd_adapter.settings") as s:
         s.VCD_API_TOKEN = "settings-token"
         env = adapter._cred_env(api_token=None)
-    assert env == {"VCD_TOKEN": "settings-token"}
+    assert env == {"VCD_API_TOKEN": "settings-token"}
 
 
 def test_cred_env_integrated_auth_returns_user_and_password():
