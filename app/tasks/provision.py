@@ -108,7 +108,8 @@ def provision_vm_task(self, booking_id: str, image_id: str, hw_config_id: str) -
             # Read config in a short session; no session is held during the apply below.
             image = _run(lambda s: image_repo.sync_get(s, UUID(image_id)))
             hw = _run(lambda s: hw_config_repo.sync_get(s, UUID(hw_config_id)))
-            vm_password = "".join(
+            existing = _run(lambda s: repo.sync_get(s, booking_uuid))
+            vm_password = existing.vm_password or "".join(
                 secrets.choice(string.ascii_letters + string.digits) for _ in range(16)
             )
             config = {
@@ -124,6 +125,8 @@ def provision_vm_task(self, booking_id: str, image_id: str, hw_config_id: str) -
             logger.info("Provisioning started for booking %s", booking_id)
 
             def _on_progress(msg: str) -> None:
+                if redis_client and lock_key:
+                    redis_client.expire(lock_key, settings.VCD_TOKEN_LOCK_TTL)
                 # Each progress write gets its own short-lived session/connection.
                 _run(lambda s: repo.sync_set_status_message(s, booking_uuid, msg))
 
