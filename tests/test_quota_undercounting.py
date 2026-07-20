@@ -63,7 +63,7 @@ async def test_512mb_vm_costs_1gb_memory_quota():
         limits={"max_cpus": 100, "max_memory_gb": 1, "max_hdd_gb": 100, "max_ssd_gb": 100},
     )
     with pytest.raises(QuotaExceededError, match="memory"):
-        await uc.execute(MagicMock(), 60, uuid4(), uuid4())
+        await uc.execute(MagicMock(), 60, uuid4(), uuid4(), user_id="test-user")
 
 
 @pytest.mark.asyncio
@@ -76,7 +76,7 @@ async def test_512mb_vm_allowed_when_quota_has_headroom():
         limits={"max_cpus": 100, "max_memory_gb": 1, "max_hdd_gb": 100, "max_ssd_gb": 100},
     )
     # Should not raise — 0 + ceil(512/1024)=1 is not > 1
-    await uc.execute(MagicMock(), 60, uuid4(), uuid4())
+    await uc.execute(MagicMock(), 60, uuid4(), uuid4(), user_id="test-user")
 
 
 @pytest.mark.asyncio
@@ -89,7 +89,7 @@ async def test_1536mb_vm_costs_2gb_memory_quota():
         limits={"max_cpus": 100, "max_memory_gb": 1, "max_hdd_gb": 100, "max_ssd_gb": 100},
     )
     with pytest.raises(QuotaExceededError, match="memory"):
-        await uc.execute(MagicMock(), 60, uuid4(), uuid4())
+        await uc.execute(MagicMock(), 60, uuid4(), uuid4(), user_id="test-user")
 
 
 @pytest.mark.asyncio
@@ -103,7 +103,7 @@ async def test_memory_cost_matches_aggregate_ceil():
             used={"cpus": 0, "memory_gb": 0, "hdd_gb": 0, "ssd_gb": 0},
             limits={"max_cpus": 100, "max_memory_gb": expected_gb, "max_hdd_gb": 100, "max_ssd_gb": 100},
         )
-        await uc.execute(MagicMock(), 60, uuid4(), uuid4())
+        await uc.execute(MagicMock(), 60, uuid4(), uuid4(), user_id="test-user")
 
         # used=expected_gb, same limit → expected_gb + expected_gb > expected_gb → FAIL.
         uc2, _ = _make_use_case(
@@ -112,7 +112,7 @@ async def test_memory_cost_matches_aggregate_ceil():
             limits={"max_cpus": 100, "max_memory_gb": expected_gb, "max_hdd_gb": 100, "max_ssd_gb": 100},
         )
         with pytest.raises(QuotaExceededError):
-            await uc2.execute(MagicMock(), 60, uuid4(), uuid4())
+            await uc2.execute(MagicMock(), 60, uuid4(), uuid4(), user_id="test-user")
 
 
 # ── D3: disk uses ceil too ────────────────────────────────────────────────────
@@ -128,7 +128,7 @@ async def test_512mb_disk_costs_1gb_disk_quota():
         limits={"max_cpus": 100, "max_memory_gb": 100, "max_hdd_gb": 1, "max_ssd_gb": 100},
     )
     with pytest.raises(QuotaExceededError, match="HDD"):
-        await uc.execute(MagicMock(), 60, uuid4(), uuid4())
+        await uc.execute(MagicMock(), 60, uuid4(), uuid4(), user_id="test-user")
 
 
 # ── D4: CONFIGURING booking counted in quota check ───────────────────────────
@@ -145,4 +145,4 @@ async def test_booking_rejected_when_configuring_vm_fills_quota():
         limits={"max_cpus": 100, "max_memory_gb": 4, "max_hdd_gb": 100, "max_ssd_gb": 100},
     )
     with pytest.raises(QuotaExceededError, match="memory"):
-        await uc.execute(MagicMock(), 60, uuid4(), uuid4())
+        await uc.execute(MagicMock(), 60, uuid4(), uuid4(), user_id="test-user")

@@ -9,7 +9,6 @@ from app.application.ports import (
     ImageRepositoryPort, NamespaceRepositoryPort, RoleRepositoryPort, StaticVMRepositoryPort,
     TaskDispatcher,
 )
-from app.config import settings
 from app.domain.entities import Environment
 from app.domain.enums import BookingStatus, ResourceType
 from app.domain.exceptions import BlueprintNotFoundError, EnvironmentItemError, NamespaceUnavailableError
@@ -49,6 +48,7 @@ class OrderEnvironmentUseCase:
         role_repo: RoleRepositoryPort, static_vm_repo: StaticVMRepositoryPort,
         dispatcher: TaskDispatcher,
         namespace_repo: NamespaceRepositoryPort | None = None,
+        secret_vars_enabled: bool = False,
     ) -> None:
         self._env_repo = env_repo
         self._blueprint_repo = blueprint_repo
@@ -62,6 +62,7 @@ class OrderEnvironmentUseCase:
         self._static_vm_repo = static_vm_repo
         self._dispatcher = dispatcher
         self._namespace_repo = namespace_repo
+        self._secret_vars_enabled = secret_vars_enabled
 
     async def execute(
         self, session: AsyncSession, blueprint_name: str, ttl_minutes: int, user_id: str,
@@ -194,7 +195,7 @@ class OrderEnvironmentUseCase:
                     raise EnvironmentItemError(f"no role named '{role_name}'")
                 config_roles.append(
                     {"name": role.name, "ansible_role": role.ansible_role, "vars": role.default_vars or {},
-                     "secret_vars": role.secret_vars if settings.SECRET_VARS_ENABLED else {}}
+                     "secret_vars": role.secret_vars if self._secret_vars_enabled else {}}
                 )
             extra_vars = spec.get("vars") or {}
             _validate_extra_vars(extra_vars)

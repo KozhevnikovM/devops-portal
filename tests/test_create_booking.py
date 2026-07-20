@@ -79,11 +79,9 @@ def mock_session():
 
 @pytest.mark.asyncio
 async def test_create_booking_returns_pending(mock_repo, mock_image_repo, mock_hw_repo, mock_quota_repo, mock_image, mock_hw, mock_session):
-    use_case = CreateBookingUseCase(mock_repo, mock_image_repo, mock_hw_repo, mock_quota_repo)
+    use_case = CreateBookingUseCase(mock_repo, mock_image_repo, mock_hw_repo, mock_quota_repo, dispatcher=MagicMock())
 
-    with patch("app.tasks.provision.provision_vm_task") as mock_task:
-        mock_task.delay = MagicMock()
-        booking = await use_case.execute(mock_session, ttl_minutes=240, image_id=mock_image.id, hw_config_id=mock_hw.id)
+    booking = await use_case.execute(mock_session, ttl_minutes=240, image_id=mock_image.id, hw_config_id=mock_hw.id, user_id="test-user")
 
     assert booking.status == BookingStatus.PENDING
     assert booking.ttl_minutes == 240
@@ -92,11 +90,9 @@ async def test_create_booking_returns_pending(mock_repo, mock_image_repo, mock_h
 
 @pytest.mark.asyncio
 async def test_create_booking_sets_image_and_hw_fields(mock_repo, mock_image_repo, mock_hw_repo, mock_quota_repo, mock_image, mock_hw, mock_session):
-    use_case = CreateBookingUseCase(mock_repo, mock_image_repo, mock_hw_repo, mock_quota_repo)
+    use_case = CreateBookingUseCase(mock_repo, mock_image_repo, mock_hw_repo, mock_quota_repo, dispatcher=MagicMock())
 
-    with patch("app.tasks.provision.provision_vm_task") as mock_task:
-        mock_task.delay = MagicMock()
-        booking = await use_case.execute(mock_session, ttl_minutes=240, image_id=mock_image.id, hw_config_id=mock_hw.id)
+    booking = await use_case.execute(mock_session, ttl_minutes=240, image_id=mock_image.id, hw_config_id=mock_hw.id, user_id="test-user")
 
     assert booking.image_id == mock_image.id
     assert booking.image_name == mock_image.name
@@ -106,21 +102,18 @@ async def test_create_booking_sets_image_and_hw_fields(mock_repo, mock_image_rep
 
 @pytest.mark.asyncio
 async def test_create_booking_dispatches_task(mock_repo, mock_image_repo, mock_hw_repo, mock_quota_repo, mock_image, mock_hw, mock_session):
-    use_case = CreateBookingUseCase(mock_repo, mock_image_repo, mock_hw_repo, mock_quota_repo)
+    dispatcher = MagicMock()
+    use_case = CreateBookingUseCase(mock_repo, mock_image_repo, mock_hw_repo, mock_quota_repo, dispatcher=dispatcher)
 
-    with patch("app.tasks.provision.provision_vm_task") as mock_task:
-        mock_task.delay = MagicMock()
-        booking = await use_case.execute(mock_session, ttl_minutes=60, image_id=mock_image.id, hw_config_id=mock_hw.id)
-        mock_task.delay.assert_called_once_with(str(booking.id), str(mock_image.id), str(mock_hw.id))
+    booking = await use_case.execute(mock_session, ttl_minutes=60, image_id=mock_image.id, hw_config_id=mock_hw.id, user_id="test-user")
+    dispatcher.dispatch_provision.assert_called_once_with(str(booking.id), str(mock_image.id), str(mock_hw.id))
 
 
 @pytest.mark.asyncio
 async def test_create_booking_sets_correct_expiry(mock_repo, mock_image_repo, mock_hw_repo, mock_quota_repo, mock_image, mock_hw, mock_session):
-    use_case = CreateBookingUseCase(mock_repo, mock_image_repo, mock_hw_repo, mock_quota_repo)
+    use_case = CreateBookingUseCase(mock_repo, mock_image_repo, mock_hw_repo, mock_quota_repo, dispatcher=MagicMock())
 
-    with patch("app.tasks.provision.provision_vm_task") as mock_task:
-        mock_task.delay = MagicMock()
-        booking = await use_case.execute(mock_session, ttl_minutes=480, image_id=mock_image.id, hw_config_id=mock_hw.id)
+    booking = await use_case.execute(mock_session, ttl_minutes=480, image_id=mock_image.id, hw_config_id=mock_hw.id, user_id="test-user")
 
     delta = booking.expires_at - booking.created_at
     assert abs(delta.total_seconds() - 480 * 60) < 2
@@ -130,17 +123,17 @@ async def test_create_booking_sets_correct_expiry(mock_repo, mock_image_repo, mo
 async def test_create_booking_raises_for_inactive_image(mock_repo, mock_hw_repo, mock_hw, mock_session):
     image_repo = MagicMock(spec=ImageRepository)
     image_repo.get = AsyncMock(side_effect=ValueError("inactive"))
-    use_case = CreateBookingUseCase(mock_repo, image_repo, mock_hw_repo, MagicMock())
+    use_case = CreateBookingUseCase(mock_repo, image_repo, mock_hw_repo, MagicMock(), dispatcher=MagicMock())
 
     with pytest.raises(ValueError):
-        await use_case.execute(mock_session, ttl_minutes=240, image_id=uuid4(), hw_config_id=mock_hw.id)
+        await use_case.execute(mock_session, ttl_minutes=240, image_id=uuid4(), hw_config_id=mock_hw.id, user_id="test-user")
 
 
 @pytest.mark.asyncio
 async def test_create_booking_raises_for_inactive_hw(mock_repo, mock_image_repo, mock_image, mock_session):
     hw_repo = MagicMock(spec=HWConfigRepository)
     hw_repo.get = AsyncMock(side_effect=ValueError("inactive"))
-    use_case = CreateBookingUseCase(mock_repo, mock_image_repo, hw_repo, MagicMock())
+    use_case = CreateBookingUseCase(mock_repo, mock_image_repo, hw_repo, MagicMock(), dispatcher=MagicMock())
 
     with pytest.raises(ValueError):
-        await use_case.execute(mock_session, ttl_minutes=240, image_id=mock_image.id, hw_config_id=uuid4())
+        await use_case.execute(mock_session, ttl_minutes=240, image_id=mock_image.id, hw_config_id=uuid4(), user_id="test-user")

@@ -11,6 +11,7 @@ safe. Route modules bind their existing module-level names to these singletons, 
 ``_repo = deps.booking_repo`` — keeping those names means tests that patch them by module path keep
 working.
 """
+from app.config import settings
 from app.application.use_cases.book_namespace import BookNamespaceUseCase
 from app.application.use_cases.create_booking import CreateBookingUseCase
 from app.application.use_cases.extend_booking import ExtendBookingUseCase
@@ -55,5 +56,6 @@ order_environment_uc = OrderEnvironmentUseCase(
     env_repo, blueprint_repo, booking_repo, create_booking_uc, reserve_static_vm_uc,
     book_namespace_uc, image_repo, hw_config_repo, role_repo, static_vm_repo, dispatcher,
     namespace_repo,
+    secret_vars_enabled=settings.SECRET_VARS_ENABLED,
 )
 release_environment_uc = ReleaseEnvironmentUseCase(env_repo, release_booking_uc)
