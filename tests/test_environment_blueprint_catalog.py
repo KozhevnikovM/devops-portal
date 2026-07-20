@@ -159,4 +159,4 @@ def test_admin_create_blueprint_invalid_items_shows_error(admin_client):
 def test_blueprints_endpoint_in_schema():
     from app.main import app
     paths = set(TestClient(app).get("/openapi.json").json()["paths"])
-    assert "/api/environment-blueprints" in paths
+    assert "/api/v1/environment-blueprints" in paths

@@ -13,15 +13,15 @@ from app.main import app
 
 # Real JSON API endpoints that must stay documented.
 KEPT_PATHS = {
-    "/api/images",
-    "/api/hardware",
-    "/api/static-vms",
-    "/api/roles",
-    "/api/environment-blueprints",
-    "/api/environments",
+    "/api/v1/images",
+    "/api/v1/hardware",
+    "/api/v1/static-vms",
+    "/api/v1/roles",
+    "/api/v1/environment-blueprints",
+    "/api/v1/environments",
     "/api/users",
-    "/api/bookings",
-    "/api/bookings/{booking_id}/audit",
+    "/api/v1/bookings",
+    "/api/v1/bookings/{booking_id}/audit",
 }
 
 # HTML pages / HTMX fragments that must not appear in the schema (incl. the root HTMX booking

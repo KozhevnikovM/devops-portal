@@ -24,7 +24,7 @@ from app.infrastructure.database.session import get_async_session
 from app.presentation import deps
 from app.presentation.routes._dispatch import resolve_owner
 
-router = APIRouter(prefix="/api/bookings", tags=["bookings"])
+router = APIRouter(prefix="/bookings", tags=["bookings"])
 
 # Shared singletons from the composition root. Names kept so existing patches still target them.
 _repo = deps.booking_repo

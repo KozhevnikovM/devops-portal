@@ -6,6 +6,16 @@ when unauthenticated. API clients must pass `Authorization: Bearer <api_key>` on
 The interactive docs at `/docs` (and `/openapi.json`) list only the JSON API endpoints below.
 The server-rendered HTML pages and HTMX fragments are intentionally excluded from the schema.
 
+## API versioning
+
+The canonical base path for all JSON API endpoints is **`/api/v1`** (e.g.
+`/api/v1/bookings`, `/api/v1/environments`, `/api/v1/images`). The unversioned `/api/...` paths
+remain functional for backward compatibility but are hidden from the OpenAPI schema.
+New integrations should always use the `/api/v1/...` paths.
+
+User-management and auth endpoints (`/api/users`, `/auth/...`) are not under `/api/v1` and are
+unversioned at this time.
+
 ---
 
 ## Authentication
