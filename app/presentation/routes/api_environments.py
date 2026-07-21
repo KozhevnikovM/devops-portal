@@ -9,8 +9,9 @@ from app.presentation.routes._dispatch import resolve_owner
 from app.domain.entities import Environment, User
 from app.domain.enums import BookingStatus, ResourceType
 from app.domain.exceptions import (
-    BlueprintNotFoundError, BookingPermissionError, EnvironmentItemError, EnvironmentNotFoundError,
-    NamespaceUnavailableError, NotFoundError, QuotaExceededError, StaticVMUnavailableError,
+    BlueprintNotFoundError, BookingPermissionError, EnvironmentError, EnvironmentItemError,
+    EnvironmentNotFoundError, NamespaceUnavailableError, NotFoundError, QuotaExceededError,
+    StaticVMUnavailableError,
 )
 from app.infrastructure.auth import require_user
 from app.infrastructure.database.session import get_async_session
@@ -33,12 +34,17 @@ _reserve_static_vm_use_case = deps.reserve_static_vm_uc
 _book_namespace_use_case = deps.book_namespace_uc
 _order_use_case = deps.order_environment_uc
 _release_use_case = deps.release_environment_uc
+_update_name_use_case = deps.update_environment_name_uc
 
 # A child is "in flight" until it settles; an environment is FAILED if any child failed.
 _IN_FLIGHT = {
     BookingStatus.QUEUED, BookingStatus.PENDING, BookingStatus.PROVISIONING,
     BookingStatus.CONFIGURING, BookingStatus.RETRY,
 }
+
+
+class UpdateEnvironmentRequest(BaseModel):
+    name: str
 
 
 class OrderEnvironmentRequest(BaseModel):
@@ -229,6 +235,24 @@ async def get_environment(
     except NotFoundError:
         raise HTTPException(status_code=404, detail="Environment not found")
     return _serialize(env)
+
+
+@router.patch("/{environment_id}")
+async def update_environment_name(
+    environment_id: UUID,
+    body: UpdateEnvironmentRequest,
+    session: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(require_user),
+):
+    try:
+        env = await _update_name_use_case.execute(session, environment_id, body.name, current_user)
+    except EnvironmentNotFoundError:
+        raise HTTPException(status_code=404, detail="Environment not found")
+    except BookingPermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+    except EnvironmentError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {"id": str(env.id), "name": env.name}
 
 
 @router.delete("/{environment_id}", status_code=202)

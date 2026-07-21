@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.domain.entities import User
 from app.domain.enums import BookingStatus
 from app.domain.exceptions import (
-    BlueprintNotFoundError, BookingPermissionError, EnvironmentItemError,
+    BlueprintNotFoundError, BookingPermissionError, EnvironmentError, EnvironmentItemError,
     EnvironmentNotFoundError, NamespaceUnavailableError, NotFoundError,
     QuotaExceededError, StaticVMUnavailableError,
 )
@@ -17,6 +17,7 @@ from app.infrastructure.auth import require_user
 from app.infrastructure.database.session import get_async_session
 from app.presentation.routes.api_environments import (
     _blueprint_repo, _derived_status, _env_repo, _namespace_repo, _order_use_case, _release_use_case,
+    _update_name_use_case,
 )
 from app.application.use_cases._permissions import can_manage
 from app.presentation.templating import templates
@@ -125,6 +126,28 @@ async def environment_row(
         raise HTTPException(status_code=404, detail="Environment not found")
     if not can_manage(owner_id=env.user_id, created_by=env.created_by, user=current_user):
         raise HTTPException(status_code=403, detail="Not the environment owner")
+    return templates.TemplateResponse(
+        request, "partials/environment_row.html",
+        {"environment": _annotate(env), "current_user": current_user},
+    )
+
+
+@router.patch("/environments/{environment_id}/name", response_class=HTMLResponse)
+async def update_environment_name(
+    environment_id: UUID,
+    request: Request,
+    name: str = Form(...),
+    session: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(require_user),
+):
+    try:
+        env = await _update_name_use_case.execute(session, environment_id, name, current_user)
+    except EnvironmentNotFoundError:
+        raise HTTPException(status_code=404, detail="Environment not found")
+    except BookingPermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+    except EnvironmentError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     return templates.TemplateResponse(
         request, "partials/environment_row.html",
         {"environment": _annotate(env), "current_user": current_user},
