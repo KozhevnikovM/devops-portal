@@ -83,6 +83,27 @@ class EnvironmentRepository:
             for b, u, ns, svm in result.all()
         ]
 
+    async def _children_batch(
+        self, session: AsyncSession, env_ids: list[UUID],
+    ) -> dict[UUID, list]:
+        """Fetch all children for a batch of environment IDs in a single query."""
+        if not env_ids:
+            return {}
+        result = await session.execute(
+            select(BookingModel, UserModel.username, NamespaceModel, StaticVMModel)
+            .join(UserModel, cast(UserModel.id, String) == BookingModel.user_id, isouter=True)
+            .outerjoin(NamespaceModel, NamespaceModel.id == BookingModel.namespace_id)
+            .outerjoin(StaticVMModel, StaticVMModel.id == BookingModel.static_vm_id)
+            .where(BookingModel.environment_id.in_(env_ids))
+            .order_by(BookingModel.environment_id, BookingModel.created_at)
+        )
+        grouped: dict[UUID, list] = {eid: [] for eid in env_ids}
+        for b, u, ns, svm in result.all():
+            grouped[b.environment_id].append(
+                _booking_to_entity(b, owner_username=u, namespace=ns, static_vm=svm)
+            )
+        return grouped
+
     async def get(self, session: AsyncSession, environment_id: UUID) -> Environment:
         result = await session.execute(
             select(EnvironmentModel, UserModel.username, _CreatorUser.username)
@@ -121,8 +142,22 @@ class EnvironmentRepository:
         )
         if cluster_name is not None:
             stmt = stmt.where(NamespaceModel.cluster_name == cluster_name)
-        env_ids = (await session.execute(stmt)).scalars().all()
-        return [await self.get(session, env_id) for env_id in env_ids]
+        env_ids = list((await session.execute(stmt)).scalars().all())
+        if not env_ids:
+            return []
+        env_result = await session.execute(
+            select(EnvironmentModel, UserModel.username, _CreatorUser.username)
+            .join(UserModel, cast(UserModel.id, String) == EnvironmentModel.user_id, isouter=True)
+            .outerjoin(_CreatorUser, cast(_CreatorUser.id, String) == EnvironmentModel.created_by)
+            .where(EnvironmentModel.id.in_(env_ids))
+        )
+        env_rows = env_result.all()
+        children_by_env = await self._children_batch(session, env_ids)
+        return [
+            _to_entity(model, bookings=children_by_env.get(model.id, []),
+                       owner_username=owner, created_by_username=creator)
+            for model, owner, creator in env_rows
+        ]
 
     async def list_all(self, session: AsyncSession) -> list[Environment]:
         return await self._list(session, None)
@@ -142,12 +177,14 @@ class EnvironmentRepository:
             stmt = stmt.where(
                 or_(EnvironmentModel.user_id == user_id, EnvironmentModel.created_by == user_id)
             )
-        result = await session.execute(stmt)
-        envs = []
-        for model, owner, creator in result.all():
-            children = await self._children(session, model.id)
-            envs.append(_to_entity(model, bookings=children, owner_username=owner, created_by_username=creator))
-        return envs
+        rows = (await session.execute(stmt)).all()
+        env_ids = [model.id for model, _, _ in rows]
+        children_by_env = await self._children_batch(session, env_ids)
+        return [
+            _to_entity(model, bookings=children_by_env.get(model.id, []),
+                       owner_username=owner, created_by_username=creator)
+            for model, owner, creator in rows
+        ]
 
     # ── Sync helpers (Celery beat — env-aware TTL enforcement) ──────────────────
     def sync_list_expired(self, session: Session) -> list[Environment]:

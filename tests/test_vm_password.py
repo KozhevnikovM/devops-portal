@@ -1,5 +1,6 @@
 """Tests for VM connection password generation and display (feature #83)."""
 import string
+from types import SimpleNamespace
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
