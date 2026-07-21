@@ -156,13 +156,43 @@ def test_admin_force_release_dispatches_and_returns_202(admin_client):
     disp.dispatch_teardown_force.assert_called_once_with(str(booking.id))
 
 
-def test_admin_force_release_rejects_non_failed(admin_client):
+def test_admin_force_release_rejects_wrong_status(admin_client):
+    client, _ = admin_client
+    from datetime import datetime, timedelta, timezone
+    from app.domain.entities import Booking
+    now = datetime.now(timezone.utc)
+    pending = Booking(
+        id=uuid4(), user_id="u", status=BookingStatus.PENDING, resource_type=ResourceType.VM,
+        ttl_minutes=240, expires_at=now + timedelta(minutes=240), created_at=now,
+        image_id=uuid4(), image_name="Ubuntu", hw_config_id=uuid4(), hw_config_name="medium",
+    )
+    with patch("app.presentation.routes.admin._booking_repo") as repo:
+        repo.get = AsyncMock(return_value=pending)
+        resp = client.post(f"/admin/bookings/{pending.id}/force-release")
+    assert resp.status_code == 400
+
+
+def test_admin_force_release_releasing_goes_directly_to_released(admin_client):
     client, _ = admin_client
     booking = _releasing_vm_booking()
-    with patch("app.presentation.routes.admin._booking_repo") as repo:
-        repo.get = AsyncMock(return_value=booking)
+    released = _releasing_vm_booking()
+    released = type(booking)(
+        id=booking.id, user_id=booking.user_id, status=BookingStatus.RELEASED,
+        resource_type=booking.resource_type, ttl_minutes=booking.ttl_minutes,
+        expires_at=booking.expires_at, created_at=booking.created_at,
+        image_id=booking.image_id, image_name=booking.image_name,
+        hw_config_id=booking.hw_config_id, hw_config_name=booking.hw_config_name,
+    )
+    with patch("app.presentation.routes.admin._booking_repo") as repo, \
+         patch("app.presentation.routes.admin.dispatcher") as disp:
+        repo.get = AsyncMock(side_effect=[booking, released])
+        repo.update_status = AsyncMock()
         resp = client.post(f"/admin/bookings/{booking.id}/force-release")
-    assert resp.status_code == 400
+    assert resp.status_code == 202
+    repo.update_status.assert_called_once()
+    call_args = repo.update_status.call_args
+    assert call_args.args[2] == BookingStatus.RELEASED
+    disp.dispatch_teardown_force.assert_not_called()
 
 
 def test_admin_force_release_rejects_non_vm(admin_client):
