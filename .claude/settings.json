@@ -34,7 +34,11 @@
       "mcp__playwright__browser_snapshot",
       "mcp__playwright__browser_fill_form",
       "Read(//usr/lib/**)",
-      "Read(//home/mike/.claude/projects/**)"
+      "Read(//home/mike/.claude/projects/**)",
+      "Bash(mkdir -p /home/mike/devops-portal/tests/integration)"
+    ],
+    "additionalDirectories": [
+      "/home/mike/devops-portal/tests"
     ]
   }
 }
