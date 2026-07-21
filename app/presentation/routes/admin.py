@@ -11,29 +11,22 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.domain.entities import User
-from app.domain.enums import BookingStatus, ResourceType
 from app.domain.exceptions import BookingNotFoundError, NotFoundError
 from app.infrastructure.auth import require_admin
 from app.infrastructure.database.session import get_async_session
-from app.infrastructure.repositories.booking_repo import BookingRepository
-from app.infrastructure.repositories.hw_config_repo import HWConfigRepository
-from app.infrastructure.repositories.image_repo import ImageRepository
-from app.infrastructure.repositories.environment_blueprint_repo import EnvironmentBlueprintRepository
-from app.infrastructure.repositories.namespace_repo import NamespaceRepository
-from app.infrastructure.repositories.role_repo import RoleRepository
-from app.infrastructure.repositories.static_vm_repo import StaticVMRepository
-from app.presentation.deps import dispatcher
+from app.presentation import deps as _deps
 from app.presentation.templating import templates
+from app.presentation.utils import hx_error
 
 router = APIRouter()
 
-_booking_repo = BookingRepository()
-_image_repo = ImageRepository()
-_hw_config_repo = HWConfigRepository()
-_namespace_repo = NamespaceRepository()
-_role_repo = RoleRepository()
-_blueprint_repo = EnvironmentBlueprintRepository()
-_static_vm_repo = StaticVMRepository()
+_force_release_uc = _deps.force_release_booking_uc
+_image_repo       = _deps.image_repo
+_hw_config_repo   = _deps.hw_config_repo
+_namespace_repo   = _deps.namespace_repo
+_role_repo        = _deps.role_repo
+_blueprint_repo   = _deps.blueprint_repo
+_static_vm_repo   = _deps.static_vm_repo
 
 _VALID_RESOURCE_TYPES = {"VM", "STATIC_VM", "NAMESPACE"}
 
@@ -145,27 +138,11 @@ async def admin_force_release_booking(
     current_user: User = Depends(require_admin),
 ):
     try:
-        booking = await _booking_repo.get(session, booking_id)
+        booking = await _force_release_uc.execute(session, booking_id, str(current_user.id))
     except BookingNotFoundError:
         raise HTTPException(status_code=404, detail="Booking not found")
-
-    if booking.resource_type != ResourceType.VM:
-        raise HTTPException(status_code=400, detail="Force release is only available for VM bookings")
-    if booking.status not in {BookingStatus.FAILED, BookingStatus.RELEASING}:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Booking is {booking.status.value}; must be FAILED or RELEASING to force-release",
-        )
-
-    if booking.status == BookingStatus.RELEASING:
-        # VM already gone; teardown was already dispatched (or never completed).
-        # Skip re-dispatch and mark directly as released.
-        await _booking_repo.update_status(session, booking_id, BookingStatus.RELEASED, actor_id=str(current_user.id))
-    else:
-        await _booking_repo.update_status(session, booking_id, BookingStatus.RELEASING, actor_id=str(current_user.id))
-        dispatcher.dispatch_teardown_force(str(booking_id))
-
-    booking = await _booking_repo.get(session, booking_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     return templates.TemplateResponse(
         request, "partials/booking_row.html",
         {"booking": booking, "current_user": current_user},
@@ -200,10 +177,9 @@ async def admin_create_image(
         await _image_repo.create(session, name, vapp_template_id)
     except IntegrityError:
         await session.rollback()
-        error_html = f'<span class="text-red-400 text-xs">Image "{escape(name)}" already exists.</span>'
-        return HTMLResponse(
-            content=error_html,
-            headers={"HX-Retarget": "#image-create-error", "HX-Reswap": "innerHTML"},
+        return hx_error(
+            f'<span class="text-red-400 text-xs">Image "{escape(name)}" already exists.</span>',
+            "#image-create-error",
         )
     images = await _image_repo.list_all(session)
     return templates.TemplateResponse(
@@ -280,9 +256,9 @@ async def admin_delete_image(
         raise HTTPException(status_code=404, detail=str(exc))
     except IntegrityError:
         await session.rollback()
-        return HTMLResponse(
-            content='<span class="text-red-400 text-xs">Cannot delete: bookings reference this image.</span>',
-            headers={"HX-Retarget": f"#image-delete-error-{image_id}", "HX-Reswap": "innerHTML"},
+        return hx_error(
+            '<span class="text-red-400 text-xs">Cannot delete: bookings reference this image.</span>',
+            f"#image-delete-error-{image_id}",
         )
     images = await _image_repo.list_all(session)
     return templates.TemplateResponse(
@@ -341,10 +317,9 @@ async def admin_create_hw_config(
         )
     except IntegrityError:
         await session.rollback()
-        error_html = f'<span class="text-red-400 text-xs">Config "{escape(name)}" already exists.</span>'
-        return HTMLResponse(
-            content=error_html,
-            headers={"HX-Retarget": "#hw-create-error", "HX-Reswap": "innerHTML"},
+        return hx_error(
+            f'<span class="text-red-400 text-xs">Config "{escape(name)}" already exists.</span>',
+            "#hw-create-error",
         )
     hw_configs = await _hw_config_repo.list_all(session)
     return templates.TemplateResponse(
@@ -428,9 +403,9 @@ async def admin_delete_hw_config(
         raise HTTPException(status_code=404, detail=str(exc))
     except IntegrityError:
         await session.rollback()
-        return HTMLResponse(
-            content='<span class="text-red-400 text-xs">Cannot delete: bookings reference this config.</span>',
-            headers={"HX-Retarget": f"#hw-delete-error-{hw_config_id}", "HX-Reswap": "innerHTML"},
+        return hx_error(
+            '<span class="text-red-400 text-xs">Cannot delete: bookings reference this config.</span>',
+            f"#hw-delete-error-{hw_config_id}",
         )
     hw_configs = await _hw_config_repo.list_all(session)
     return templates.TemplateResponse(
@@ -490,13 +465,10 @@ async def admin_create_namespace(
         await _namespace_repo.create(session, name, cluster_name, api_url.strip() or None)
     except IntegrityError:
         await session.rollback()
-        error_html = (
+        return hx_error(
             f'<span class="text-red-400 text-xs">Namespace "{escape(name)}" already exists '
-            f'on cluster "{escape(cluster_name)}".</span>'
-        )
-        return HTMLResponse(
-            content=error_html,
-            headers={"HX-Retarget": "#namespace-create-error", "HX-Reswap": "innerHTML"},
+            f'on cluster "{escape(cluster_name)}".</span>',
+            "#namespace-create-error",
         )
     return await _namespace_table(request, session, current_user)
 
@@ -543,13 +515,10 @@ async def admin_update_namespace(
         raise HTTPException(status_code=404, detail=str(exc))
     except IntegrityError:
         await session.rollback()
-        error_html = (
+        return hx_error(
             f'<span class="text-red-400 text-xs">Namespace "{escape(name)}" already exists '
-            f'on cluster "{escape(cluster_name)}".</span>'
-        )
-        return HTMLResponse(
-            content=error_html,
-            headers={"HX-Retarget": "#namespace-create-error", "HX-Reswap": "innerHTML"},
+            f'on cluster "{escape(cluster_name)}".</span>',
+            "#namespace-create-error",
         )
     return await _namespace_table(request, session, current_user)
 
@@ -581,9 +550,9 @@ async def admin_delete_namespace(
         raise HTTPException(status_code=404, detail=str(exc))
     except IntegrityError:
         await session.rollback()
-        return HTMLResponse(
-            content='<span class="text-red-400 text-xs">Cannot delete: bookings reference this namespace.</span>',
-            headers={"HX-Retarget": f"#namespace-delete-error-{namespace_id}", "HX-Reswap": "innerHTML"},
+        return hx_error(
+            '<span class="text-red-400 text-xs">Cannot delete: bookings reference this namespace.</span>',
+            f"#namespace-delete-error-{namespace_id}",
         )
     return await _namespace_table(request, session, current_user)
 
@@ -619,9 +588,9 @@ def _gb_to_mb(value: str) -> int | None:
 
 
 def _credential_error() -> HTMLResponse:
-    return HTMLResponse(
-        content='<span class="text-red-400 text-xs">Provide a password or an SSH key.</span>',
-        headers={"HX-Retarget": "#static-vm-create-error", "HX-Reswap": "innerHTML"},
+    return hx_error(
+        '<span class="text-red-400 text-xs">Provide a password or an SSH key.</span>',
+        "#static-vm-create-error",
     )
 
 
@@ -659,10 +628,9 @@ async def admin_create_static_vm(
         )
     except IntegrityError:
         await session.rollback()
-        error_html = f'<span class="text-red-400 text-xs">Static VM "{escape(name)}" already exists.</span>'
-        return HTMLResponse(
-            content=error_html,
-            headers={"HX-Retarget": "#static-vm-create-error", "HX-Reswap": "innerHTML"},
+        return hx_error(
+            f'<span class="text-red-400 text-xs">Static VM "{escape(name)}" already exists.</span>',
+            "#static-vm-create-error",
         )
     return await _static_vm_table(request, session, current_user)
 
@@ -723,10 +691,9 @@ async def admin_update_static_vm(
         raise HTTPException(status_code=404, detail=str(exc))
     except IntegrityError:
         await session.rollback()
-        error_html = f'<span class="text-red-400 text-xs">Static VM "{escape(name)}" already exists.</span>'
-        return HTMLResponse(
-            content=error_html,
-            headers={"HX-Retarget": "#static-vm-create-error", "HX-Reswap": "innerHTML"},
+        return hx_error(
+            f'<span class="text-red-400 text-xs">Static VM "{escape(name)}" already exists.</span>',
+            "#static-vm-create-error",
         )
     return await _static_vm_table(request, session, current_user)
 
@@ -758,9 +725,9 @@ async def admin_delete_static_vm(
         raise HTTPException(status_code=404, detail=str(exc))
     except IntegrityError:
         await session.rollback()
-        return HTMLResponse(
-            content='<span class="text-red-400 text-xs">Cannot delete: bookings reference this static VM.</span>',
-            headers={"HX-Retarget": f"#static-vm-delete-error-{static_vm_id}", "HX-Reswap": "innerHTML"},
+        return hx_error(
+            '<span class="text-red-400 text-xs">Cannot delete: bookings reference this static VM.</span>',
+            f"#static-vm-delete-error-{static_vm_id}",
         )
     return await _static_vm_table(request, session, current_user)
 
@@ -791,9 +758,9 @@ async def _role_table(request, session, current_user, editing_role=None, secret_
 
 
 def _role_error(message: str) -> HTMLResponse:
-    return HTMLResponse(
-        content=f'<span class="text-red-400 text-xs">{escape(message)}</span>',
-        headers={"HX-Retarget": "#role-create-error", "HX-Reswap": "innerHTML"},
+    return hx_error(
+        f'<span class="text-red-400 text-xs">{escape(message)}</span>',
+        "#role-create-error",
     )
 
 
@@ -951,9 +918,9 @@ async def _blueprint_table(request, session, current_user, editing_blueprint=Non
 
 
 def _blueprint_error(message: str) -> HTMLResponse:
-    return HTMLResponse(
-        content=f'<span class="text-red-400 text-xs">{escape(message)}</span>',
-        headers={"HX-Retarget": "#blueprint-create-error", "HX-Reswap": "innerHTML"},
+    return hx_error(
+        f'<span class="text-red-400 text-xs">{escape(message)}</span>',
+        "#blueprint-create-error",
     )
 
 

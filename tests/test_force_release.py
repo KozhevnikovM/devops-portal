@@ -1,9 +1,10 @@
-"""Regression tests for admin force-release of failed VM bookings (#278).
+"""Regression tests for admin force-release of failed/stuck VM bookings (#278, #334).
 
 Covers:
 - teardown_vm_task with force=True ignores terraform errors and marks RELEASED
 - TerraformVcdAdapter._destroy_state with force=True logs warning instead of raising
-- Admin endpoint rejects non-FAILED and non-VM bookings; dispatches force teardown on FAILED VM
+- ForceReleaseBookingUseCase: FAILED→RELEASING+dispatch, RELEASING→RELEASED, guards
+- Admin endpoint delegates to use case; catches ValueError→400, BookingNotFoundError→404
 """
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -12,6 +13,7 @@ from uuid import uuid4
 import pytest
 
 from app.domain.enums import BookingStatus, ResourceType
+from app.domain.exceptions import BookingNotFoundError
 from app.infrastructure.terraform.vcd_adapter import TerraformError, TerraformVcdAdapter
 
 
@@ -136,10 +138,12 @@ def _releasing_vm_booking():
     )
 
 
-def test_admin_force_release_dispatches_and_returns_202(admin_client):
-    client, _ = admin_client
+# ── ForceReleaseBookingUseCase unit tests ─────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_uc_failed_booking_dispatches_teardown():
     booking = _failed_vm_booking()
-    releasing = _failed_vm_booking()
+    releasing = _releasing_vm_booking()
     releasing = type(booking)(
         id=booking.id, user_id=booking.user_id, status=BookingStatus.RELEASING,
         resource_type=booking.resource_type, ttl_minutes=booking.ttl_minutes,
@@ -147,35 +151,25 @@ def test_admin_force_release_dispatches_and_returns_202(admin_client):
         image_id=booking.image_id, image_name=booking.image_name,
         hw_config_id=booking.hw_config_id, hw_config_name=booking.hw_config_name,
     )
-    with patch("app.presentation.routes.admin._booking_repo") as repo, \
-         patch("app.presentation.routes.admin.dispatcher") as disp:
-        repo.get = AsyncMock(side_effect=[booking, releasing])
-        repo.update_status = AsyncMock()
-        resp = client.post(f"/admin/bookings/{booking.id}/force-release")
-    assert resp.status_code == 202
-    disp.dispatch_teardown_force.assert_called_once_with(str(booking.id))
+    from app.application.use_cases.force_release_booking import ForceReleaseBookingUseCase
+    repo = MagicMock()
+    repo.get = AsyncMock(side_effect=[booking, releasing])
+    repo.update_status = AsyncMock()
+    disp = MagicMock()
 
-
-def test_admin_force_release_rejects_wrong_status(admin_client):
-    client, _ = admin_client
-    from datetime import datetime, timedelta, timezone
-    from app.domain.entities import Booking
-    now = datetime.now(timezone.utc)
-    pending = Booking(
-        id=uuid4(), user_id="u", status=BookingStatus.PENDING, resource_type=ResourceType.VM,
-        ttl_minutes=240, expires_at=now + timedelta(minutes=240), created_at=now,
-        image_id=uuid4(), image_name="Ubuntu", hw_config_id=uuid4(), hw_config_name="medium",
+    result = await ForceReleaseBookingUseCase(repo, disp).execute(
+        AsyncMock(), booking.id, "actor-id"
     )
-    with patch("app.presentation.routes.admin._booking_repo") as repo:
-        repo.get = AsyncMock(return_value=pending)
-        resp = client.post(f"/admin/bookings/{pending.id}/force-release")
-    assert resp.status_code == 400
+
+    repo.update_status.assert_called_once()
+    assert repo.update_status.call_args.args[2] == BookingStatus.RELEASING
+    disp.dispatch_teardown_force.assert_called_once_with(str(booking.id))
+    assert result.status == BookingStatus.RELEASING
 
 
-def test_admin_force_release_releasing_goes_directly_to_released(admin_client):
-    client, _ = admin_client
+@pytest.mark.asyncio
+async def test_uc_releasing_booking_goes_directly_to_released():
     booking = _releasing_vm_booking()
-    released = _releasing_vm_booking()
     released = type(booking)(
         id=booking.id, user_id=booking.user_id, status=BookingStatus.RELEASED,
         resource_type=booking.resource_type, ttl_minutes=booking.ttl_minutes,
@@ -183,28 +177,84 @@ def test_admin_force_release_releasing_goes_directly_to_released(admin_client):
         image_id=booking.image_id, image_name=booking.image_name,
         hw_config_id=booking.hw_config_id, hw_config_name=booking.hw_config_name,
     )
-    with patch("app.presentation.routes.admin._booking_repo") as repo, \
-         patch("app.presentation.routes.admin.dispatcher") as disp:
-        repo.get = AsyncMock(side_effect=[booking, released])
-        repo.update_status = AsyncMock()
-        resp = client.post(f"/admin/bookings/{booking.id}/force-release")
-    assert resp.status_code == 202
-    repo.update_status.assert_called_once()
-    call_args = repo.update_status.call_args
-    assert call_args.args[2] == BookingStatus.RELEASED
+    from app.application.use_cases.force_release_booking import ForceReleaseBookingUseCase
+    repo = MagicMock()
+    repo.get = AsyncMock(side_effect=[booking, released])
+    repo.update_status = AsyncMock()
+    disp = MagicMock()
+
+    result = await ForceReleaseBookingUseCase(repo, disp).execute(
+        AsyncMock(), booking.id, "actor-id"
+    )
+
+    assert repo.update_status.call_args.args[2] == BookingStatus.RELEASED
     disp.dispatch_teardown_force.assert_not_called()
+    assert result.status == BookingStatus.RELEASED
 
 
-def test_admin_force_release_rejects_non_vm(admin_client):
+@pytest.mark.asyncio
+async def test_uc_rejects_wrong_status():
     from datetime import datetime, timedelta, timezone
     from app.domain.entities import Booking
-    client, _ = admin_client
+    from app.application.use_cases.force_release_booking import ForceReleaseBookingUseCase
+    now = datetime.now(timezone.utc)
+    pending = Booking(
+        id=uuid4(), user_id="u", status=BookingStatus.PENDING, resource_type=ResourceType.VM,
+        ttl_minutes=60, expires_at=now + timedelta(hours=1), created_at=now,
+        image_id=uuid4(), image_name="img", hw_config_id=uuid4(), hw_config_name="hw",
+    )
+    repo = MagicMock()
+    repo.get = AsyncMock(return_value=pending)
+    with pytest.raises(ValueError, match="must be FAILED or RELEASING"):
+        await ForceReleaseBookingUseCase(repo, MagicMock()).execute(AsyncMock(), pending.id, "a")
+
+
+@pytest.mark.asyncio
+async def test_uc_rejects_non_vm():
+    from datetime import datetime, timedelta, timezone
+    from app.domain.entities import Booking
+    from app.application.use_cases.force_release_booking import ForceReleaseBookingUseCase
     now = datetime.now(timezone.utc)
     ns_booking = Booking(
         id=uuid4(), user_id="u", status=BookingStatus.FAILED, resource_type=ResourceType.NAMESPACE,
         ttl_minutes=0, expires_at=now + timedelta(minutes=1), created_at=now,
     )
-    with patch("app.presentation.routes.admin._booking_repo") as repo:
-        repo.get = AsyncMock(return_value=ns_booking)
-        resp = client.post(f"/admin/bookings/{ns_booking.id}/force-release")
+    repo = MagicMock()
+    repo.get = AsyncMock(return_value=ns_booking)
+    with pytest.raises(ValueError, match="only available for VM"):
+        await ForceReleaseBookingUseCase(repo, MagicMock()).execute(AsyncMock(), ns_booking.id, "a")
+
+
+# ── Admin endpoint (route plumbing) ──────────────────────────────────────────
+
+def test_admin_force_release_returns_202(admin_client):
+    client, _ = admin_client
+    booking = _releasing_vm_booking()
+    with patch("app.presentation.routes.admin._force_release_uc") as uc:
+        uc.execute = AsyncMock(return_value=booking)
+        resp = client.post(f"/admin/bookings/{booking.id}/force-release")
+    assert resp.status_code == 202
+
+
+def test_admin_force_release_rejects_wrong_status(admin_client):
+    client, _ = admin_client
+    with patch("app.presentation.routes.admin._force_release_uc") as uc:
+        uc.execute = AsyncMock(side_effect=ValueError("must be FAILED or RELEASING"))
+        resp = client.post(f"/admin/bookings/{uuid4()}/force-release")
     assert resp.status_code == 400
+
+
+def test_admin_force_release_rejects_non_vm(admin_client):
+    client, _ = admin_client
+    with patch("app.presentation.routes.admin._force_release_uc") as uc:
+        uc.execute = AsyncMock(side_effect=ValueError("only available for VM"))
+        resp = client.post(f"/admin/bookings/{uuid4()}/force-release")
+    assert resp.status_code == 400
+
+
+def test_admin_force_release_not_found(admin_client):
+    client, _ = admin_client
+    with patch("app.presentation.routes.admin._force_release_uc") as uc:
+        uc.execute = AsyncMock(side_effect=BookingNotFoundError("not found"))
+        resp = client.post(f"/admin/bookings/{uuid4()}/force-release")
+    assert resp.status_code == 404
