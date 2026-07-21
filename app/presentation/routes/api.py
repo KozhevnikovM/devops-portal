@@ -13,21 +13,16 @@ from app.domain.enums import DriveType
 from app.domain.exceptions import NotFoundError
 from app.infrastructure.auth import require_admin, require_user
 from app.infrastructure.database.session import get_async_session
-from app.infrastructure.repositories.image_repo import ImageRepository
-from app.infrastructure.repositories.hw_config_repo import HWConfigRepository
-from app.infrastructure.repositories.environment_blueprint_repo import EnvironmentBlueprintRepository
-from app.infrastructure.repositories.namespace_repo import NamespaceRepository
-from app.infrastructure.repositories.role_repo import RoleRepository
-from app.infrastructure.repositories.static_vm_repo import StaticVMRepository
+from app.presentation import deps as _deps
 
 router = APIRouter(prefix="", tags=["admin"])
 
-_image_repo = ImageRepository()
-_hw_config_repo = HWConfigRepository()
-_namespace_repo = NamespaceRepository()
-_role_repo = RoleRepository()
-_blueprint_repo = EnvironmentBlueprintRepository()
-_static_vm_repo = StaticVMRepository()
+_image_repo     = _deps.image_repo
+_hw_config_repo = _deps.hw_config_repo
+_namespace_repo = _deps.namespace_repo
+_role_repo      = _deps.role_repo
+_blueprint_repo = _deps.blueprint_repo
+_static_vm_repo = _deps.static_vm_repo
 
 _VALID_RESOURCE_TYPES = {"VM", "STATIC_VM", "NAMESPACE"}
 
