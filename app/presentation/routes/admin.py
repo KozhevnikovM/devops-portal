@@ -151,11 +151,19 @@ async def admin_force_release_booking(
 
     if booking.resource_type != ResourceType.VM:
         raise HTTPException(status_code=400, detail="Force release is only available for VM bookings")
-    if booking.status != BookingStatus.FAILED:
-        raise HTTPException(status_code=400, detail=f"Booking is {booking.status.value}, not FAILED")
+    if booking.status not in {BookingStatus.FAILED, BookingStatus.RELEASING}:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Booking is {booking.status.value}; must be FAILED or RELEASING to force-release",
+        )
 
-    await _booking_repo.update_status(session, booking_id, BookingStatus.RELEASING, actor_id=str(current_user.id))
-    dispatcher.dispatch_teardown_force(str(booking_id))
+    if booking.status == BookingStatus.RELEASING:
+        # VM already gone; teardown was already dispatched (or never completed).
+        # Skip re-dispatch and mark directly as released.
+        await _booking_repo.update_status(session, booking_id, BookingStatus.RELEASED, actor_id=str(current_user.id))
+    else:
+        await _booking_repo.update_status(session, booking_id, BookingStatus.RELEASING, actor_id=str(current_user.id))
+        dispatcher.dispatch_teardown_force(str(booking_id))
 
     booking = await _booking_repo.get(session, booking_id)
     return templates.TemplateResponse(
