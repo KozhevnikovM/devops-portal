@@ -1,4 +1,3 @@
-import math
 from uuid import UUID, uuid4
 
 from sqlalchemy import func, select
@@ -9,6 +8,7 @@ from app.config import settings
 from app.domain.booking_status import LIVE_STATUSES
 from app.domain.entities import Quota
 from app.domain.enums import DriveType
+from app.domain.resource_details import ResourceFootprint
 from app.infrastructure.database.models import BookingModel, QuotaModel
 
 _ACTIVE_STATUSES = [s.value for s in LIVE_STATUSES]
@@ -71,9 +71,9 @@ class QuotaRepository:
 
         return {
             "cpus":      int(row.cpus),
-            "memory_gb": math.ceil(int(row.memory_mb) / 1024),
-            "ssd_gb":    math.ceil(disk_mb_by_type.get(DriveType.SSD.value, 0) / 1024),
-            "hdd_gb":    math.ceil(disk_mb_by_type.get(DriveType.HDD.value, 0) / 1024),
+            "memory_gb": ResourceFootprint.mb_to_gb(int(row.memory_mb)),
+            "ssd_gb":    ResourceFootprint.mb_to_gb(disk_mb_by_type.get(DriveType.SSD.value, 0)),
+            "hdd_gb":    ResourceFootprint.mb_to_gb(disk_mb_by_type.get(DriveType.HDD.value, 0)),
         }
 
     async def get_limits(self, session: AsyncSession, user_id: str) -> dict:
