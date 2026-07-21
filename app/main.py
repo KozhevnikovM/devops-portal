@@ -99,9 +99,14 @@ app.mount("/static", StaticFiles(directory="app/static"), name="static")
 app.include_router(admin_router)
 app.include_router(auth_router)
 app.include_router(router)
-app.include_router(api_router)
-app.include_router(api_bookings_router)
-app.include_router(api_environments_router)
+# Legacy /api/... — preserved for backward compat, hidden from OpenAPI docs
+app.include_router(api_router, prefix="/api", include_in_schema=False)
+app.include_router(api_bookings_router, prefix="/api", include_in_schema=False)
+app.include_router(api_environments_router, prefix="/api", include_in_schema=False)
+# Canonical /api/v1/... — the stable versioned surface
+app.include_router(api_router, prefix="/api/v1")
+app.include_router(api_bookings_router, prefix="/api/v1")
+app.include_router(api_environments_router, prefix="/api/v1")
 app.include_router(environments_router)
 
 # Keep the OpenAPI schema (/docs) to the JSON API surface: hide the HTML/HTMX page and

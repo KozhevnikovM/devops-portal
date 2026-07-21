@@ -20,7 +20,7 @@ from app.infrastructure.repositories.namespace_repo import NamespaceRepository
 from app.infrastructure.repositories.role_repo import RoleRepository
 from app.infrastructure.repositories.static_vm_repo import StaticVMRepository
 
-router = APIRouter(prefix="/api", tags=["admin"])
+router = APIRouter(prefix="", tags=["admin"])
 
 _image_repo = ImageRepository()
 _hw_config_repo = HWConfigRepository()

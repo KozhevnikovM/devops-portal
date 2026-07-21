@@ -16,7 +16,7 @@ from app.infrastructure.auth import require_user
 from app.infrastructure.database.session import get_async_session
 from app.presentation import deps
 
-router = APIRouter(prefix="/api/environments", tags=["environments"])
+router = APIRouter(prefix="/environments", tags=["environments"])
 
 # Shared singletons from the composition root. Names kept so existing patches still target them.
 _repo = deps.booking_repo
