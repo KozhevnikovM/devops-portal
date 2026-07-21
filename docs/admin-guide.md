@@ -1294,6 +1294,27 @@ Check worker logs to follow teardown output:
 docker compose logs -f worker
 ```
 
+### Admin: Force-Releasing a Stuck VM Booking
+
+If a VM booking's teardown gets stuck — the VM was already destroyed out-of-band (e.g. a
+direct VCD operation) but the booking never reached `RELEASED` — an admin can force it to
+its terminal state from the admin bookings table via **Force Release**:
+
+```bash
+curl -s -X POST http://localhost:8000/admin/bookings/<booking-id>/force-release \
+     -H "Cookie: session=<admin-session-cookie>"
+```
+
+Force-release is only available for VM bookings (not pooled static VMs or namespaces), and
+only from these starting states:
+
+| Starting status | Result |
+|---|---|
+| `FAILED` | → `RELEASING`, teardown re-dispatched, `202` |
+| `RELEASING` | → `RELEASED` directly, no teardown dispatch (VM is already gone), `202` |
+| Any other status | `400 Bad Request` |
+| Non-VM resource type | `400 Bad Request` |
+
 ---
 
 ## TTL & Auto-Release
