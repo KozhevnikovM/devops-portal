@@ -5,6 +5,9 @@ from uuid import UUID
 from app.domain.booking_status import can_transition
 from app.domain.enums import BookingStatus, DriveType, ResourceType
 from app.domain.exceptions import IllegalStatusTransitionError
+from app.domain.resource_details import (  # noqa: F401 – re-exported for convenience
+    NamespaceDetails, ResourceFootprint, StaticVMDetails, VMDetails,
+)
 
 
 @dataclass
@@ -145,38 +148,40 @@ class Booking:
     expires_at: datetime
     created_at: datetime
     resource_type: ResourceType = ResourceType.VM
-    image_id: UUID | None = None
-    image_name: str | None = None
-    hw_config_id: UUID | None = None
-    hw_config_name: str | None = None
-    vm_ip: str | None = None
-    vm_password: str | None = None
+    image_id: UUID | None = None          # deprecated: use self.details.image_id (VMDetails)
+    image_name: str | None = None         # deprecated: use self.details.image_name
+    hw_config_id: UUID | None = None      # deprecated: use self.details.hw_config_id
+    hw_config_name: str | None = None     # deprecated: use self.details.hw_config_name
+    vm_ip: str | None = None              # deprecated: use self.details.vm_ip
+    vm_password: str | None = None        # deprecated: use self.details.vm_password
     owner_username: str | None = None
-    cpus: int = 0
-    memory_mb: int = 0
-    disk_mb: int = 0
-    drive_type: str = DriveType.HDD.value
+    cpus: int = 0                         # deprecated: use self.footprint.cpus
+    memory_mb: int = 0                    # deprecated: use self.footprint.memory_mb
+    disk_mb: int = 0                      # deprecated: use self.footprint.disk_mb
+    drive_type: str = DriveType.HDD.value # deprecated: use self.footprint.drive_type
     status_message: str | None = None
-    startup_script: str | None = None
-    config_roles: list = field(default_factory=list)  # snapshot: [{name, ansible_role, vars}]
-    extra_vars: dict = field(default_factory=dict)    # blueprint-level vars injected into ansible portal dict
-    config_failed: bool = False
-    environment_id: UUID | None = None  # parent Environment, when ordered as part of a stack
-    environment_label: str | None = None  # blueprint item label (e.g. "web") within the stack
-    label: str | None = None              # user-provided display name (e.g. "my perf test")
-    created_by: str | None = None  # acting dispatcher's id when ordered on behalf of the owner
-    created_by_username: str | None = None  # resolved username of created_by (display only)
-    namespace_id: UUID | None = None
-    namespace_name: str | None = None
-    cluster_name: str | None = None
-    api_url: str | None = None
-    static_vm_id: UUID | None = None
-    static_vm_name: str | None = None
-    static_vm_host: str | None = None
-    static_vm_username: str | None = None
-    static_vm_password: str | None = None
-    static_vm_ssh_key: str | None = None
-    queue_position: int | None = None  # FIFO rank for QUEUED bookings (display only)
+    startup_script: str | None = None     # deprecated: use self.details.startup_script (VMDetails)
+    config_roles: list = field(default_factory=list)  # deprecated: use self.details.config_roles
+    extra_vars: dict = field(default_factory=dict)    # deprecated: use self.details.extra_vars
+    config_failed: bool = False           # deprecated: use self.details.config_failed
+    environment_id: UUID | None = None
+    environment_label: str | None = None
+    label: str | None = None
+    created_by: str | None = None
+    created_by_username: str | None = None
+    namespace_id: UUID | None = None      # deprecated: use self.details.namespace_id (NamespaceDetails)
+    namespace_name: str | None = None     # deprecated: use self.details.namespace_name
+    cluster_name: str | None = None       # deprecated: use self.details.cluster_name
+    api_url: str | None = None            # deprecated: use self.details.api_url
+    static_vm_id: UUID | None = None      # deprecated: use self.details.static_vm_id (StaticVMDetails)
+    static_vm_name: str | None = None     # deprecated: use self.details.static_vm_name
+    static_vm_host: str | None = None     # deprecated: use self.details.static_vm_host
+    static_vm_username: str | None = None # deprecated: use self.details.static_vm_username
+    static_vm_password: str | None = None # deprecated: use self.details.static_vm_password
+    static_vm_ssh_key: str | None = None  # deprecated: use self.details.static_vm_ssh_key
+    queue_position: int | None = None
+    details: VMDetails | NamespaceDetails | StaticVMDetails | None = field(default=None)
+    footprint: ResourceFootprint | None = field(default=None)
 
     def transition_to(self, new: BookingStatus) -> None:
         """Enforce the status-transition invariant and advance self.status.

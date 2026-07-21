@@ -1,4 +1,3 @@
-import math
 from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
@@ -12,6 +11,7 @@ from app.domain.entities import Booking
 from app.domain.lease import Lease
 from app.domain.enums import BookingStatus, DriveType
 from app.domain.exceptions import QuotaExceededError
+from app.domain.resource_details import ResourceFootprint
 
 
 class CreateBookingUseCase:
@@ -57,8 +57,8 @@ class CreateBookingUseCase:
         used   = await self._quota_repo.count_active_resources(session, uid)
 
         new_cpus      = hw.cpus
-        new_memory_gb = math.ceil(hw.memory_mb / 1024)
-        new_disk_gb   = math.ceil(hw.disk_mb   / 1024)
+        new_memory_gb = ResourceFootprint.mb_to_gb(hw.memory_mb)
+        new_disk_gb   = ResourceFootprint.mb_to_gb(hw.disk_mb)
 
         # The config's disk counts toward the quota of its own drive type (SSD or HDD).
         is_ssd     = hw.drive_type == DriveType.SSD.value

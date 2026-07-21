@@ -11,6 +11,9 @@ from app.domain.entities import Booking, BookingAuditEntry
 from app.domain.enums import BookingStatus, ResourceType
 from app.domain.exceptions import BookingNotFoundError, IllegalStatusTransitionError
 from app.domain.lease import Lease
+from app.domain.resource_details import (
+    NamespaceDetails, ResourceFootprint, StaticVMDetails, VMDetails,
+)
 from app.infrastructure.database.models import (
     BookingAuditModel, BookingModel, NamespaceModel, StaticVMModel, UserModel,
 )
@@ -63,11 +66,52 @@ def _to_entity(
         _status = BookingStatus(m.status)
     except ValueError:
         raise ValueError(f"Booking {m.id} has unrecognised status {m.status!r} in the database")
+    _resource_type = ResourceType(m.resource_type)
+
+    if _resource_type == ResourceType.VM:
+        _details: VMDetails | NamespaceDetails | StaticVMDetails | None = VMDetails(
+            image_id=m.image_id,
+            image_name=m.image_name,
+            hw_config_id=m.hw_config_id,
+            hw_config_name=m.hw_config_name,
+            vm_ip=m.vm_ip,
+            vm_password=m.vm_password,
+            startup_script=m.startup_script,
+            config_roles=tuple(m.config_roles or []),
+            extra_vars=dict(m.extra_vars or {}),
+            config_failed=m.config_failed,
+        )
+    elif _resource_type == ResourceType.NAMESPACE:
+        _details = NamespaceDetails(
+            namespace_id=m.namespace_id,
+            namespace_name=namespace.name if namespace else None,
+            cluster_name=namespace.cluster_name if namespace else None,
+            api_url=namespace.api_url if namespace else None,
+        )
+    elif _resource_type == ResourceType.STATIC_VM:
+        _details = StaticVMDetails(
+            static_vm_id=m.static_vm_id,
+            static_vm_name=static_vm.name if static_vm else None,
+            static_vm_host=static_vm.host if static_vm else None,
+            static_vm_username=static_vm.username if static_vm else None,
+            static_vm_password=static_vm.password if static_vm else None,
+            static_vm_ssh_key=static_vm.ssh_key if static_vm else None,
+        )
+    else:
+        _details = None
+
+    _footprint = ResourceFootprint(
+        cpus=m.cpus,
+        memory_mb=m.memory_mb,
+        disk_mb=m.disk_mb,
+        drive_type=m.drive_type,
+    )
+
     return Booking(
         id=m.id,
         user_id=m.user_id,
         status=_status,
-        resource_type=ResourceType(m.resource_type),
+        resource_type=_resource_type,
         ttl_minutes=m.ttl_minutes,
         expires_at=m.expires_at,
         created_at=m.created_at,
@@ -102,6 +146,8 @@ def _to_entity(
         static_vm_username=static_vm.username if static_vm else None,
         static_vm_password=static_vm.password if static_vm else None,
         static_vm_ssh_key=static_vm.ssh_key if static_vm else None,
+        details=_details,
+        footprint=_footprint,
     )
 
 
