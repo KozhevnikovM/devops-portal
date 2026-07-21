@@ -15,22 +15,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.infrastructure.auth import VALID_ROLES, require_admin, require_user
 from app.infrastructure.database.session import get_async_session
-from app.infrastructure.repositories.user_repo import UserRepository
-from app.infrastructure.repositories.quota_repo import QuotaRepository
-from app.infrastructure.repositories.image_repo import ImageRepository
-from app.infrastructure.repositories.hw_config_repo import HWConfigRepository
 from app.domain.entities import User
+from app.presentation import deps as _deps
 from app.presentation.templating import templates
 
 router = APIRouter()
 
-_quota_repo = QuotaRepository()
-
-_user_repo = UserRepository()
-
-_image_repo = ImageRepository()
-
-_hw_config_repo = HWConfigRepository()
+_quota_repo    = _deps.quota_repo
+_user_repo     = _deps.user_repo
+_image_repo    = _deps.image_repo
+_hw_config_repo = _deps.hw_config_repo
 
 
 def _get_redis() -> aioredis.Redis:

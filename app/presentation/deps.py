@@ -29,10 +29,12 @@ from app.infrastructure.repositories.namespace_repo import NamespaceRepository
 from app.infrastructure.repositories.quota_repo import QuotaRepository
 from app.infrastructure.repositories.role_repo import RoleRepository
 from app.infrastructure.repositories.static_vm_repo import StaticVMRepository
+from app.infrastructure.repositories.user_repo import UserRepository
 
 # ── Repositories (shared, stateless) ─────────────────────────────────────────────
 booking_repo = BookingRepository()
 image_repo = ImageRepository()
+user_repo = UserRepository()
 hw_config_repo = HWConfigRepository()
 quota_repo = QuotaRepository()
 namespace_repo = NamespaceRepository()
