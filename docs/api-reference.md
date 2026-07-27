@@ -344,8 +344,10 @@ Returns the main HTML page with the booking form and active bookings table.
 |-------|------|---------|-------------|
 | `filter` | `mine` \| `all` | `mine` | `mine` shows only the current user's bookings; `all` shows everyone's |
 | `show_released` | bool | `false` | When omitted/false, RELEASED bookings are hidden. Pass `show_released=1` to include them. |
+| `label` | string | *(none)* | Case-insensitive substring match against `label`; composes with the other two filters |
 
-The two filters are independent and compose, e.g. `/?filter=all&show_released=1`.
+The three filters are independent and compose, e.g. `/?filter=all&show_released=1&label=perf`.
+Also accepted on the same-shaped `/book/vm` and `/book/namespace` pages.
 
 ---
 
@@ -1331,7 +1333,8 @@ DELETE /api/environments/{id}?on_behalf_of=alice
 
 > **Browser UI:** the **Environments** page (`GET /environments`, in the top nav) lets users order a
 > blueprint, watch the stack come up (HTMX polling), and release it — the same operations as the JSON
-> API above. The order form has an optional **Namespace** dropdown (default *"Blueprint default"*)
+> API above. It accepts the same `filter`/`show_released`/`label` query params as the bookings page
+> (see `GET /` above). The order form has an optional **Namespace** dropdown (default *"Blueprint default"*)
 > listing the available namespaces by `name (cluster)`; picking one overrides the blueprint's
 > namespace item (same single-namespace rule as the API — a bad choice renders the `400` inline).
 > Those `/environments*` routes return HTML fragments and are intentionally absent from the schema.
