@@ -362,6 +362,12 @@ List bookings.
 **Auth:** any authenticated user. **Owner-scoped:** a regular user sees **only their own**
 bookings; an **admin** sees **all** bookings.
 
+**Query parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `label` | string | Optional. Case-insensitive substring match against `label` (e.g. `?label=perf` matches "PR #42 perf test") |
+
 **Response:** `200` JSON array:
 
 ```json
@@ -1236,6 +1242,10 @@ also appear in `GET /api/bookings`, carrying their `environment_id`.
 
 List environments (owner-scoped; admins see all) / fetch one (any authenticated user; `404` if not found),
 each with the derived status + child summaries.
+
+`GET /api/environments` accepts an optional `label` query parameter — a case-insensitive
+substring match against `name` (e.g. `?label=dev` matches `dev-stack`). An environment's
+`name` already serves as its label (see `PATCH /api/environments/{id}`, #342).
 
 ### `GET /api/environments/by-namespace/{namespace_name}`
 

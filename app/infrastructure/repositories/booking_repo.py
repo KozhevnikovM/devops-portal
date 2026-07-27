@@ -160,6 +160,13 @@ def _apply_resource_type_filter(stmt, resource_type: str | list[str] | None):
     return stmt.where(BookingModel.resource_type == resource_type)
 
 
+def _apply_label_filter(stmt, label: str | None):
+    """Case-insensitive substring match on the booking's label; no-op if blank/None."""
+    if label is None or not label.strip():
+        return stmt
+    return stmt.where(BookingModel.label.ilike(f"%{label.strip()}%"))
+
+
 _POOLED_LIVE_STATUSES = [s.value for s in LIVE_STATUSES]
 
 # Pooled resource model + the booking FK that references it, keyed by resource_type.
@@ -311,6 +318,7 @@ class BookingRepository:
         session: AsyncSession,
         include_released: bool = False,
         resource_type: str | list[str] | None = None,
+        label: str | None = None,
     ) -> list[Booking]:
         stmt = (
             select(BookingModel, UserModel.username, NamespaceModel, StaticVMModel, _CreatorUser.username)
@@ -323,6 +331,7 @@ class BookingRepository:
         if not include_released:
             stmt = stmt.where(BookingModel.status != BookingStatus.RELEASED.value)
         stmt = _apply_resource_type_filter(stmt, resource_type)
+        stmt = _apply_label_filter(stmt, label)
         result = await session.execute(stmt)
         return [_to_entity(m, username, ns, svm, created_by_username=creator)
                 for m, username, ns, svm, creator in result.all()]
@@ -333,6 +342,7 @@ class BookingRepository:
         user_id: str,
         include_released: bool = False,
         resource_type: str | list[str] | None = None,
+        label: str | None = None,
     ) -> list[Booking]:
         # "Visible to user": bookings they own, plus any they dispatched on someone's behalf
         # (created_by). created_by is only ever a dispatcher/admin id, so for an ordinary user
@@ -349,6 +359,7 @@ class BookingRepository:
         if not include_released:
             stmt = stmt.where(BookingModel.status != BookingStatus.RELEASED.value)
         stmt = _apply_resource_type_filter(stmt, resource_type)
+        stmt = _apply_label_filter(stmt, label)
         result = await session.execute(stmt)
         return [_to_entity(m, username, ns, svm, created_by_username=creator)
                 for m, username, ns, svm, creator in result.all()]

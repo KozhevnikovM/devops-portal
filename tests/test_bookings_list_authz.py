@@ -65,7 +65,9 @@ def test_non_admin_is_scoped_to_own_bookings():
         resp = TestClient(app).get("/api/bookings")
 
     # Owner scoping must use list_by_user, never the unscoped list_all.
-    mock_repo.list_by_user.assert_awaited_once_with(mock_repo.list_by_user.call_args.args[0], str(user.id))
+    mock_repo.list_by_user.assert_awaited_once_with(
+        mock_repo.list_by_user.call_args.args[0], str(user.id), label=None,
+    )
     mock_repo.list_all.assert_not_called()
     data = resp.json()
     assert {r["user_id"] for r in data} == {str(user.id)}

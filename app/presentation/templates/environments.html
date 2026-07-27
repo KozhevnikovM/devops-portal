@@ -16,23 +16,33 @@
     <section id="environments-section">
         <div class="flex items-center justify-between mb-3">
             <h2 class="text-sm text-gray-400 uppercase tracking-widest">Environments</h2>
-            <div class="flex gap-1">
+            <div class="flex items-center gap-1">
+                <input
+                    type="text" name="label" value="{{ label_filter or '' }}"
+                    placeholder="Filter by name"
+                    hx-get="/environments?filter={{ active_filter }}{% if show_released %}&show_released=1{% endif %}"
+                    hx-trigger="keyup changed delay:400ms, search"
+                    hx-target="#environments-section"
+                    hx-select="#environments-section"
+                    hx-push-url="true"
+                    class="text-xs px-3 py-1 rounded border bg-gray-800 text-gray-300 border-gray-700 focus:outline-none focus:border-green-500 w-36 mr-2"
+                >
                 <button
-                    hx-get="/environments?filter=mine{% if show_released %}&show_released=1{% endif %}"
+                    hx-get="/environments?filter=mine{% if show_released %}&show_released=1{% endif %}{% if label_filter %}&label={{ label_filter | urlencode }}{% endif %}"
                     hx-target="#environments-section"
                     hx-select="#environments-section"
                     hx-push-url="true"
                     class="text-xs px-3 py-1 rounded border transition-colors {% if active_filter != 'all' %}bg-gray-700 text-green-400 border-green-700{% else %}bg-gray-800 text-gray-500 border-gray-700 hover:text-gray-300{% endif %}"
                 >Mine</button>
                 <button
-                    hx-get="/environments?filter=all{% if show_released %}&show_released=1{% endif %}"
+                    hx-get="/environments?filter=all{% if show_released %}&show_released=1{% endif %}{% if label_filter %}&label={{ label_filter | urlencode }}{% endif %}"
                     hx-target="#environments-section"
                     hx-select="#environments-section"
                     hx-push-url="true"
                     class="text-xs px-3 py-1 rounded border transition-colors {% if active_filter == 'all' %}bg-gray-700 text-green-400 border-green-700{% else %}bg-gray-800 text-gray-500 border-gray-700 hover:text-gray-300{% endif %}"
                 >All</button>
                 <button
-                    hx-get="/environments?filter={{ active_filter }}{% if not show_released %}&show_released=1{% endif %}"
+                    hx-get="/environments?filter={{ active_filter }}{% if not show_released %}&show_released=1{% endif %}{% if label_filter %}&label={{ label_filter | urlencode }}{% endif %}"
                     hx-target="#environments-section"
                     hx-select="#environments-section"
                     hx-push-url="true"

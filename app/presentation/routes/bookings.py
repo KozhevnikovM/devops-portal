@@ -46,17 +46,19 @@ async def _attach_queue_position(session, booking) -> None:
 
 async def _render_bookings_page(
     request, session, current_user, *, booking_type, page_path, active_nav, filter, show_released,
+    label=None,
 ):
     # The VM page lists both provisioned and static VMs; other pages list their one type.
     query_types = _VM_PAGE_TYPES if booking_type == "VM" else booking_type
 
     if filter == "all":
         bookings = await _repo.list_all(
-            session, include_released=show_released, resource_type=query_types
+            session, include_released=show_released, resource_type=query_types, label=label,
         )
     else:
         bookings = await _repo.list_by_user(
-            session, str(current_user.id), include_released=show_released, resource_type=query_types
+            session, str(current_user.id), include_released=show_released,
+            resource_type=query_types, label=label,
         )
     for b in bookings:
         await _attach_queue_position(session, b)
@@ -75,6 +77,7 @@ async def _render_bookings_page(
             "current_user": current_user,
             "active_filter": filter,
             "show_released": show_released,
+            "label_filter": label,
             "booking_type": booking_type,
             "page_path": page_path,
             "active_nav": active_nav,
@@ -88,13 +91,14 @@ async def vm_bookings_page(
     request: Request,
     filter: str = "mine",
     show_released: bool = False,
+    label: str | None = None,
     session: AsyncSession = Depends(get_async_session),
     current_user: User = Depends(require_user),
 ):
     return await _render_bookings_page(
         request, session, current_user,
         booking_type="VM", page_path="/book/vm", active_nav="vm",
-        filter=filter, show_released=show_released,
+        filter=filter, show_released=show_released, label=label,
     )
 
 
@@ -103,13 +107,14 @@ async def namespace_bookings_page(
     request: Request,
     filter: str = "mine",
     show_released: bool = False,
+    label: str | None = None,
     session: AsyncSession = Depends(get_async_session),
     current_user: User = Depends(require_user),
 ):
     return await _render_bookings_page(
         request, session, current_user,
         booking_type="NAMESPACE", page_path="/book/namespace", active_nav="namespace",
-        filter=filter, show_released=show_released,
+        filter=filter, show_released=show_released, label=label,
     )
 
 

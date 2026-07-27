@@ -131,13 +131,14 @@ async def order_environment(
 
 @router.get("")
 async def list_environments(
+    label: str | None = None,
     session: AsyncSession = Depends(get_async_session),
     current_user: User = Depends(require_user),
 ):
     if current_user.role == "admin":
-        envs = await _env_repo.list_all(session)
+        envs = await _env_repo.list_all(session, label=label)
     else:
-        envs = await _env_repo.list_by_user(session, str(current_user.id))
+        envs = await _env_repo.list_by_user(session, str(current_user.id), label=label)
     return [_serialize(e) for e in envs]
 
 
