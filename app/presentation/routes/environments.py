@@ -31,11 +31,13 @@ def _annotate(env):
     return env
 
 
-async def _list_for(session, current_user, *, filter: str = "mine", show_released: bool = False):
+async def _list_for(
+    session, current_user, *, filter: str = "mine", show_released: bool = False, label=None,
+):
     if filter == "all":
-        envs = await _env_repo.list_all(session)
+        envs = await _env_repo.list_all(session, label=label)
     else:
-        envs = await _env_repo.list_by_user(session, str(current_user.id))
+        envs = await _env_repo.list_by_user(session, str(current_user.id), label=label)
     annotated = [_annotate(e) for e in envs]
     if not show_released:
         annotated = [e for e in annotated if e.derived_status != BookingStatus.RELEASED.value]
@@ -47,10 +49,13 @@ async def environments_page(
     request: Request,
     filter: str = "mine",
     show_released: bool = False,
+    label: str | None = None,
     session: AsyncSession = Depends(get_async_session),
     current_user: User = Depends(require_user),
 ):
-    environments = await _list_for(session, current_user, filter=filter, show_released=show_released)
+    environments = await _list_for(
+        session, current_user, filter=filter, show_released=show_released, label=label,
+    )
     blueprints = await _blueprint_repo.list_active(session)
     available_namespaces = await _namespace_repo.list_available(session)
     held_namespaces = await _namespace_repo.list_held_standalone_by_user(session, str(current_user.id))
@@ -65,6 +70,7 @@ async def environments_page(
             "active_nav": "environment",
             "active_filter": filter,
             "show_released": show_released,
+            "label_filter": label,
         },
     )
 

@@ -166,13 +166,17 @@ class EnvironmentRepository:
             for model, owner, creator in env_rows
         ]
 
-    async def list_all(self, session: AsyncSession) -> list[Environment]:
-        return await self._list(session, None)
+    async def list_all(self, session: AsyncSession, label: str | None = None) -> list[Environment]:
+        return await self._list(session, None, label=label)
 
-    async def list_by_user(self, session: AsyncSession, user_id: str) -> list[Environment]:
-        return await self._list(session, user_id)
+    async def list_by_user(
+        self, session: AsyncSession, user_id: str, label: str | None = None,
+    ) -> list[Environment]:
+        return await self._list(session, user_id, label=label)
 
-    async def _list(self, session: AsyncSession, user_id: str | None) -> list[Environment]:
+    async def _list(
+        self, session: AsyncSession, user_id: str | None, label: str | None = None,
+    ) -> list[Environment]:
         stmt = (
             select(EnvironmentModel, UserModel.username, _CreatorUser.username)
             .join(UserModel, cast(UserModel.id, String) == EnvironmentModel.user_id, isouter=True)
@@ -184,6 +188,9 @@ class EnvironmentRepository:
             stmt = stmt.where(
                 or_(EnvironmentModel.user_id == user_id, EnvironmentModel.created_by == user_id)
             )
+        if label is not None and label.strip():
+            # An environment's name already serves as its label (#345); filter on it directly.
+            stmt = stmt.where(EnvironmentModel.name.ilike(f"%{label.strip()}%"))
         rows = (await session.execute(stmt)).all()
         env_ids = [model.id for model, _, _ in rows]
         children_by_env = await self._children_batch(session, env_ids)

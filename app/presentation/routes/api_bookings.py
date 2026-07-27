@@ -169,15 +169,16 @@ async def _resolve_catalog_id(session, id_, name, get_by_name, label):
 # ── Endpoints ──────────────────────────────────────────────────────────────────
 @router.get("")
 async def list_bookings(
+    label: str | None = None,
     session: AsyncSession = Depends(get_async_session),
     current_user: User = Depends(require_user),
 ):
     # Owner-scoped: non-admins see only their own bookings; admins see all. Secrets are never
     # vended here — only on the owner-scoped creation response.
     if current_user.role == "admin":
-        bookings = await _repo.list_all(session)
+        bookings = await _repo.list_all(session, label=label)
     else:
-        bookings = await _repo.list_by_user(session, str(current_user.id))
+        bookings = await _repo.list_by_user(session, str(current_user.id), label=label)
     return [_summary(b) for b in bookings]
 
 
