@@ -204,6 +204,7 @@ async def create_booking(
                 namespace_id=body.namespace_id,
                 namespace_name=body.namespace_name,
                 cluster_name=body.cluster_name,
+                label=body.label[:128].strip() if body.label else None,
             )
         except NamespaceUnavailableError as exc:
             raise HTTPException(status_code=409, detail=str(exc))
@@ -220,6 +221,7 @@ async def create_booking(
             booking = await _reserve_static_vm_use_case.execute(
                 session, body.ttl_minutes, user_id=owner_id, created_by=created_by,
                 static_vm_id=static_vm_id,
+                label=body.label[:128].strip() if body.label else None,
             )
         except StaticVMUnavailableError as exc:
             raise HTTPException(status_code=409, detail=str(exc))
