@@ -116,6 +116,23 @@
                 <details class="relative">
                     <summary class="list-none cursor-pointer w-7 h-7 flex items-center justify-center rounded text-gray-400 hover:text-gray-200 hover:bg-gray-700 transition-colors select-none text-lg leading-none">⋮</summary>
                     <div class="absolute right-0 bottom-full mb-1 w-48 bg-gray-900 border border-gray-700 rounded shadow-lg z-50 py-1">
+                        <form
+                            hx-patch="/bookings/{{ booking.id }}/label"
+                            hx-target="closest tr"
+                            hx-swap="outerHTML"
+                            class="flex items-center gap-1 px-3 py-2"
+                        >
+                            <input
+                                type="text" name="label" maxlength="128"
+                                value="{{ booking.label or '' }}"
+                                placeholder="Label"
+                                class="flex-1 min-w-0 text-xs px-1 py-1 rounded bg-gray-700 text-gray-300 border border-gray-600"
+                            >
+                            <button type="submit" class="text-xs px-2 py-1 rounded bg-blue-900 text-blue-300 border border-blue-700 hover:bg-blue-800 transition-colors">
+                                Save
+                            </button>
+                        </form>
+                        <div class="border-t border-gray-800"></div>
                         {% if can_manage and booking.ttl_minutes != 0 and booking.status.value == 'READY' %}
                         <form
                             hx-put="/bookings/{{ booking.id }}/extend"
@@ -193,6 +210,23 @@
                 <details class="relative">
                     <summary class="list-none cursor-pointer w-7 h-7 flex items-center justify-center rounded text-gray-400 hover:text-gray-200 hover:bg-gray-700 transition-colors select-none text-lg leading-none">⋮</summary>
                     <div class="absolute right-0 bottom-full mb-1 w-48 bg-gray-900 border border-gray-700 rounded shadow-lg z-50 py-1">
+                        <form
+                            hx-patch="/bookings/{{ booking.id }}/label"
+                            hx-target="closest tr"
+                            hx-swap="outerHTML"
+                            class="flex items-center gap-1 px-3 py-2"
+                        >
+                            <input
+                                type="text" name="label" maxlength="128"
+                                value="{{ booking.label or '' }}"
+                                placeholder="Label"
+                                class="flex-1 min-w-0 text-xs px-1 py-1 rounded bg-gray-700 text-gray-300 border border-gray-600"
+                            >
+                            <button type="submit" class="text-xs px-2 py-1 rounded bg-blue-900 text-blue-300 border border-blue-700 hover:bg-blue-800 transition-colors">
+                                Save
+                            </button>
+                        </form>
+                        <div class="border-t border-gray-800"></div>
                         <button
                             class="w-full text-left px-3 py-2 text-sm text-red-400 hover:bg-gray-800 transition-colors"
                             hx-delete="/bookings/{{ booking.id }}"

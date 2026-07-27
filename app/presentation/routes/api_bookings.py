@@ -36,6 +36,7 @@ _static_vm_repo = deps.static_vm_repo
 _dispatcher = deps.dispatcher
 _create_use_case = deps.create_booking_uc
 _extend_use_case = deps.extend_booking_uc
+_update_label_use_case = deps.update_booking_label_uc
 _release_use_case = deps.release_booking_uc
 _book_namespace_use_case = deps.book_namespace_uc
 _reserve_static_vm_use_case = deps.reserve_static_vm_uc
@@ -70,6 +71,10 @@ class CreateBookingRequest(BaseModel):
 
 class ExtendBookingRequest(BaseModel):
     extend_minutes: int
+
+
+class UpdateBookingLabelRequest(BaseModel):
+    label: str | None = None
 
 
 # ── Serialization ──────────────────────────────────────────────────────────────
@@ -304,6 +309,24 @@ async def extend_booking(
         "ttl_minutes": booking.ttl_minutes,
         "expires_at": booking.expires_at.isoformat(),
     }
+
+
+@router.patch("/{booking_id}")
+async def update_booking_label(
+    booking_id: UUID,
+    body: UpdateBookingLabelRequest,
+    session: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(require_user),
+):
+    try:
+        booking = await _update_label_use_case.execute(session, booking_id, body.label, current_user)
+    except BookingNotFoundError:
+        raise HTTPException(status_code=404, detail="Booking not found")
+    except BookingPermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+    except BookingError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {"id": str(booking.id), "label": booking.label}
 
 
 @router.get("/{booking_id}/audit")

@@ -69,6 +69,13 @@ class EnvironmentRepository:
             await session.delete(model)
             await session.commit()
 
+    async def update_name(self, session: AsyncSession, environment_id: UUID, name: str) -> None:
+        model = await session.get(EnvironmentModel, environment_id)
+        if model is None:
+            raise EnvironmentNotFoundError(f"Environment {environment_id} not found")
+        model.name = name
+        await session.commit()
+
     async def _children(self, session: AsyncSession, environment_id: UUID):
         result = await session.execute(
             select(BookingModel, UserModel.username, NamespaceModel, StaticVMModel)

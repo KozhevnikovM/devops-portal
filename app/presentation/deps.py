@@ -20,6 +20,8 @@ from app.application.use_cases.order_environment import OrderEnvironmentUseCase
 from app.application.use_cases.release_booking import ReleaseBookingUseCase
 from app.application.use_cases.release_environment import ReleaseEnvironmentUseCase
 from app.application.use_cases.reserve_static_vm import ReserveStaticVMUseCase
+from app.application.use_cases.update_booking_label import UpdateBookingLabelUseCase
+from app.application.use_cases.update_environment_name import UpdateEnvironmentNameUseCase
 from app.infrastructure.celery_dispatcher import CeleryTaskDispatcher
 from app.infrastructure.repositories.booking_repo import BookingRepository
 from app.infrastructure.repositories.environment_blueprint_repo import EnvironmentBlueprintRepository
@@ -63,3 +65,5 @@ order_environment_uc = OrderEnvironmentUseCase(
 )
 release_environment_uc = ReleaseEnvironmentUseCase(env_repo, release_booking_uc)
 force_release_booking_uc = ForceReleaseBookingUseCase(booking_repo, dispatcher)
+update_booking_label_uc = UpdateBookingLabelUseCase(booking_repo)
+update_environment_name_uc = UpdateEnvironmentNameUseCase(env_repo)

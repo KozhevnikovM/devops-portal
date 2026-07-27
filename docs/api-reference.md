@@ -675,6 +675,46 @@ curl -s -X PUT http://localhost:8000/api/bookings/<booking-id>/extend \
 
 ---
 
+### `PATCH /api/bookings/{booking_id}`
+
+Change a booking's display label. The owner, the dispatcher who created it on the owner's
+behalf, or an admin may edit it — the same rule as extend/release. A label is a display
+annotation, not operational state, so it can be edited regardless of the booking's status
+(including `RELEASED`).
+
+**Auth:** booking owner, creating dispatcher, or admin.
+
+**Path parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `booking_id` | UUID | ID of the booking to relabel |
+
+**Content-Type:** `application/json`
+
+**JSON body fields:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `label` | string or null | No | New label, max 128 chars. Blank/omitted clears the label. |
+
+**Responses:**
+
+- `200 OK` — label updated. Returns `{"id": ..., "label": ...}`.
+- `400 Bad Request` — label longer than 128 characters.
+- `403 Forbidden` — caller may not manage this booking.
+- `404 Not Found` — booking does not exist.
+
+**Example:**
+```bash
+curl -s -X PATCH http://localhost:8000/api/bookings/<booking-id> \
+     -H "Content-Type: application/json" \
+     -H "Authorization: Bearer dp_<api_key>" \
+     -d '{"label": "PR #42 perf test"}' | python3 -m json.tool
+```
+
+---
+
 ### `DELETE /api/bookings/{booking_id}`
 
 Release a VM booking. Only the booking owner or an admin may release.
@@ -771,6 +811,14 @@ Returns an HTML fragment for a single booking row. Used by **HTMX polling in the
 is a presentation route, not part of the JSON API (and is omitted from `/docs`).
 
 **Auth:** the booking **owner** or an **admin**. A non-owner gets `403`; an unknown id gets `404`.
+
+---
+
+### `PATCH /bookings/{booking_id}/label`
+
+HTMX form endpoint (browser-only fragment) backing the **⋮ → Save** label edit on a booking
+row. Mirrors `PATCH /api/bookings/{booking_id}` — accepts a form field `label` and returns the
+updated `partials/booking_row.html` fragment.
 
 ---
 
@@ -1238,6 +1286,16 @@ curl -s \
 # 202 { match: false, vacant: true,  namespace_id: "…", environment_id: null } → dev1 is free
 # 423                                                                           → held by someone else
 ```
+
+### `PATCH /api/environments/{id}`
+
+Rename an environment. **Auth:** owner, the creating dispatcher, or admin — same rule as
+release. Body: `{"name": "..."}` (required, max 128 chars, cannot be blank). **Response:**
+`200` with `{"id": ..., "name": ...}`; `400` on a blank/too-long name; `403`/`404` as usual.
+Also available as an HTMX form fragment at `PATCH /environments/{id}/name` (the **⋮ → Save**
+action on the Environments page).
+
+---
 
 ### `DELETE /api/environments/{id}`
 

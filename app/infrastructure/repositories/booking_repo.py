@@ -383,6 +383,23 @@ class BookingRepository:
         ))
         await session.commit()
 
+    async def update_label(
+        self, session: AsyncSession, booking_id: UUID, label: str | None, actor_id: str,
+    ) -> None:
+        result = await session.execute(select(BookingModel).where(BookingModel.id == booking_id))
+        model = result.scalar_one_or_none()
+        if model is None:
+            raise BookingNotFoundError(booking_id)
+        old_label = model.label
+        model.label = label
+        session.add(BookingAuditModel(
+            booking_id=booking_id,
+            actor_id=actor_id,
+            action="LABEL_CHANGED",
+            extra={"old_label": old_label, "new_label": label},
+        ))
+        await session.commit()
+
     async def get_live_standalone_namespace_booking(
         self, session: AsyncSession, user_id: str, namespace_id: UUID
     ) -> Booking | None:
