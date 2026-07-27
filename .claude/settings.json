@@ -62,7 +62,8 @@
       "Bash(mkdir -p /home/mike/devops-portal/tests/integration)",
       "Skill(update-config)",
       "Skill(update-config:*)",
-      "Bash(git status *)"
+      "Bash(git status *)",
+      "Bash(gh api *)"
     ],
     "additionalDirectories": [
       "/home/mike/devops-portal/tests"
