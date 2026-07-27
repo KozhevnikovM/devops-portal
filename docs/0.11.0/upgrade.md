@@ -40,6 +40,24 @@ None.
 
 ## What's new
 
+### Editable booking labels and environment names (#342)
+
+A VM booking's label and an environment's name can now be changed after creation, not just
+at order time — via the row's **⋮ → Save** inline edit (or `PATCH /api/bookings/{id}` /
+`PATCH /api/environments/{id}`). See [API Reference](../api-reference.md).
+
+### Labels on namespace and static VM bookings (#345)
+
+Namespace and static VM bookings can now carry an optional label too, matching what VM
+bookings already supported — the booking form already collected it for every resource
+type, it just wasn't being threaded through to the pooled-resource use cases.
+
+### Filter bookings and environments by label (#346)
+
+The bookings and environments pages (and their JSON API equivalents) now accept an
+optional `label` query parameter — a case-insensitive substring match — alongside the
+existing Mine/All and Show-released filters. See [API Reference](../api-reference.md).
+
 ### Admin force-release now clears bookings stuck in RELEASING (#334)
 
 Previously, **Force Release** only worked on `FAILED` bookings. If a VM's teardown task
@@ -70,6 +88,10 @@ had no operational visibility.
 - A transient SSH failure right after a successful apply no longer overwrites the VM's
   already-provisioned password on retry — the retry reuses the persisted password instead
   of generating a new one that doesn't match the VM.
+- A multi-line `default_vars` or `secret_vars` value (e.g. a certificate or SSH key) no
+  longer loses its trailing newline when it's the last field in the admin catalog's YAML
+  textarea (#349) — a missing trailing newline could make the consuming tool (OpenSSL,
+  nginx, ssh) reject the certificate/key as malformed.
 
 ### Faster environment listing
 
