@@ -6,11 +6,11 @@
     hx-on::after-request="if(event.detail.successful) this.reset()"
     class="flex items-end gap-3 flex-wrap"
 >
-    <div class="flex flex-col gap-1.5">
+    <div class="flex flex-col gap-1.5 w-full sm:w-auto">
         <label class="text-xs text-gray-500" for="bp-select">Blueprint</label>
         {% if blueprints %}
         <select id="bp-select" name="blueprint_name" required
-            class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-56">
+            class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-full sm:w-56">
             {% for bp in blueprints %}
             <option value="{{ bp.name }}">{{ bp.name }}{% if bp.description %} — {{ bp.description }}{% endif %}</option>
             {% endfor %}
@@ -19,7 +19,7 @@
         <span class="text-xs text-gray-500 py-2">No blueprints yet — an admin can add one in the Catalog.</span>
         {% endif %}
     </div>
-    <div class="flex flex-col gap-1.5">
+    <div class="flex flex-col gap-1.5 w-full sm:w-auto">
         <label class="text-xs text-gray-500" for="env-ttl">Lease</label>
         <select id="env-ttl" name="ttl_minutes"
             class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-green-600">
@@ -30,10 +30,10 @@
             <option value="0">Forever</option>
         </select>
     </div>
-    <div class="flex flex-col gap-1.5">
+    <div class="flex flex-col gap-1.5 w-full sm:w-auto">
         <label class="text-xs text-gray-500" for="env-namespace">Namespace</label>
         <select id="env-namespace" name="namespace_id"
-            class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-80">
+            class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-full sm:w-80">
             <option value="">Blueprint default</option>
             {% if available_namespaces %}
             <optgroup label="Available">
@@ -51,7 +51,7 @@
             {% endif %}
         </select>
     </div>
-    <div class="flex flex-col gap-1.5">
+    <div class="flex flex-col gap-1.5 w-full sm:w-auto">
         <div class="text-xs text-red-400 h-4">{{ order_error or '' }}</div>
         <button type="submit" {% if not blueprints %}disabled{% endif %}
             class="px-4 py-2 bg-green-700 hover:bg-green-600 text-green-100 text-sm rounded transition-colors disabled:opacity-40 disabled:cursor-not-allowed">

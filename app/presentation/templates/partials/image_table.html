@@ -25,7 +25,7 @@
                             name="name"
                             value="{{ image.name }}"
                             required
-                            class="bg-gray-900 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-36"
+                            class="bg-gray-900 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-full sm:w-36"
                         >
                         <input
                             name="vapp_template_id"
@@ -57,7 +57,7 @@
                 <td class="px-4 py-3">
                     <details class="relative">
                         <summary class="list-none cursor-pointer w-7 h-7 flex items-center justify-center rounded text-gray-400 hover:text-gray-200 hover:bg-gray-700 transition-colors select-none text-lg leading-none">⋮</summary>
-                        <div class="absolute right-0 bottom-full mb-1 w-44 bg-gray-900 border border-gray-700 rounded shadow-lg z-50 py-1">
+                        <div class="absolute right-0 {% if loop.first %}top-full mt-1{% else %}bottom-full mb-1{% endif %} w-44 bg-gray-900 border border-gray-700 rounded shadow-lg z-50 py-1">
                             {% if image.is_active %}
                             <button
                                 hx-get="/admin/catalog/images/{{ image.id }}/edit"

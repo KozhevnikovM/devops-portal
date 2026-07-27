@@ -24,16 +24,16 @@
                         hx-swap="outerHTML"
                         class="flex items-center gap-3 flex-wrap"
                     >
-                        <div class="flex flex-col gap-1">
+                        <div class="flex flex-col gap-1 w-full sm:w-auto">
                             <label class="text-xs text-gray-500">Name</label>
                             <input
                                 name="name"
                                 value="{{ hw.name }}"
                                 required
-                                class="bg-gray-900 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-28"
+                                class="bg-gray-900 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-full sm:w-28"
                             >
                         </div>
-                        <div class="flex flex-col gap-1">
+                        <div class="flex flex-col gap-1 w-full sm:w-auto">
                             <label class="text-xs text-gray-500">CPUs</label>
                             <input
                                 name="cpus"
@@ -41,10 +41,10 @@
                                 min="1"
                                 value="{{ hw.cpus }}"
                                 required
-                                class="bg-gray-900 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-20"
+                                class="bg-gray-900 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-full sm:w-20"
                             >
                         </div>
-                        <div class="flex flex-col gap-1">
+                        <div class="flex flex-col gap-1 w-full sm:w-auto">
                             <label class="text-xs text-gray-500">RAM (GB)</label>
                             <input
                                 name="memory_gb"
@@ -52,10 +52,10 @@
                                 min="1"
                                 value="{{ hw.memory_mb // 1024 }}"
                                 required
-                                class="bg-gray-900 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-24"
+                                class="bg-gray-900 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-full sm:w-24"
                             >
                         </div>
-                        <div class="flex flex-col gap-1">
+                        <div class="flex flex-col gap-1 w-full sm:w-auto">
                             <label class="text-xs text-gray-500">Disk (GB)</label>
                             <input
                                 name="disk_gb"
@@ -63,14 +63,14 @@
                                 min="0"
                                 value="{{ hw.disk_mb // 1024 }}"
                                 required
-                                class="bg-gray-900 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-24"
+                                class="bg-gray-900 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-full sm:w-24"
                             >
                         </div>
-                        <div class="flex flex-col gap-1">
+                        <div class="flex flex-col gap-1 w-full sm:w-auto">
                             <label class="text-xs text-gray-500">Type</label>
                             <select
                                 name="drive_type"
-                                class="bg-gray-900 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-24"
+                                class="bg-gray-900 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-full sm:w-24"
                             >
                                 <option value="HDD" {% if hw.drive_type == "HDD" %}selected{% endif %}>HDD</option>
                                 <option value="SSD" {% if hw.drive_type == "SSD" %}selected{% endif %}>SSD</option>
@@ -105,7 +105,7 @@
                 <td class="px-4 py-3">
                     <details class="relative">
                         <summary class="list-none cursor-pointer w-7 h-7 flex items-center justify-center rounded text-gray-400 hover:text-gray-200 hover:bg-gray-700 transition-colors select-none text-lg leading-none">⋮</summary>
-                        <div class="absolute right-0 bottom-full mb-1 w-44 bg-gray-900 border border-gray-700 rounded shadow-lg z-50 py-1">
+                        <div class="absolute right-0 {% if loop.first %}top-full mt-1{% else %}bottom-full mb-1{% endif %} w-44 bg-gray-900 border border-gray-700 rounded shadow-lg z-50 py-1">
                             {% if hw.is_active %}
                             <button
                                 hx-get="/admin/catalog/hardware/{{ hw.id }}/edit"

@@ -28,7 +28,7 @@
                         class="flex items-center gap-3 flex-wrap"
                     >
                         <span class="text-gray-300 text-sm mr-2">{{ user.username }}</span>
-                        <div class="flex flex-col gap-1">
+                        <div class="flex flex-col gap-1 w-full sm:w-auto">
                             <label class="text-xs text-gray-500">New password</label>
                             <input
                                 name="new_password"
@@ -36,7 +36,7 @@
                                 required
                                 minlength="8"
                                 autocomplete="new-password"
-                                class="bg-gray-900 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-52"
+                                class="bg-gray-900 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-full sm:w-52"
                             >
                         </div>
                         {% if password_reset_error %}
@@ -64,7 +64,7 @@
                         class="flex items-center gap-3 flex-wrap"
                     >
                         <span class="text-gray-300 text-sm mr-2">{{ user.username }}</span>
-                        <div class="flex flex-col gap-1">
+                        <div class="flex flex-col gap-1 w-full sm:w-auto">
                             <label class="text-xs text-gray-500">Max CPUs</label>
                             <input
                                 name="max_cpus"
@@ -72,10 +72,10 @@
                                 min="1"
                                 value="{{ user_quota.get('max_cpus', 4) }}"
                                 required
-                                class="bg-gray-900 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-20"
+                                class="bg-gray-900 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-full sm:w-20"
                             >
                         </div>
-                        <div class="flex flex-col gap-1">
+                        <div class="flex flex-col gap-1 w-full sm:w-auto">
                             <label class="text-xs text-gray-500">Max RAM (GB)</label>
                             <input
                                 name="max_memory_gb"
@@ -83,10 +83,10 @@
                                 min="1"
                                 value="{{ user_quota.get('max_memory_gb', 16) }}"
                                 required
-                                class="bg-gray-900 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-24"
+                                class="bg-gray-900 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-full sm:w-24"
                             >
                         </div>
-                        <div class="flex flex-col gap-1">
+                        <div class="flex flex-col gap-1 w-full sm:w-auto">
                             <label class="text-xs text-gray-500">Max SSD (GB)</label>
                             <input
                                 name="max_ssd_gb"
@@ -94,10 +94,10 @@
                                 min="1"
                                 value="{{ user_quota.get('max_ssd_gb', 500) }}"
                                 required
-                                class="bg-gray-900 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-24"
+                                class="bg-gray-900 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-full sm:w-24"
                             >
                         </div>
-                        <div class="flex flex-col gap-1">
+                        <div class="flex flex-col gap-1 w-full sm:w-auto">
                             <label class="text-xs text-gray-500">Max HDD (GB)</label>
                             <input
                                 name="max_hdd_gb"
@@ -105,7 +105,7 @@
                                 min="1"
                                 value="{{ user_quota.get('max_hdd_gb', 100) }}"
                                 required
-                                class="bg-gray-900 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-24"
+                                class="bg-gray-900 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-full sm:w-24"
                             >
                         </div>
                         <div class="flex items-end gap-2 pb-0.5">

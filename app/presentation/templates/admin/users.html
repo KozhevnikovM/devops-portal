@@ -16,7 +16,7 @@
             hx-on::after-request="if(event.detail.successful) this.reset()"
             class="flex items-end gap-3 flex-wrap"
         >
-            <div class="flex flex-col gap-1.5">
+            <div class="flex flex-col gap-1.5 w-full sm:w-auto">
                 <label class="text-xs text-gray-500" for="new-username">Username</label>
                 <input
                     id="new-username"
@@ -24,11 +24,11 @@
                     type="text"
                     required
                     autocomplete="off"
-                    class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-44"
+                    class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-full sm:w-44"
                     placeholder="username"
                 >
             </div>
-            <div class="flex flex-col gap-1.5">
+            <div class="flex flex-col gap-1.5 w-full sm:w-auto">
                 <label class="text-xs text-gray-500" for="new-password">Password</label>
                 <input
                     id="new-password"
@@ -36,11 +36,11 @@
                     type="password"
                     required
                     autocomplete="new-password"
-                    class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-44"
+                    class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-full sm:w-44"
                     placeholder="password"
                 >
             </div>
-            <div class="flex flex-col gap-1.5">
+            <div class="flex flex-col gap-1.5 w-full sm:w-auto">
                 <label class="text-xs text-gray-500" for="new-role">Role</label>
                 <select
                     id="new-role"
@@ -52,7 +52,7 @@
                     <option value="admin">admin</option>
                 </select>
             </div>
-            <div class="flex flex-col gap-1.5">
+            <div class="flex flex-col gap-1.5 w-full sm:w-auto">
                 <div id="user-create-error" class="text-xs h-4"></div>
                 <button
                     type="submit"
@@ -64,7 +64,7 @@
         </form>
     </div>
 
-    <div class="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden">
+    <div class="bg-gray-900 border border-gray-800 rounded-lg overflow-x-auto">
         {% include "partials/user_table.html" %}
     </div>
 </div>
