@@ -64,6 +64,47 @@ def test_parse_default_vars():
         _parse_default_vars("[1, 2]")  # JSON array is not an object
 
 
+# ── #349: trailing newline of a multi-line block-scalar value must survive ────
+def test_parse_default_vars_preserves_trailing_newline_on_last_field():
+    from app.presentation.routes.admin import _parse_default_vars
+    raw = "cert: |\n  -----BEGIN CERTIFICATE-----\n  abc\n  -----END CERTIFICATE-----\n"
+    parsed = _parse_default_vars(raw)
+    assert parsed["cert"].endswith("\n")
+
+
+def test_parse_default_vars_preserves_trailing_newline_when_not_last_field():
+    from app.presentation.routes.admin import _parse_default_vars
+    raw = (
+        "cert: |\n  -----BEGIN CERTIFICATE-----\n  abc\n  -----END CERTIFICATE-----\n"
+        "other: value\n"
+    )
+    parsed = _parse_default_vars(raw)
+    assert parsed["cert"].endswith("\n")
+
+
+def test_parse_default_vars_still_treats_whitespace_only_as_blank():
+    from app.presentation.routes.admin import _parse_default_vars
+    assert _parse_default_vars("   \n  \n") == {}
+
+
+def test_parse_secret_vars_preserves_trailing_newline_on_last_field():
+    from app.presentation.routes.admin import _parse_secret_vars
+    raw = (
+        "my_owned_ca: |\n  -----BEGIN CERTIFICATE-----\n  abc\n  -----END CERTIFICATE-----\n"
+        "my_owned_keys: |\n  some-key\n  multiline\n  here\n"
+    )
+    parsed = _parse_secret_vars(raw)
+    assert parsed["my_owned_ca"].endswith("\n")
+    assert parsed["my_owned_keys"].endswith("\n")
+    assert parsed["my_owned_keys"] == "some-key\nmultiline\nhere\n"
+
+
+def test_parse_secret_vars_still_treats_whitespace_only_as_none():
+    from app.presentation.routes.admin import _parse_secret_vars
+    assert _parse_secret_vars("   \n  \n") is None
+    assert _parse_secret_vars("") is None
+
+
 # ── /api/roles ────────────────────────────────────────────────────────────────
 def test_list_roles_readable_by_any_user(user_client):
     with patch("app.presentation.routes.api._role_repo") as repo:

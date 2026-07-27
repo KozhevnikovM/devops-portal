@@ -32,9 +32,14 @@ _VALID_RESOURCE_TYPES = {"VM", "STATIC_VM", "NAMESPACE"}
 
 
 def _parse_default_vars(raw: str) -> dict:
-    """Parse the default_vars YAML textarea; raise ValueError on bad YAML or a non-mapping."""
-    raw = (raw or "").strip()
-    if not raw:
+    """Parse the default_vars YAML textarea; raise ValueError on bad YAML or a non-mapping.
+
+    Only checked for blankness with .strip() — the raw text itself is parsed unmodified, since
+    stripping it would truncate the trailing newline of a multi-line block-scalar value (e.g. a
+    certificate) when it's the last field in the textarea (#349).
+    """
+    raw = raw or ""
+    if not raw.strip():
         return {}
     try:
         parsed = yaml.safe_load(raw)
@@ -53,9 +58,13 @@ def _parse_secret_vars(raw: str) -> dict | None:
     Returns None when blank (meaning "keep existing").
     Returns {} when the field is explicitly empty mapping.
     Raises ValueError on bad YAML or a non-mapping.
+
+    Only checked for blankness with .strip() — the raw text itself is parsed unmodified, since
+    stripping it would truncate the trailing newline of a multi-line block-scalar value (e.g. a
+    certificate or key) when it's the last field in the textarea (#349).
     """
-    raw = (raw or "").strip()
-    if not raw:
+    raw = raw or ""
+    if not raw.strip():
         return None
     try:
         parsed = yaml.safe_load(raw)
