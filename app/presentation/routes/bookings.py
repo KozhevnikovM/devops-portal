@@ -147,7 +147,8 @@ async def create_booking(
     if resource_type == ResourceType.NAMESPACE.value:
         try:
             booking = await _book_namespace_use_case.execute(
-                session, ttl_minutes, user_id=str(current_user.id), namespace_id=namespace_id
+                session, ttl_minutes, user_id=str(current_user.id), namespace_id=namespace_id,
+                label=label.strip() or None,
             )
         except NamespaceUnavailableError as exc:
             return await _render_form_error(
@@ -158,7 +159,8 @@ async def create_booking(
     elif resource_type == ResourceType.STATIC_VM.value:
         try:
             booking = await _reserve_static_vm_use_case.execute(
-                session, ttl_minutes, user_id=str(current_user.id), static_vm_id=static_vm_id
+                session, ttl_minutes, user_id=str(current_user.id), static_vm_id=static_vm_id,
+                label=label.strip() or None,
             )
         except StaticVMUnavailableError as exc:
             return await _render_form_error(

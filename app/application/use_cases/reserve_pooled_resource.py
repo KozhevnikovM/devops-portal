@@ -45,6 +45,7 @@ class ReservePooledResourceUseCase:
         environment_id: UUID | None = None,
         environment_label: str | None = None,
         created_by: str | None = None,
+        label: str | None = None,
     ) -> Booking:
         cfg = self._cfg
         uid = user_id or settings.DEV_USER_ID
@@ -63,7 +64,7 @@ class ReservePooledResourceUseCase:
             if resource is None:
                 # Pool exhausted — enqueue (FIFO). Promoted to READY when one frees.
                 return await self._enqueue(session, uid, ttl_minutes, now, environment_id,
-                                           environment_label, created_by)
+                                           environment_label, created_by, label)
 
         lease = Lease.starting_now(ttl_minutes, now=now)
 
@@ -78,6 +79,7 @@ class ReservePooledResourceUseCase:
             environment_id=environment_id,
             environment_label=environment_label,
             created_by=created_by,
+            label=label,
             **{cfg.fk_field: resource.id},
         )
         created = await self._repo.create(session, booking)  # commit releases the row lock
@@ -88,7 +90,7 @@ class ReservePooledResourceUseCase:
 
     async def _enqueue(self, session, uid: str, ttl_minutes: int, now: datetime,
                        environment_id: UUID | None = None, environment_label: str | None = None,
-                       created_by: str | None = None) -> Booking:
+                       created_by: str | None = None, label: str | None = None) -> Booking:
         """No free resource — create a QUEUED booking (no resource yet, TTL starts on promotion)."""
         booking = Booking(
             id=uuid4(),
@@ -102,5 +104,6 @@ class ReservePooledResourceUseCase:
             environment_id=environment_id,
             environment_label=environment_label,
             created_by=created_by,
+            label=label,
         )
         return await self._repo.create(session, booking)
