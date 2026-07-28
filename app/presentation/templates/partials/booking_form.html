@@ -84,14 +84,23 @@
         {% if roles %}
         <div class="flex flex-col gap-1 w-full sm:w-auto">
             <span class="text-xs text-gray-500">Ansible roles <span class="text-gray-600">(optional)</span></span>
-            <div class="flex flex-wrap gap-x-3 gap-y-1 max-w-xs">
-                {% for role in roles %}
-                <label class="flex items-center gap-1.5 text-sm text-gray-300 cursor-pointer">
-                    <input type="checkbox" name="roles" value="{{ role.name }}" {% if sel == 'STATIC_VM' %}disabled{% endif %} class="accent-green-600">
-                    {{ role.name }}
-                </label>
-                {% endfor %}
-            </div>
+            <details id="roles-dropdown" class="relative">
+                <summary
+                    class="list-none cursor-pointer bg-gray-800 border border-gray-700 rounded px-3 py-2 text-gray-100 focus:outline-none focus:border-green-500 text-sm w-full sm:w-44 h-[42px] flex items-center justify-between gap-2 select-none"
+                    {% if sel == 'STATIC_VM' %}aria-disabled="true"{% endif %}
+                >
+                    <span id="roles-summary-label" class="truncate">Select roles</span>
+                    <span class="text-gray-500 shrink-0">▾</span>
+                </summary>
+                <div class="absolute z-50 mt-1 w-56 max-h-48 overflow-y-auto bg-gray-900 border border-gray-700 rounded shadow-lg py-1">
+                    {% for role in roles %}
+                    <label class="flex items-center gap-1.5 text-sm text-gray-300 px-3 py-1.5 hover:bg-gray-800 cursor-pointer">
+                        <input type="checkbox" name="roles" value="{{ role.name }}" {% if sel == 'STATIC_VM' %}disabled{% endif %} class="accent-green-600">
+                        {{ role.name }}
+                    </label>
+                    {% endfor %}
+                </div>
+            </details>
         </div>
         {% endif %}
         <div class="flex flex-col gap-1 w-full sm:w-auto">
@@ -178,7 +187,14 @@
     var hwSel = area.querySelector('#hw_config_id');
     var staticSel = area.querySelector('#static_vm_id');
     var roleChecks = area.querySelectorAll('input[name="roles"]');
+    var rolesDetails = area.querySelector('#roles-dropdown');
+    var rolesSummaryLabel = area.querySelector('#roles-summary-label');
     var varsArea = area.querySelector('#vars_yaml');
+    function syncRolesSummary() {
+        if (!rolesSummaryLabel) return;
+        var n = area.querySelectorAll('input[name="roles"]:checked').length;
+        rolesSummaryLabel.textContent = n === 0 ? 'Select roles' : n + ' role' + (n > 1 ? 's' : '') + ' selected';
+    }
     function sync() {
         var checked = area.querySelector('input[name="resource_type"]:checked');
         var isStatic = checked && checked.value === 'STATIC_VM';
@@ -188,10 +204,13 @@
         if (hwSel) hwSel.disabled = isStatic;
         if (staticSel) staticSel.disabled = !isStatic;
         roleChecks.forEach(function (c) { c.disabled = isStatic; });
+        if (rolesDetails && isStatic) rolesDetails.removeAttribute('open');
         if (varsArea) varsArea.disabled = isStatic;
     }
     radios.forEach(function (r) { r.addEventListener('change', sync); });
+    roleChecks.forEach(function (c) { c.addEventListener('change', syncRolesSummary); });
     sync();
+    syncRolesSummary();
 })();
 </script>
 {% endif %}
