@@ -1,16 +1,19 @@
 from uuid import UUID
 
+import yaml
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.use_cases._permissions import can_manage
+from app.application.use_cases._roles import resolve_config_roles
 from app.domain.entities import User
 from app.domain.enums import BookingStatus, ResourceType
 from app.domain.exceptions import (
     BookingError, BookingNotFoundError, NamespaceUnavailableError, BookingPermissionError,
-    QuotaExceededError, StaticVMUnavailableError,
+    QuotaExceededError, RoleNotFoundError, StaticVMUnavailableError,
 )
+from app.domain.validation import validate_var_names
 from app.infrastructure.auth import require_user
 from app.infrastructure.database.session import get_async_session
 from app.presentation import deps
@@ -23,6 +26,7 @@ _repo = deps.booking_repo
 _image_repo = deps.image_repo
 _hw_config_repo = deps.hw_config_repo
 _namespace_repo = deps.namespace_repo
+_role_repo = deps.role_repo
 _static_vm_repo = deps.static_vm_repo
 _dispatcher = deps.dispatcher
 _use_case = deps.create_booking_uc
@@ -31,6 +35,29 @@ _update_label_use_case = deps.update_booking_label_uc
 _release_use_case = deps.release_booking_uc
 _book_namespace_use_case = deps.book_namespace_uc
 _reserve_static_vm_use_case = deps.reserve_static_vm_uc
+
+
+def _parse_vars_yaml(raw: str) -> dict:
+    """Parse the booking form's Ansible-variables YAML textarea.
+
+    Only checked for blankness with .strip() — the raw text itself is parsed unmodified, since
+    stripping it would truncate the trailing newline of a multi-line block-scalar value when
+    it's the last field in the textarea (#349). Raises ValueError on bad YAML, a non-mapping,
+    or an invalid variable name.
+    """
+    raw = raw or ""
+    if not raw.strip():
+        return {}
+    try:
+        parsed = yaml.safe_load(raw)
+    except yaml.YAMLError as exc:
+        raise ValueError(f"vars must be valid YAML: {exc}")
+    if parsed is None:
+        return {}
+    if not isinstance(parsed, dict):
+        raise ValueError("vars must be a YAML mapping (key: value pairs)")
+    validate_var_names(parsed)
+    return parsed
 
 # Resource types listed on each booking page.
 _VM_PAGE_TYPES = [ResourceType.VM.value, ResourceType.STATIC_VM.value]
@@ -66,6 +93,7 @@ async def _render_bookings_page(
     hw_configs = await _hw_config_repo.list_active(session)
     available_namespaces = await _namespace_repo.list_available(session)
     available_static_vms = await _static_vm_repo.list_available(session)
+    roles = await _role_repo.list_active(session)
     return templates.TemplateResponse(
         request, "index.html",
         {
@@ -74,6 +102,7 @@ async def _render_bookings_page(
             "hw_configs": hw_configs,
             "available_namespaces": available_namespaces,
             "available_static_vms": available_static_vms,
+            "roles": roles,
             "current_user": current_user,
             "active_filter": filter,
             "show_released": show_released,
@@ -125,6 +154,7 @@ async def _render_form_error(request, session, current_user, booking_type="VM", 
         "hw_configs": await _hw_config_repo.list_active(session),
         "available_namespaces": await _namespace_repo.list_available(session),
         "available_static_vms": await _static_vm_repo.list_available(session),
+        "roles": await _role_repo.list_active(session),
         "current_user": current_user,
         "booking_type": booking_type,
     }
@@ -145,6 +175,8 @@ async def create_booking(
     hw_config_id: UUID | None = Form(None),
     namespace_id: UUID | None = Form(None),
     static_vm_id: UUID | None = Form(None),
+    roles: list[str] = Form([]),
+    vars_yaml: str = Form(""),
     session: AsyncSession = Depends(get_async_session),
     current_user: User = Depends(require_user),
 ):
@@ -179,9 +211,20 @@ async def create_booking(
                 request, session, current_user, quota_error="Select an image and hardware config",
             )
         try:
+            config_roles = await resolve_config_roles(session, _role_repo, roles)
+        except RoleNotFoundError as exc:
+            return await _render_form_error(request, session, current_user, role_error=str(exc))
+        try:
+            extra_vars = _parse_vars_yaml(vars_yaml)
+        except ValueError as exc:
+            return await _render_form_error(
+                request, session, current_user, vars_error=str(exc), vars_yaml=vars_yaml,
+            )
+        try:
             booking = await _use_case.execute(
                 session, ttl_minutes, image_id, hw_config_id,
                 user_id=str(current_user.id), label=label.strip() or None,
+                config_roles=config_roles, extra_vars=extra_vars,
             )
         except QuotaExceededError as exc:
             return await _render_form_error(request, session, current_user, quota_error=str(exc))

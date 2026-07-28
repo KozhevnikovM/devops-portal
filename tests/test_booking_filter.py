@@ -48,9 +48,11 @@ def test_default_filter_calls_list_by_user(setup):
          patch("app.presentation.routes.bookings._image_repo") as mock_img, \
          patch("app.presentation.routes.bookings._hw_config_repo") as mock_hw, \
          patch("app.presentation.routes.bookings._namespace_repo") as mock_ns, \
-         patch("app.presentation.routes.bookings._static_vm_repo") as mock_svm:
+         patch("app.presentation.routes.bookings._static_vm_repo") as mock_svm, \
+         patch("app.presentation.routes.bookings._role_repo") as mock_role:
         mock_ns.list_available = AsyncMock(return_value=[])
         mock_svm.list_available = AsyncMock(return_value=[])
+        mock_role.list_active = AsyncMock(return_value=[])
         mock_repo.list_by_user = AsyncMock(return_value=[])
         mock_img.list_active = AsyncMock(return_value=[])
         mock_hw.list_active = AsyncMock(return_value=[])
@@ -75,12 +77,14 @@ def test_vm_filter_tabs_use_named_book_vm_path(setup):
          patch("app.presentation.routes.bookings._image_repo") as mock_img, \
          patch("app.presentation.routes.bookings._hw_config_repo") as mock_hw, \
          patch("app.presentation.routes.bookings._namespace_repo") as mock_ns, \
-         patch("app.presentation.routes.bookings._static_vm_repo") as mock_svm:
+         patch("app.presentation.routes.bookings._static_vm_repo") as mock_svm, \
+         patch("app.presentation.routes.bookings._role_repo") as mock_role:
         mock_repo.list_by_user = AsyncMock(return_value=[])
         mock_img.list_active = AsyncMock(return_value=[])
         mock_hw.list_active = AsyncMock(return_value=[])
         mock_ns.list_available = AsyncMock(return_value=[])
         mock_svm.list_available = AsyncMock(return_value=[])
+        mock_role.list_active = AsyncMock(return_value=[])
 
         resp = client.get("/")
 
@@ -99,9 +103,11 @@ def test_filter_mine_calls_list_by_user(setup):
          patch("app.presentation.routes.bookings._image_repo") as mock_img, \
          patch("app.presentation.routes.bookings._hw_config_repo") as mock_hw, \
          patch("app.presentation.routes.bookings._namespace_repo") as mock_ns, \
-         patch("app.presentation.routes.bookings._static_vm_repo") as mock_svm:
+         patch("app.presentation.routes.bookings._static_vm_repo") as mock_svm, \
+         patch("app.presentation.routes.bookings._role_repo") as mock_role:
         mock_ns.list_available = AsyncMock(return_value=[])
         mock_svm.list_available = AsyncMock(return_value=[])
+        mock_role.list_active = AsyncMock(return_value=[])
         mock_repo.list_by_user = AsyncMock(return_value=[])
         mock_img.list_active = AsyncMock(return_value=[])
         mock_hw.list_active = AsyncMock(return_value=[])
@@ -121,9 +127,11 @@ def test_filter_all_calls_list_all(setup):
          patch("app.presentation.routes.bookings._image_repo") as mock_img, \
          patch("app.presentation.routes.bookings._hw_config_repo") as mock_hw, \
          patch("app.presentation.routes.bookings._namespace_repo") as mock_ns, \
-         patch("app.presentation.routes.bookings._static_vm_repo") as mock_svm:
+         patch("app.presentation.routes.bookings._static_vm_repo") as mock_svm, \
+         patch("app.presentation.routes.bookings._role_repo") as mock_role:
         mock_ns.list_available = AsyncMock(return_value=[])
         mock_svm.list_available = AsyncMock(return_value=[])
+        mock_role.list_active = AsyncMock(return_value=[])
         mock_repo.list_all = AsyncMock(return_value=[])
         mock_img.list_active = AsyncMock(return_value=[])
         mock_hw.list_active = AsyncMock(return_value=[])

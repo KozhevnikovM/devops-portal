@@ -4,7 +4,6 @@ The browser's HTMX routes live in `bookings.py` and return HTML fragments; this 
 canonical API surface for clients (Jenkins/CI). Both share the same application use cases so the
 two never drift.
 """
-import re
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -12,13 +11,14 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.use_cases._permissions import can_manage
-from app.config import settings
+from app.application.use_cases._roles import resolve_config_roles
 from app.domain.entities import Booking, User
 from app.domain.enums import BookingStatus, ResourceType
 from app.domain.exceptions import (
     BookingError, BookingNotFoundError, BookingPermissionError, NamespaceUnavailableError,
-    QuotaExceededError, StaticVMUnavailableError,
+    QuotaExceededError, RoleNotFoundError, StaticVMUnavailableError,
 )
+from app.domain.validation import validate_var_names
 from app.infrastructure.auth import require_user
 from app.infrastructure.database.session import get_async_session
 from app.presentation import deps
@@ -241,23 +241,15 @@ async def create_booking(
                 detail="image (id or name) and hardware config (id or name) are required",
             )
         # Resolve role names → a snapshot captured at order time (survives catalog edits).
-        config_roles = []
-        for role_name in (body.roles or []):
-            role = await _role_repo.get_by_name(session, role_name)
-            if role is None:
-                raise HTTPException(status_code=400, detail=f"no role named '{role_name}'")
-            config_roles.append(
-                {"name": role.name, "ansible_role": role.ansible_role, "vars": role.default_vars or {},
-                 "secret_vars": role.secret_vars if settings.SECRET_VARS_ENABLED else {}}
-            )
+        try:
+            config_roles = await resolve_config_roles(session, _role_repo, body.roles or [])
+        except RoleNotFoundError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
         extra_vars = body.vars or {}
-        _var_re = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
-        for key in extra_vars:
-            if not _var_re.match(key):
-                raise HTTPException(
-                    status_code=422,
-                    detail=f"invalid var name '{key}': must match [a-zA-Z_][a-zA-Z0-9_]*",
-                )
+        try:
+            validate_var_names(extra_vars)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
         try:
             booking = await _create_use_case.execute(
                 session, body.ttl_minutes, image_id, hw_config_id,

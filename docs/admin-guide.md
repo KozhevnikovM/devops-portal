@@ -1089,12 +1089,13 @@ Two outcomes are kept distinct:
 A VM with **no** `startup_script` still waits to become reachable before going `READY`.
 
 **Ansible roles.** After the startup script, the worker applies any **roles** selected at order time
-(`roles: ["docker-machine", ...]` on `POST /api/bookings`; names from the **Ansible Roles** catalog
-panel). The worker is the Ansible control node: it renders a single-host inventory + playbook from
-the booking's role snapshot and runs `ansible-playbook` over SSH. A role run that fails (VM
-reachable) is treated like a failed script — `READY` + "⚠ configuration failed"; an unreachable VM
-is `FAILED`. Roles are **snapshotted** at order time, so editing a catalog role doesn't change a
-running VM.
+— via `roles: ["docker-machine", ...]` on `POST /api/bookings`, or via the **Ansible roles**
+checkbox list on the **Virtual Machines** tab's booking form (both list names from the **Ansible
+Roles** catalog panel). The worker is the Ansible control node: it renders a single-host inventory +
+playbook from the booking's role snapshot and runs `ansible-playbook` over SSH. A role run that
+fails (VM reachable) is treated like a failed script — `READY` + "⚠ configuration failed"; an
+unreachable VM is `FAILED`. Roles are **snapshotted** at order time, so editing a catalog role
+doesn't change a running VM.
 
 **Using `portal.*` variables inside a role.** Every Ansible run injects a `portal` dict into
 the play vars. Two keys are always present:
@@ -1104,8 +1105,10 @@ the play vars. Two keys are always present:
 | `portal.ip` | The VM's provisioned IP address |
 | `portal.label` | The VM's label in the blueprint (empty string for standalone bookings) |
 
-Any extra keys declared in the blueprint item's `spec.vars` (or in `vars` on a direct
-`POST /api/bookings`) are also available as `portal.<key>`.
+Any extra keys declared in the blueprint item's `spec.vars`, in `vars` on a direct
+`POST /api/bookings`, or in the **Ansible variables** YAML textarea on the Virtual Machines
+booking form (same `key: value` syntax as the catalog's role **Default vars** field) are also
+available as `portal.<key>`.
 
 Use them directly in role tasks:
 

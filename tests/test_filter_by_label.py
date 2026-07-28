@@ -30,12 +30,14 @@ def test_bookings_page_forwards_label_to_list_by_user(booking_client):
         patch("app.presentation.routes.bookings._hw_config_repo") as mock_hw,
         patch("app.presentation.routes.bookings._namespace_repo") as mock_ns,
         patch("app.presentation.routes.bookings._static_vm_repo") as mock_svm,
+        patch("app.presentation.routes.bookings._role_repo") as mock_role,
     ):
         mock_repo.list_by_user = AsyncMock(return_value=[])
         mock_img.list_active = AsyncMock(return_value=[])
         mock_hw.list_active = AsyncMock(return_value=[])
         mock_ns.list_available = AsyncMock(return_value=[])
         mock_svm.list_available = AsyncMock(return_value=[])
+        mock_role.list_active = AsyncMock(return_value=[])
 
         resp = client.get("/?label=perf")
 
@@ -51,12 +53,14 @@ def test_bookings_page_no_label_defaults_none(booking_client):
         patch("app.presentation.routes.bookings._hw_config_repo") as mock_hw,
         patch("app.presentation.routes.bookings._namespace_repo") as mock_ns,
         patch("app.presentation.routes.bookings._static_vm_repo") as mock_svm,
+        patch("app.presentation.routes.bookings._role_repo") as mock_role,
     ):
         mock_repo.list_by_user = AsyncMock(return_value=[])
         mock_img.list_active = AsyncMock(return_value=[])
         mock_hw.list_active = AsyncMock(return_value=[])
         mock_ns.list_available = AsyncMock(return_value=[])
         mock_svm.list_available = AsyncMock(return_value=[])
+        mock_role.list_active = AsyncMock(return_value=[])
 
         resp = client.get("/")
 
@@ -72,12 +76,14 @@ def test_bookings_page_filter_all_forwards_label(booking_client):
         patch("app.presentation.routes.bookings._hw_config_repo") as mock_hw,
         patch("app.presentation.routes.bookings._namespace_repo") as mock_ns,
         patch("app.presentation.routes.bookings._static_vm_repo") as mock_svm,
+        patch("app.presentation.routes.bookings._role_repo") as mock_role,
     ):
         mock_repo.list_all = AsyncMock(return_value=[])
         mock_img.list_active = AsyncMock(return_value=[])
         mock_hw.list_active = AsyncMock(return_value=[])
         mock_ns.list_available = AsyncMock(return_value=[])
         mock_svm.list_available = AsyncMock(return_value=[])
+        mock_role.list_active = AsyncMock(return_value=[])
 
         resp = client.get("/?filter=all&label=dev")
 
@@ -94,12 +100,14 @@ def test_mine_all_toggle_preserves_label_filter(booking_client):
         patch("app.presentation.routes.bookings._hw_config_repo") as mock_hw,
         patch("app.presentation.routes.bookings._namespace_repo") as mock_ns,
         patch("app.presentation.routes.bookings._static_vm_repo") as mock_svm,
+        patch("app.presentation.routes.bookings._role_repo") as mock_role,
     ):
         mock_repo.list_by_user = AsyncMock(return_value=[])
         mock_img.list_active = AsyncMock(return_value=[])
         mock_hw.list_active = AsyncMock(return_value=[])
         mock_ns.list_available = AsyncMock(return_value=[])
         mock_svm.list_available = AsyncMock(return_value=[])
+        mock_role.list_active = AsyncMock(return_value=[])
 
         resp = client.get("/?label=perf")
 
