@@ -65,6 +65,7 @@
                 </thead>
                 <tbody id="environments-tbody">
                     {% for environment in environments %}
+                    {% set is_first_row = loop.first %}
                     {% include "partials/environment_row.html" %}
                     {% endfor %}
                 </tbody>

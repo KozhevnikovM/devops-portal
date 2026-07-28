@@ -67,6 +67,7 @@
                 </thead>
                 <tbody id="bookings-list">
                     {% for booking in bookings %}
+                        {% set is_first_row = loop.first %}
                         {% include "partials/booking_row.html" %}
                     {% else %}
                         <tr id="empty-row">
