@@ -76,7 +76,12 @@
       "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://localhost:8000/login)",
       "Bash(curl -s -o /dev/null -w \"root: %{http_code}\\\\n\" http://localhost:8000/)",
       "Bash(curl -s -o /dev/null -w \"login: %{http_code}\\\\n\" http://localhost:8000/auth/login)",
-      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://localhost:8000/book/vm)"
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://localhost:8000/book/vm)",
+      "Bash(grep -n \"colored_formatter\\\\|task_format\\\\|_fmt\\\\b\\\\|def format\\\\|DEFAULT\" /home/mike/.local/lib/python3.11/site-packages/celery/app/log.py | head -20; echo ---; grep -n \"fmt\" /home/mike/.local/lib/python3.11/site-packages/celery/utils/log.py | head -20)",
+      "Read(//home/mike/.local/lib/python3.11/site-packages/celery/app/**)",
+      "Read(//home/mike/.local/lib/python3.11/site-packages/celery/utils/**)",
+      "Bash(grep -rn \"DEFAULT_PROCESS_LOG_FMT\\\\s*=\\\\|DEFAULT_TASK_LOG_FMT\\\\s*=\" /home/mike/.local/lib/python3.11/site-packages/celery/)",
+      "Read(//home/mike/.local/lib/python3.11/site-packages/celery/**)"
     ],
     "additionalDirectories": [
       "/home/mike/devops-portal/tests"
