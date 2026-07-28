@@ -1,5 +1,4 @@
 import logging
-import re
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,19 +12,16 @@ from app.domain.entities import Environment
 from app.domain.enums import BookingStatus, ResourceType
 from app.domain.exceptions import BlueprintNotFoundError, EnvironmentItemError, NamespaceUnavailableError
 from app.domain.lease import Lease
+from app.domain.validation import validate_var_names
 
 logger = logging.getLogger(__name__)
 
 
-_VAR_NAME_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
-
-
 def _validate_extra_vars(vars_: dict) -> None:
-    for key in vars_:
-        if not _VAR_NAME_RE.match(key):
-            raise EnvironmentItemError(
-                f"invalid var name '{key}': must match [a-zA-Z_][a-zA-Z0-9_]*"
-            )
+    try:
+        validate_var_names(vars_)
+    except ValueError as exc:
+        raise EnvironmentItemError(str(exc)) from exc
 
 
 class OrderEnvironmentUseCase:
