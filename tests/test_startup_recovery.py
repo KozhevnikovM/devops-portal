@@ -112,3 +112,68 @@ def test_recovery_uses_list_in_progress_not_stale():
     mock_repo.sync_list_in_progress.assert_called_once()
     mock_repo.sync_list_stale_provisioning.assert_not_called()
     mock_task.delay.assert_called_once_with(str(booking.id), str(booking.image_id), str(booking.hw_config_id))
+
+
+# ---------------------------------------------------------------------------
+# stuck-releasing recovery (#374)
+# ---------------------------------------------------------------------------
+
+def test_releasing_recovery_skips_when_stub_terraform():
+    with (
+        patch("app.main.settings") as mock_settings,
+        patch("app.main.SyncSessionLocal") as mock_session_cls,
+    ):
+        mock_settings.USE_STUB_TERRAFORM = True
+
+        from app.main import _recover_stuck_releases
+        _recover_stuck_releases()
+
+        mock_session_cls.assert_not_called()
+
+
+def test_releasing_recovery_no_op_when_none_stuck():
+    mock_repo = MagicMock()
+    mock_repo.sync_list_stuck_releasing.return_value = []
+    mock_task = MagicMock()
+
+    with (
+        patch("app.main.settings") as mock_settings,
+        patch("app.main.BookingRepository", return_value=mock_repo),
+        patch("app.main.teardown_vm_task", mock_task),
+        patch("app.main.SyncSessionLocal") as mock_session_cls,
+    ):
+        mock_settings.USE_STUB_TERRAFORM = False
+        mock_session_cls.return_value.__enter__ = MagicMock(return_value=MagicMock())
+        mock_session_cls.return_value.__exit__ = MagicMock(return_value=False)
+
+        from app.main import _recover_stuck_releases
+        _recover_stuck_releases()
+
+    mock_task.delay.assert_not_called()
+
+
+def test_releasing_recovery_requeues_forced_teardown_for_each_stuck_booking():
+    bookings = [
+        _make_booking(BookingStatus.RELEASING),
+        _make_booking(BookingStatus.RELEASING),
+    ]
+    mock_repo = MagicMock()
+    mock_repo.sync_list_stuck_releasing.return_value = bookings
+    mock_task = MagicMock()
+
+    with (
+        patch("app.main.settings") as mock_settings,
+        patch("app.main.BookingRepository", return_value=mock_repo),
+        patch("app.main.teardown_vm_task", mock_task),
+        patch("app.main.SyncSessionLocal") as mock_session_cls,
+    ):
+        mock_settings.USE_STUB_TERRAFORM = False
+        mock_session_cls.return_value.__enter__ = MagicMock(return_value=MagicMock())
+        mock_session_cls.return_value.__exit__ = MagicMock(return_value=False)
+
+        from app.main import _recover_stuck_releases
+        _recover_stuck_releases()
+
+    assert mock_task.delay.call_count == 2
+    mock_task.delay.assert_any_call(str(bookings[0].id), force=True)
+    mock_task.delay.assert_any_call(str(bookings[1].id), force=True)

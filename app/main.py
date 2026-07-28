@@ -20,6 +20,7 @@ from app.presentation.routes.api_bookings import router as api_bookings_router
 from app.presentation.routes.api_environments import router as api_environments_router
 from app.presentation.routes.environments import router as environments_router
 from app.tasks.provision import provision_vm_task
+from app.tasks.teardown import teardown_vm_task
 
 
 class _SuppressRowPolling(logging.Filter):
@@ -38,6 +39,7 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     _seed_admin_user()
     _recover_in_progress_bookings()
+    _recover_stuck_releases()
     yield
 
 
@@ -86,6 +88,32 @@ def _recover_in_progress_bookings() -> None:
         )
 
     logger.info("startup recovery: re-queued %d booking(s)", len(bookings))
+
+
+def _recover_stuck_releases() -> None:
+    """Re-queue forced teardown for bookings stuck in RELEASING after a restart (#374).
+
+    A teardown task killed mid-run (container restart, OOM, host reboot) never re-dispatches
+    on its own — the booking sits in RELEASING forever otherwise. Re-running with force=True
+    is safe: the status guard treats RELEASING→RELEASING as a no-op, and the Terraform adapter
+    already retries a stale destroy-lock left by the killed process.
+    """
+    if settings.USE_STUB_TERRAFORM:
+        return
+
+    repo = BookingRepository()
+    with SyncSessionLocal() as session:
+        bookings = repo.sync_list_stuck_releasing(session)
+
+    if not bookings:
+        logger.info("startup recovery: no stuck-releasing bookings found")
+        return
+
+    for booking in bookings:
+        teardown_vm_task.delay(str(booking.id), force=True)
+        logger.info("startup recovery: re-queued forced teardown for booking %s", booking.id)
+
+    logger.info("startup recovery: re-queued %d stuck-releasing booking(s)", len(bookings))
 
 
 app = FastAPI(

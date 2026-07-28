@@ -168,18 +168,16 @@ async def test_uc_failed_booking_dispatches_teardown():
 
 
 @pytest.mark.asyncio
-async def test_uc_releasing_booking_goes_directly_to_released():
+async def test_uc_releasing_booking_redispatches_forced_teardown():
+    """#374: a RELEASING booking re-dispatches forced teardown instead of skipping straight to
+    RELEASED — the earlier "skip teardown" behavior silently orphaned the VM/vApp if the
+    original teardown never actually ran to completion (e.g. process killed mid-destroy)."""
     booking = _releasing_vm_booking()
-    released = type(booking)(
-        id=booking.id, user_id=booking.user_id, status=BookingStatus.RELEASED,
-        resource_type=booking.resource_type, ttl_minutes=booking.ttl_minutes,
-        expires_at=booking.expires_at, created_at=booking.created_at,
-        image_id=booking.image_id, image_name=booking.image_name,
-        hw_config_id=booking.hw_config_id, hw_config_name=booking.hw_config_name,
-    )
     from app.application.use_cases.force_release_booking import ForceReleaseBookingUseCase
     repo = MagicMock()
-    repo.get = AsyncMock(side_effect=[booking, released])
+    # Still RELEASING on the final read — the actual RELEASED transition now happens
+    # asynchronously inside the re-dispatched Celery task, not synchronously here.
+    repo.get = AsyncMock(side_effect=[booking, booking])
     repo.update_status = AsyncMock()
     disp = MagicMock()
 
@@ -187,9 +185,9 @@ async def test_uc_releasing_booking_goes_directly_to_released():
         AsyncMock(), booking.id, "actor-id"
     )
 
-    assert repo.update_status.call_args.args[2] == BookingStatus.RELEASED
-    disp.dispatch_teardown_force.assert_not_called()
-    assert result.status == BookingStatus.RELEASED
+    repo.update_status.assert_not_called()  # already RELEASING — no-op transition skipped
+    disp.dispatch_teardown_force.assert_called_once_with(str(booking.id))
+    assert result.status == BookingStatus.RELEASING
 
 
 @pytest.mark.asyncio
