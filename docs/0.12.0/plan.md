@@ -6,9 +6,11 @@ v0.12.0 ships one presentation-only hardening pass that's already fully speced a
 approved (#353's responsive UI plan) and one API gap closed for CI/CD-driven environment
 ordering (#352). It also picks up the highest-value structural item explicitly deferred
 from v0.11.0 — the `SyncBookingRepositoryPort` — now that F-7's Postgres integration
-tier (merged in v0.11.0) exists to verify it. Everything else deferred from v0.11.0 or
-sitting in the open-issue backlog is listed below with a reason it isn't in this release,
-so nothing is silently dropped.
+tier (merged in v0.11.0) exists to verify it. A fourth item closes a UX gap on the
+booking form itself: Ansible role selection, already possible via the API, is now also
+possible from the browser (#357). Everything else deferred from v0.11.0 or sitting in
+the open-issue backlog is listed below with a reason it isn't in this release, so nothing
+is silently dropped.
 
 ---
 
@@ -28,6 +30,13 @@ worker side (`sync_get`, `sync_update_status`, etc. in `booking_repo.py`) has no
 `Protocol` today, unlike the async side (`BookingRepositoryPort` in `app/application/ports.py`).
 v0.11.0 deferred this specifically until the Postgres integration tier existed to verify
 it under real transaction semantics — that tier shipped in F-7, so this is now unblocked.
+
+**F-4: Ansible role picker on the VM booking form** (#357) — fully speced in
+`docs/features/vm-booking-role-picker.md`. `POST /api/bookings` already accepts a
+`roles` field; the browser **Virtual Machines** tab has no way to submit it. Adds a
+checkbox-list role picker to `partials/booking_form.html` (VM/provisioned bookings
+only), and extracts the role-name-resolution logic `api_bookings.py` already has into a
+shared helper both routes call.
 
 ### Out of scope (deferred, with reason)
 
@@ -149,10 +158,33 @@ semantics under a real DB — that tier is now in place.
 
 ---
 
+### F-4: Ansible Role Picker on the VM Booking Form
+
+**Review ref:** #357
+
+**What:** See `docs/features/vm-booking-role-picker.md` for the full plan. Summary: add
+a checkbox-list role picker to `partials/booking_form.html`'s `#provisioned-fields`
+block (VM bookings only — Static VM/Namespace unaffected); extract the role-name →
+`config_roles` resolution `api_bookings.py` already does into a shared helper
+(`app/application/use_cases/_roles.py::resolve_config_roles`), used by both
+`api_bookings.py` and the new `bookings.py` path; raise the existing (currently unused)
+`RoleNotFoundError` domain exception from the shared helper instead of `api_bookings.py`
+raising `HTTPException` inline.
+
+**Why:** `POST /api/bookings` has accepted a `roles` field since it was added for
+API/CI callers, but the HTML form never got one — a portal user booking a VM through the
+browser has no way to attach an Ansible role today.
+
+**Acceptance criteria:** as listed in the feature doc — no roles selected behaves exactly
+as before; an unknown/stale role name re-renders the form with an error banner instead
+of a 500; Static VM/Namespace bookings unaffected; no DB migration, no API change.
+
+---
+
 ## DB Migrations
 
 None. F-2 adds a request field only (no new columns); F-3 is a typing-only change; F-1
-is templates only.
+and F-4 are templates/routes only.
 
 ---
 
@@ -160,7 +192,8 @@ is templates only.
 
 - F-2: `POST /api/environments` gains an optional `item_vars` field (see above). No
   breaking change — omitting it behaves exactly as before.
-- F-1, F-3: none.
+- F-1, F-3, F-4: none. (F-4 wires an existing `POST /api/bookings` field into the HTML
+  form; the API itself is unchanged.)
 
 ---
 
@@ -173,6 +206,9 @@ is templates only.
   `POST /api/environments`.
 - F-3: `test_repository_ports.py` parametrization; no behavior tests needed since this
   is interface-only.
+- F-4: unit test for `resolve_config_roles` (found roles, unknown-name error); route
+  tests for `POST /bookings` with roles (success + unknown-role error banner). Full
+  suite run to confirm the `api_bookings.py` extraction is behaviour-preserving.
 
 ---
 
@@ -184,3 +220,4 @@ is templates only.
 3. **F-3** — no dependencies on F-1 or F-2; can also be worked in parallel. Gate: verify
    against F-7's integration tier (`pytest -m integration`) before merging, since that
    tier is exactly what makes this safe to do now.
+4. **F-4** — no dependencies on F-1/F-2/F-3; can be worked in parallel with any of them.
