@@ -69,7 +69,9 @@
       "Bash(ps aux | grep -i chrom | grep -v grep *)",
       "Read(//home/mike/.cache/ms-playwright-mcp/mcp-chrome-8a7b0b4/**)",
       "Bash(cat /home/mike/.cache/ms-playwright-mcp/mcp-chrome-8a7b0b4/SingletonLock 2>&1 *)",
-      "Read(//proc/**)"
+      "Read(//proc/**)",
+      "Bash(docker rm *)",
+      "Bash(git apply *)"
     ],
     "additionalDirectories": [
       "/home/mike/devops-portal/tests"
