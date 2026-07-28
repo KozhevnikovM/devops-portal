@@ -55,6 +55,10 @@ class OrderEnvironmentRequest(BaseModel):
     # Order-time override of the blueprint's single namespace item (#235); both or neither.
     namespace_name: str | None = None
     cluster_name: str | None = None
+    # Order-time Ansible var overrides for VM items, keyed by the item's blueprint label
+    # (#352), e.g. {"web": {"git_branch": "feature-x"}}. Overrides the blueprint's own
+    # per-item vars on key conflict; items not named here are unaffected.
+    item_vars: dict[str, dict] | None = None
 
 
 def _derived_status(env: Environment) -> str:
@@ -118,6 +122,7 @@ async def order_environment(
         env = await _order_use_case.execute(
             session, body.blueprint_name, body.ttl_minutes, user_id=owner_id, created_by=created_by,
             namespace_name=body.namespace_name, cluster_name=body.cluster_name,
+            item_vars=body.item_vars,
         )
     except BlueprintNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))

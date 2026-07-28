@@ -242,3 +242,108 @@ async def test_resolve_item_rejects_invalid_var_name():
     uc._secret_vars_enabled = True
     with pytest.raises(EnvironmentItemError, match="bad-key"):
         await uc._resolve_item(None, item)
+
+
+# ── order_environment _resolve_item: order-time item_vars (#352) ─────────────
+
+def _vm_item(label="web", vars_=None):
+    return SimpleNamespace(
+        label=label,
+        resource_type="VM",
+        spec={
+            "image_name": "Ubuntu", "hw_config_name": "medium", "roles": [],
+            "vars": vars_ or {},
+        },
+    )
+
+
+def _make_uc():
+    from app.application.use_cases.order_environment import OrderEnvironmentUseCase
+
+    uc = OrderEnvironmentUseCase.__new__(OrderEnvironmentUseCase)
+    uc._image_repo = MagicMock()
+    uc._image_repo.get_by_name = AsyncMock(return_value=SimpleNamespace(id=uuid4()))
+    uc._hw_config_repo = MagicMock()
+    uc._hw_config_repo.get_by_name = AsyncMock(return_value=SimpleNamespace(id=uuid4()))
+    uc._role_repo = MagicMock()
+    uc._role_repo.get_by_name = AsyncMock(return_value=None)
+    uc._secret_vars_enabled = True
+    return uc
+
+
+@pytest.mark.asyncio
+async def test_item_vars_override_blueprint_vars_on_conflict():
+    uc = _make_uc()
+    item = _vm_item("web", vars_={"git_branch": "main", "keep": "yes"})
+    result = await uc._resolve_item(None, item, item_vars={"web": {"git_branch": "feature-x"}})
+
+    assert result["extra_vars"] == {"git_branch": "feature-x", "keep": "yes"}
+
+
+@pytest.mark.asyncio
+async def test_item_vars_ignored_for_non_matching_label():
+    uc = _make_uc()
+    item = _vm_item("web", vars_={"git_branch": "main"})
+    result = await uc._resolve_item(None, item, item_vars={"db": {"git_branch": "feature-x"}})
+
+    assert result["extra_vars"] == {"git_branch": "main"}
+
+
+@pytest.mark.asyncio
+async def test_no_item_vars_behaves_as_before():
+    uc = _make_uc()
+    item = _vm_item("web", vars_={"git_branch": "main"})
+    result = await uc._resolve_item(None, item, item_vars=None)
+
+    assert result["extra_vars"] == {"git_branch": "main"}
+
+
+@pytest.mark.asyncio
+async def test_item_vars_validates_merged_keys():
+    from app.domain.exceptions import EnvironmentItemError
+
+    uc = _make_uc()
+    item = _vm_item("web", vars_={})
+    with pytest.raises(EnvironmentItemError, match="bad-key"):
+        await uc._resolve_item(None, item, item_vars={"web": {"bad-key": "value"}})
+
+
+# ── API: POST /api/environments accepts item_vars ─────────────────────────────
+
+def test_order_environment_forwards_item_vars(client):
+    from datetime import datetime, timedelta, timezone
+    from app.domain.entities import Environment
+
+    now = datetime.now(timezone.utc)
+    env = Environment(
+        id=uuid4(), name="dev-stack", blueprint_name="dev-stack", user_id="u",
+        ttl_minutes=240, expires_at=now + timedelta(minutes=240), created_at=now,
+    )
+    with patch("app.presentation.routes.api_environments._order_use_case") as uc:
+        uc.execute = AsyncMock(return_value=env)
+        resp = client.post("/api/environments", json={
+            "blueprint_name": "dev-stack", "ttl_minutes": 240,
+            "item_vars": {"web": {"git_branch": "feature-x"}},
+        })
+
+    assert resp.status_code == 201
+    assert uc.execute.call_args.kwargs["item_vars"] == {"web": {"git_branch": "feature-x"}}
+
+
+def test_order_environment_no_item_vars_defaults_none(client):
+    from datetime import datetime, timedelta, timezone
+    from app.domain.entities import Environment
+
+    now = datetime.now(timezone.utc)
+    env = Environment(
+        id=uuid4(), name="dev-stack", blueprint_name="dev-stack", user_id="u",
+        ttl_minutes=240, expires_at=now + timedelta(minutes=240), created_at=now,
+    )
+    with patch("app.presentation.routes.api_environments._order_use_case") as uc:
+        uc.execute = AsyncMock(return_value=env)
+        resp = client.post("/api/environments", json={
+            "blueprint_name": "dev-stack", "ttl_minutes": 240,
+        })
+
+    assert resp.status_code == 201
+    assert uc.execute.call_args.kwargs["item_vars"] is None

@@ -69,13 +69,14 @@ class OrderEnvironmentUseCase:
         created_by: str | None = None,
         namespace_id: UUID | None = None, namespace_name: str | None = None,
         cluster_name: str | None = None,
+        item_vars: dict[str, dict] | None = None,
     ) -> Environment:
         blueprint = await self._blueprint_repo.get_by_name(session, blueprint_name)
         if blueprint is None:
             raise BlueprintNotFoundError(f"No active blueprint named '{blueprint_name}'")
 
         # ── Resolve every item's names up front — a bad name creates nothing ──
-        resolved = [await self._resolve_item(session, it) for it in blueprint.items]
+        resolved = [await self._resolve_item(session, it, item_vars) for it in blueprint.items]
 
         # ── Order-time namespace override (#235): target the blueprint's single namespace item ──
         # Done before the environment row is created so a bad choice creates nothing (returns 400).
@@ -178,7 +179,7 @@ class OrderEnvironmentUseCase:
 
         return await self._env_repo.get(session, env.id)
 
-    async def _resolve_item(self, session, item) -> dict:
+    async def _resolve_item(self, session, item, item_vars: dict[str, dict] | None = None) -> dict:
         spec = item.spec or {}
         rt = item.resource_type
         if rt == ResourceType.VM.value:
@@ -197,7 +198,9 @@ class OrderEnvironmentUseCase:
                     {"name": role.name, "ansible_role": role.ansible_role, "vars": role.default_vars or {},
                      "secret_vars": role.secret_vars if self._secret_vars_enabled else {}}
                 )
-            extra_vars = spec.get("vars") or {}
+            # Order-time overrides win over the blueprint's own vars on key conflict (#352).
+            overrides = item_vars.get(item.label, {}) if item_vars else {}
+            extra_vars = {**(spec.get("vars") or {}), **(overrides or {})}
             _validate_extra_vars(extra_vars)
             return {"image_id": image.id, "hw_config_id": hw.id, "config_roles": config_roles,
                     "startup_script": spec.get("startup_script"), "extra_vars": extra_vars}
