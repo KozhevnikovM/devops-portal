@@ -5,18 +5,21 @@ These `Protocol`s describe the repository/dispatcher methods the use cases call,
 type against an abstraction instead of a concrete `app.infrastructure.repositories.*` class.
 
 Protocols are **structural**: the existing concrete repositories already satisfy these without
-inheriting anything (verified by `tests/test_repository_ports.py`). Only the *async* methods the use
-cases call are modelled here; the `sync_*` methods (Celery side) stay outside these ports for now.
+inheriting anything (verified by `tests/test_repository_ports.py`). Most ports here model only the
+*async* methods the use cases (FastAPI side) call; `SyncBookingRepositoryPort` is the one exception,
+modelling the `sync_*` methods the Celery worker (`app/tasks/provision.py`, `app/tasks/teardown.py`)
+calls on the sync side of the same repository.
 
 The one pragmatic concession (see `docs/refactor/repository-interfaces.md`): the SQLAlchemy
-`AsyncSession` still appears in signatures — the established "use cases receive a session parameter"
-contract — rather than introducing a Unit-of-Work abstraction.
+`AsyncSession`/`Session` still appears in signatures — the established "use cases receive a session
+parameter" contract — rather than introducing a Unit-of-Work abstraction.
 """
 from datetime import datetime
 from typing import Protocol, runtime_checkable
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Session
 
 from app.domain.entities import (
     Booking, Environment, EnvironmentBlueprint, HWConfig, Namespace, Role, StaticVM, VMImage,
@@ -56,6 +59,23 @@ class BookingRepositoryPort(Protocol):
         self, session: AsyncSession, booking_id: UUID, environment_id: UUID | None,
         environment_label: str | None, ttl_minutes: int, expires_at: datetime,
     ) -> None: ...
+
+
+@runtime_checkable
+class SyncBookingRepositoryPort(Protocol):
+    """Sync twin of `BookingRepositoryPort`, for the Celery worker path (`provision.py`,
+    `teardown.py`). Models only the `sync_*` methods those two tasks actually call — other
+    sync methods (e.g. `sync_list_expired`, used only by `beat_tasks.py`) aren't included."""
+    def sync_get(self, session: Session, booking_id: UUID) -> Booking: ...
+    def sync_update_status(
+        self, session: Session, booking_id: UUID, status: BookingStatus,
+        vm_ip: str | None = None, vm_password: str | None = None,
+        config_failed: bool | None = None, start_lease: bool = False, actor_id: str = "system",
+    ) -> None: ...
+    def sync_set_status_message(
+        self, session: Session, booking_id: UUID, message: str | None,
+    ) -> None: ...
+    def sync_promote_next_queued(self, session: Session, resource_type: str) -> Booking | None: ...
 
 
 @runtime_checkable

@@ -29,6 +29,7 @@ from app.infrastructure.repositories.static_vm_repo import StaticVMRepository
     (EnvironmentRepository(), ports.EnvironmentRepositoryPort),
     (EnvironmentBlueprintRepository(), ports.BlueprintRepositoryPort),
     (RoleRepository(), ports.RoleRepositoryPort),
+    (BookingRepository(), ports.SyncBookingRepositoryPort),
 ])
 def test_repo_satisfies_port(repo, port):
     assert isinstance(repo, port)

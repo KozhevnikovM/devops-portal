@@ -7,6 +7,7 @@ from uuid import UUID
 
 import redis as redis_lib
 
+from app.application.ports import SyncBookingRepositoryPort
 from app.config import settings
 from app.domain.enums import BookingStatus
 from app.domain.exceptions import SecretDecryptionError
@@ -23,7 +24,7 @@ from app.infrastructure.terraform.vcd_adapter import TerraformVcdAdapter
 
 logger = logging.getLogger(__name__)
 
-repo = BookingRepository()
+repo: SyncBookingRepositoryPort = BookingRepository()
 env_repo = EnvironmentRepository()
 image_repo = ImageRepository()
 hw_config_repo = HWConfigRepository()
