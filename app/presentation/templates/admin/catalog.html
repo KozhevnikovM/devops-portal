@@ -3,7 +3,7 @@
 {% block title %}Catalog — DevOps Portal{% endblock %}
 
 {% block content %}
-<div class="max-w-5xl">
+<div class="max-w-5xl lg:max-w-6xl 2xl:max-w-7xl">
     <h2 class="text-sm text-gray-400 uppercase tracking-widest mb-6">VM Catalog</h2>
 
     {# ── VM Images ────────────────────────────────────────────────────────── #}
@@ -19,7 +19,7 @@
                 hx-on::after-request="if(event.detail.successful) this.reset()"
                 class="flex items-end gap-3 flex-wrap"
             >
-                <div class="flex flex-col gap-1.5">
+                <div class="flex flex-col gap-1.5 w-full sm:w-auto">
                     <label class="text-xs text-gray-500" for="new-image-name">Name</label>
                     <input
                         id="new-image-name"
@@ -27,11 +27,11 @@
                         type="text"
                         required
                         autocomplete="off"
-                        class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-44"
+                        class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-full sm:w-44"
                         placeholder="Ubuntu 22.04"
                     >
                 </div>
-                <div class="flex flex-col gap-1.5">
+                <div class="flex flex-col gap-1.5 w-full sm:w-auto">
                     <label class="text-xs text-gray-500" for="new-image-tpl">vApp Template ID</label>
                     <input
                         id="new-image-tpl"
@@ -39,11 +39,11 @@
                         type="text"
                         required
                         autocomplete="off"
-                        class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-80 font-mono"
+                        class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-full sm:w-80 font-mono"
                         placeholder="urn:vcloud:vapptemplate:..."
                     >
                 </div>
-                <div class="flex flex-col gap-1.5">
+                <div class="flex flex-col gap-1.5 w-full sm:w-auto">
                     <div id="image-create-error" class="text-xs h-4"></div>
                     <button
                         type="submit"
@@ -55,7 +55,7 @@
             </form>
         </div>
 
-        <div class="bg-gray-900 border border-gray-800 rounded-lg">
+        <div class="bg-gray-900 border border-gray-800 rounded-lg overflow-x-auto">
             {% include "partials/image_table.html" %}
         </div>
     </div>
@@ -73,7 +73,7 @@
                 hx-on::after-request="if(event.detail.successful) this.reset()"
                 class="flex items-end gap-3 flex-wrap"
             >
-                <div class="flex flex-col gap-1.5">
+                <div class="flex flex-col gap-1.5 w-full sm:w-auto">
                     <label class="text-xs text-gray-500" for="new-hw-name">Name</label>
                     <input
                         id="new-hw-name"
@@ -81,11 +81,11 @@
                         type="text"
                         required
                         autocomplete="off"
-                        class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-28"
+                        class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-full sm:w-28"
                         placeholder="medium"
                     >
                 </div>
-                <div class="flex flex-col gap-1.5">
+                <div class="flex flex-col gap-1.5 w-full sm:w-auto">
                     <label class="text-xs text-gray-500" for="new-hw-cpus">CPUs</label>
                     <input
                         id="new-hw-cpus"
@@ -93,11 +93,11 @@
                         type="number"
                         min="1"
                         required
-                        class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-20"
+                        class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-full sm:w-20"
                         placeholder="2"
                     >
                 </div>
-                <div class="flex flex-col gap-1.5">
+                <div class="flex flex-col gap-1.5 w-full sm:w-auto">
                     <label class="text-xs text-gray-500" for="new-hw-ram">RAM (GB)</label>
                     <input
                         id="new-hw-ram"
@@ -105,11 +105,11 @@
                         type="number"
                         min="1"
                         required
-                        class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-24"
+                        class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-full sm:w-24"
                         placeholder="4"
                     >
                 </div>
-                <div class="flex flex-col gap-1.5">
+                <div class="flex flex-col gap-1.5 w-full sm:w-auto">
                     <label class="text-xs text-gray-500" for="new-hw-disk">Disk (GB)</label>
                     <input
                         id="new-hw-disk"
@@ -117,22 +117,22 @@
                         type="number"
                         min="0"
                         required
-                        class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-24"
+                        class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-full sm:w-24"
                         placeholder="50"
                     >
                 </div>
-                <div class="flex flex-col gap-1.5">
+                <div class="flex flex-col gap-1.5 w-full sm:w-auto">
                     <label class="text-xs text-gray-500" for="new-hw-drive-type">Drive type</label>
                     <select
                         id="new-hw-drive-type"
                         name="drive_type"
-                        class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-24"
+                        class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-full sm:w-24"
                     >
                         <option value="HDD">HDD</option>
                         <option value="SSD">SSD</option>
                     </select>
                 </div>
-                <div class="flex flex-col gap-1.5">
+                <div class="flex flex-col gap-1.5 w-full sm:w-auto">
                     <div id="hw-create-error" class="text-xs h-4"></div>
                     <button
                         type="submit"
@@ -144,7 +144,7 @@
             </form>
         </div>
 
-        <div class="bg-gray-900 border border-gray-800 rounded-lg">
+        <div class="bg-gray-900 border border-gray-800 rounded-lg overflow-x-auto">
             {% include "partials/hw_config_table.html" %}
         </div>
     </div>
@@ -162,7 +162,7 @@
                 hx-on::after-request="if(event.detail.successful) this.reset()"
                 class="flex items-end gap-3 flex-wrap"
             >
-                <div class="flex flex-col gap-1.5">
+                <div class="flex flex-col gap-1.5 w-full sm:w-auto">
                     <label class="text-xs text-gray-500" for="new-ns-name">Name</label>
                     <input
                         id="new-ns-name"
@@ -170,11 +170,11 @@
                         type="text"
                         required
                         autocomplete="off"
-                        class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-44"
+                        class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-full sm:w-44"
                         placeholder="team-a-dev"
                     >
                 </div>
-                <div class="flex flex-col gap-1.5">
+                <div class="flex flex-col gap-1.5 w-full sm:w-auto">
                     <label class="text-xs text-gray-500" for="new-ns-cluster">Cluster</label>
                     <input
                         id="new-ns-cluster"
@@ -182,22 +182,22 @@
                         type="text"
                         required
                         autocomplete="off"
-                        class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-40"
+                        class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-full sm:w-40"
                         placeholder="prod-cluster"
                     >
                 </div>
-                <div class="flex flex-col gap-1.5">
+                <div class="flex flex-col gap-1.5 w-full sm:w-auto">
                     <label class="text-xs text-gray-500" for="new-ns-api">API URL</label>
                     <input
                         id="new-ns-api"
                         name="api_url"
                         type="text"
                         autocomplete="off"
-                        class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-72 font-mono"
+                        class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-full sm:w-72 font-mono"
                         placeholder="https://api.cluster:6443"
                     >
                 </div>
-                <div class="flex flex-col gap-1.5">
+                <div class="flex flex-col gap-1.5 w-full sm:w-auto">
                     <div id="namespace-create-error" class="text-xs h-4"></div>
                     <button
                         type="submit"
@@ -209,7 +209,7 @@
             </form>
         </div>
 
-        <div class="bg-gray-900 border border-gray-800 rounded-lg">
+        <div class="bg-gray-900 border border-gray-800 rounded-lg overflow-x-auto">
             {% include "partials/namespace_table.html" %}
         </div>
     </div>
@@ -227,7 +227,7 @@
                 hx-on::after-request="if(event.detail.successful) this.reset()"
                 class="flex items-end gap-3 flex-wrap"
             >
-                <div class="flex flex-col gap-1.5">
+                <div class="flex flex-col gap-1.5 w-full sm:w-auto">
                     <label class="text-xs text-gray-500" for="new-svm-name">Name</label>
                     <input
                         id="new-svm-name"
@@ -235,11 +235,11 @@
                         type="text"
                         required
                         autocomplete="off"
-                        class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-36"
+                        class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-full sm:w-36"
                         placeholder="build-agent-1"
                     >
                 </div>
-                <div class="flex flex-col gap-1.5">
+                <div class="flex flex-col gap-1.5 w-full sm:w-auto">
                     <label class="text-xs text-gray-500" for="new-svm-host">Host</label>
                     <input
                         id="new-svm-host"
@@ -247,11 +247,11 @@
                         type="text"
                         required
                         autocomplete="off"
-                        class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-44 font-mono"
+                        class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-full sm:w-44 font-mono"
                         placeholder="10.0.0.12"
                     >
                 </div>
-                <div class="flex flex-col gap-1.5">
+                <div class="flex flex-col gap-1.5 w-full sm:w-auto">
                     <label class="text-xs text-gray-500" for="new-svm-user">Username</label>
                     <input
                         id="new-svm-user"
@@ -259,55 +259,55 @@
                         type="text"
                         required
                         autocomplete="off"
-                        class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-32"
+                        class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-full sm:w-32"
                         placeholder="ubuntu"
                     >
                 </div>
-                <div class="flex flex-col gap-1.5">
+                <div class="flex flex-col gap-1.5 w-full sm:w-auto">
                     <label class="text-xs text-gray-500" for="new-svm-pass">Password</label>
                     <input
                         id="new-svm-pass"
                         name="password"
                         type="text"
                         autocomplete="off"
-                        class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-36 font-mono"
+                        class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-full sm:w-36 font-mono"
                         placeholder="secret"
                     >
                 </div>
-                <div class="flex flex-col gap-1.5">
+                <div class="flex flex-col gap-1.5 w-full sm:w-auto">
                     <label class="text-xs text-gray-500" for="new-svm-key">SSH Key</label>
                     <input
                         id="new-svm-key"
                         name="ssh_key"
                         type="text"
                         autocomplete="off"
-                        class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-56 font-mono"
+                        class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-full sm:w-56 font-mono"
                         placeholder="ssh-ed25519 AAAA…"
                     >
                 </div>
-                <div class="flex flex-col gap-1.5">
+                <div class="flex flex-col gap-1.5 w-full sm:w-auto">
                     <label class="text-xs text-gray-500" for="new-svm-cpus">CPUs</label>
                     <input
                         id="new-svm-cpus"
                         name="cpus"
                         type="number"
                         min="1"
-                        class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-20"
+                        class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-full sm:w-20"
                         placeholder="2"
                     >
                 </div>
-                <div class="flex flex-col gap-1.5">
+                <div class="flex flex-col gap-1.5 w-full sm:w-auto">
                     <label class="text-xs text-gray-500" for="new-svm-ram">RAM (GB)</label>
                     <input
                         id="new-svm-ram"
                         name="memory_gb"
                         type="number"
                         min="1"
-                        class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-24"
+                        class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-full sm:w-24"
                         placeholder="4"
                     >
                 </div>
-                <div class="flex flex-col gap-1.5">
+                <div class="flex flex-col gap-1.5 w-full sm:w-auto">
                     <div id="static-vm-create-error" class="text-xs h-4"></div>
                     <button
                         type="submit"
@@ -319,7 +319,7 @@
             </form>
         </div>
 
-        <div class="bg-gray-900 border border-gray-800 rounded-lg">
+        <div class="bg-gray-900 border border-gray-800 rounded-lg overflow-x-auto">
             {% include "partials/static_vm_table.html" %}
         </div>
     </div>
@@ -337,31 +337,31 @@
                 hx-on::after-request="if(event.detail.successful) this.reset()"
                 class="flex items-end gap-3 flex-wrap"
             >
-                <div class="flex flex-col gap-1.5">
+                <div class="flex flex-col gap-1.5 w-full sm:w-auto">
                     <label class="text-xs text-gray-500" for="new-role-name">Name</label>
                     <input id="new-role-name" name="name" type="text" required autocomplete="off"
-                        class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-40"
+                        class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-full sm:w-40"
                         placeholder="docker-machine">
                 </div>
-                <div class="flex flex-col gap-1.5">
+                <div class="flex flex-col gap-1.5 w-full sm:w-auto">
                     <label class="text-xs text-gray-500" for="new-role-ansible">Ansible role</label>
                     <input id="new-role-ansible" name="ansible_role" type="text" required autocomplete="off"
-                        class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-40 font-mono"
+                        class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-full sm:w-40 font-mono"
                         placeholder="docker_machine">
                 </div>
-                <div class="flex flex-col gap-1.5">
+                <div class="flex flex-col gap-1.5 w-full sm:w-auto">
                     <label class="text-xs text-gray-500" for="new-role-desc">Description</label>
                     <input id="new-role-desc" name="description" type="text" autocomplete="off"
-                        class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-56"
+                        class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-full sm:w-56"
                         placeholder="Install Docker Engine">
                 </div>
-                <div class="flex flex-col gap-1.5">
+                <div class="flex flex-col gap-1.5 w-full sm:w-auto">
                     <label class="text-xs text-gray-500" for="new-role-vars">Default vars (YAML)</label>
                     <textarea id="new-role-vars" name="default_vars" rows="3" autocomplete="off"
-                        class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-56 font-mono"
+                        class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-full sm:w-56 font-mono"
                         placeholder="version: latest"></textarea>
                 </div>
-                <div class="flex flex-col gap-1.5">
+                <div class="flex flex-col gap-1.5 w-full sm:w-auto">
                     <div id="role-create-error" class="text-xs h-4"></div>
                     <button type="submit"
                         class="px-4 py-2 bg-green-700 hover:bg-green-600 text-green-100 text-sm rounded transition-colors">
@@ -371,7 +371,7 @@
             </form>
         </div>
 
-        <div class="bg-gray-900 border border-gray-800 rounded-lg">
+        <div class="bg-gray-900 border border-gray-800 rounded-lg overflow-x-auto">
             {% include "partials/role_table.html" %}
         </div>
     </div>
@@ -390,10 +390,10 @@
                 class="flex flex-col gap-3"
             >
                 <div class="flex items-end gap-3 flex-wrap">
-                    <div class="flex flex-col gap-1.5">
+                    <div class="flex flex-col gap-1.5 w-full sm:w-auto">
                         <label class="text-xs text-gray-500" for="new-bp-name">Name</label>
                         <input id="new-bp-name" name="name" type="text" required autocomplete="off"
-                            class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-44"
+                            class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-full sm:w-44"
                             placeholder="dev-stack">
                     </div>
                     <div class="flex flex-col gap-1.5 flex-1 min-w-48">
@@ -403,7 +403,7 @@
                             placeholder="namespace + web + db">
                     </div>
                 </div>
-                <div class="flex flex-col gap-1.5">
+                <div class="flex flex-col gap-1.5 w-full sm:w-auto">
                     <label class="text-xs text-gray-500" for="new-bp-items">Items (JSON array)</label>
                     <textarea id="new-bp-items" name="items" rows="5"
                         class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-xs text-gray-100 focus:outline-none focus:border-green-600 w-full font-mono"
@@ -420,7 +420,7 @@
             </form>
         </div>
 
-        <div class="bg-gray-900 border border-gray-800 rounded-lg">
+        <div class="bg-gray-900 border border-gray-800 rounded-lg overflow-x-auto">
             {% include "partials/blueprint_table.html" %}
         </div>
     </div>

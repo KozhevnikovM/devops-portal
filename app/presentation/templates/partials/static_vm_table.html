@@ -31,38 +31,38 @@
                             name="name"
                             value="{{ vm.name }}"
                             required
-                            class="bg-gray-900 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-36"
+                            class="bg-gray-900 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-full sm:w-36"
                         >
                         <input
                             name="host"
                             value="{{ vm.host }}"
                             required
-                            class="bg-gray-900 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-44 font-mono"
+                            class="bg-gray-900 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-full sm:w-44 font-mono"
                         >
                         <input
                             name="username"
                             value="{{ vm.username }}"
                             required
-                            class="bg-gray-900 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-32"
+                            class="bg-gray-900 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-full sm:w-32"
                         >
                         <input
                             name="password"
                             value="{{ vm.password or '' }}"
                             placeholder="password"
-                            class="bg-gray-900 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-32 font-mono"
+                            class="bg-gray-900 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-full sm:w-32 font-mono"
                         >
                         <input
                             name="ssh_key"
                             value="{{ vm.ssh_key or '' }}"
                             placeholder="ssh-ed25519 AAAA…"
-                            class="bg-gray-900 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-48 font-mono"
+                            class="bg-gray-900 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-full sm:w-48 font-mono"
                         >
                         <input
                             name="cpus"
                             type="number"
                             min="1"
                             value="{{ vm.cpus or '' }}"
-                            class="bg-gray-900 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-20"
+                            class="bg-gray-900 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-full sm:w-20"
                             placeholder="CPUs"
                         >
                         <input
@@ -70,7 +70,7 @@
                             type="number"
                             min="1"
                             value="{{ (vm.memory_mb // 1024) if vm.memory_mb else '' }}"
-                            class="bg-gray-900 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-24"
+                            class="bg-gray-900 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-full sm:w-24"
                             placeholder="GB"
                         >
                         <button type="submit" class="text-xs px-3 py-1.5 rounded bg-green-700 text-green-100 hover:bg-green-600 transition-colors">Save</button>
@@ -109,7 +109,7 @@
                 <td class="px-4 py-3">
                     <details class="relative">
                         <summary class="list-none cursor-pointer w-7 h-7 flex items-center justify-center rounded text-gray-400 hover:text-gray-200 hover:bg-gray-700 transition-colors select-none text-lg leading-none">⋮</summary>
-                        <div class="absolute right-0 bottom-full mb-1 w-44 bg-gray-900 border border-gray-700 rounded shadow-lg z-50 py-1">
+                        <div class="absolute right-0 {% if loop.first %}top-full mt-1{% else %}bottom-full mb-1{% endif %} w-44 bg-gray-900 border border-gray-700 rounded shadow-lg z-50 py-1">
                             {% if vm.is_active %}
                             <button
                                 hx-get="/admin/catalog/static-vms/{{ vm.id }}/edit"
