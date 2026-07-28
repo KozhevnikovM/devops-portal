@@ -71,7 +71,12 @@
       "Bash(cat /home/mike/.cache/ms-playwright-mcp/mcp-chrome-8a7b0b4/SingletonLock 2>&1 *)",
       "Read(//proc/**)",
       "Bash(docker rm *)",
-      "Bash(git apply *)"
+      "Bash(git apply *)",
+      "Bash(cp -n .env.example .env 2>/dev/null; docker compose up -d 2>&1 | tail -30)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://localhost:8000/login)",
+      "Bash(curl -s -o /dev/null -w \"root: %{http_code}\\\\n\" http://localhost:8000/)",
+      "Bash(curl -s -o /dev/null -w \"login: %{http_code}\\\\n\" http://localhost:8000/auth/login)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://localhost:8000/book/vm)"
     ],
     "additionalDirectories": [
       "/home/mike/devops-portal/tests"
