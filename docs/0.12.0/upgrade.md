@@ -92,6 +92,17 @@ missing `expire_on_commit=False` on one test's session. All 6 integration tests 
 against a real Postgres; this tier had apparently never actually been exercised against
 one before. No production code changes.
 
+### VM booking stuck in RELEASING after a restart mid-teardown (#374)
+
+If the portal restarted while a VM booking's teardown was in flight (container restart,
+OOM kill, host reboot), the booking was previously left stuck in `RELEASING` forever — no
+automatic recovery covered that status, and the only reachable admin action ("Force
+Release") just flipped the booking straight to `RELEASED` without ever retrying `terraform
+destroy`, risking a silently orphaned vApp in VCD. Startup recovery now also re-dispatches
+a forced teardown for any booking found stuck in `RELEASING`, and "Force Release" on a
+`RELEASING` booking now actually re-attempts the destroy instead of skipping it — both are
+safe to re-run against a VM that's already fully or partially destroyed.
+
 ---
 
 ## Rollback

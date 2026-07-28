@@ -575,6 +575,14 @@ class BookingRepository:
         )
         return [_to_entity(m) for m in result.scalars().all()]
 
+    def sync_list_stuck_releasing(self, session: Session) -> list[Booking]:
+        """Return all RELEASING bookings regardless of age (#374 — a killed teardown task
+        never re-dispatches on its own; startup recovery re-attempts it)."""
+        result = session.execute(
+            select(BookingModel).where(BookingModel.status == BookingStatus.RELEASING.value)
+        )
+        return [_to_entity(m) for m in result.scalars().all()]
+
     def sync_promote_next_queued(self, session: Session, resource_type: str) -> Booking | None:
         """Sync twin of promote_next_queued — called from the Celery teardown/TTL path."""
         booking = session.execute(_oldest_queued_stmt(resource_type)).scalar_one_or_none()
