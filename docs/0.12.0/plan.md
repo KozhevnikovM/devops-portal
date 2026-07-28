@@ -31,12 +31,16 @@ worker side (`sync_get`, `sync_update_status`, etc. in `booking_repo.py`) has no
 v0.11.0 deferred this specifically until the Postgres integration tier existed to verify
 it under real transaction semantics — that tier shipped in F-7, so this is now unblocked.
 
-**F-4: Ansible role picker on the VM booking form** (#357) — fully speced in
-`docs/features/vm-booking-role-picker.md`. `POST /api/bookings` already accepts a
-`roles` field; the browser **Virtual Machines** tab has no way to submit it. Adds a
-checkbox-list role picker to `partials/booking_form.html` (VM/provisioned bookings
-only), and extracts the role-name-resolution logic `api_bookings.py` already has into a
-shared helper both routes call.
+**F-4: Ansible role and variable input on the VM booking form** (#357) — fully speced in
+`docs/features/vm-booking-role-picker.md`. `POST /api/bookings` already accepts `roles`
+and `vars` fields; the browser **Virtual Machines** tab has no way to submit either.
+Adds a checkbox-list role picker and a YAML vars textarea (reusing the existing
+`default_vars` textarea pattern from the admin catalog) to `partials/booking_form.html`
+(VM/provisioned bookings only). Also de-duplicates two existing pieces of logic that
+`api_bookings.py` already has inline: role-name resolution, extracted into a shared
+helper both routes call, and var-name validation, extracted into a pure
+`app/domain/validation.py` function that `order_environment.py`'s `_validate_extra_vars`
+also switches to (currently duplicated between the two call sites).
 
 ### Out of scope (deferred, with reason)
 
@@ -158,25 +162,32 @@ semantics under a real DB — that tier is now in place.
 
 ---
 
-### F-4: Ansible Role Picker on the VM Booking Form
+### F-4: Ansible Role and Variable Input on the VM Booking Form
 
-**Review ref:** #357
+**Review ref:** #357 (roles); vars folded in during plan review — same gap, same form.
 
 **What:** See `docs/features/vm-booking-role-picker.md` for the full plan. Summary: add
-a checkbox-list role picker to `partials/booking_form.html`'s `#provisioned-fields`
-block (VM bookings only — Static VM/Namespace unaffected); extract the role-name →
-`config_roles` resolution `api_bookings.py` already does into a shared helper
-(`app/application/use_cases/_roles.py::resolve_config_roles`), used by both
-`api_bookings.py` and the new `bookings.py` path; raise the existing (currently unused)
-`RoleNotFoundError` domain exception from the shared helper instead of `api_bookings.py`
-raising `HTTPException` inline.
+a checkbox-list role picker and a YAML vars textarea (reusing the admin catalog's
+existing `default_vars` textarea UX) to `partials/booking_form.html`'s
+`#provisioned-fields` block (VM bookings only — Static VM/Namespace unaffected).
+Extract two pieces of logic `api_bookings.py` already has inline, so both routes share
+one implementation:
+- Role-name → `config_roles` resolution →
+  `app/application/use_cases/_roles.py::resolve_config_roles`, raising the existing
+  (currently unused) `RoleNotFoundError` domain exception instead of `api_bookings.py`
+  raising `HTTPException` inline.
+- Var-name validation (`^[a-zA-Z_][a-zA-Z0-9_]*$`) → `app/domain/validation.py
+  ::validate_var_names`, a pure function with no exception coupling; also adopted by
+  `order_environment.py`'s `_validate_extra_vars`, which duplicates the same regex today.
 
-**Why:** `POST /api/bookings` has accepted a `roles` field since it was added for
-API/CI callers, but the HTML form never got one — a portal user booking a VM through the
-browser has no way to attach an Ansible role today.
+**Why:** `POST /api/bookings` has accepted `roles` and `vars` fields since they were
+added for API/CI callers, but the HTML form never got either — a portal user booking a
+VM through the browser has no way to attach an Ansible role or override a variable
+today.
 
-**Acceptance criteria:** as listed in the feature doc — no roles selected behaves exactly
-as before; an unknown/stale role name re-renders the form with an error banner instead
+**Acceptance criteria:** as listed in the feature doc — no roles selected / no vars
+entered behaves exactly as before; an unknown/stale role name, invalid YAML, or an
+invalid variable name re-renders the form with an error banner (input preserved) instead
 of a 500; Static VM/Namespace bookings unaffected; no DB migration, no API change.
 
 ---
@@ -192,7 +203,7 @@ and F-4 are templates/routes only.
 
 - F-2: `POST /api/environments` gains an optional `item_vars` field (see above). No
   breaking change — omitting it behaves exactly as before.
-- F-1, F-3, F-4: none. (F-4 wires an existing `POST /api/bookings` field into the HTML
+- F-1, F-3, F-4: none. (F-4 wires existing `POST /api/bookings` fields into the HTML
   form; the API itself is unchanged.)
 
 ---
@@ -206,9 +217,11 @@ and F-4 are templates/routes only.
   `POST /api/environments`.
 - F-3: `test_repository_ports.py` parametrization; no behavior tests needed since this
   is interface-only.
-- F-4: unit test for `resolve_config_roles` (found roles, unknown-name error); route
-  tests for `POST /bookings` with roles (success + unknown-role error banner). Full
-  suite run to confirm the `api_bookings.py` extraction is behaviour-preserving.
+- F-4: unit tests for `resolve_config_roles` (found roles, unknown-name error),
+  `validate_var_names`, and `_parse_vars_yaml`; route tests for `POST /bookings` with
+  roles and/or vars (success + unknown-role / invalid-var error banners). Full suite run
+  to confirm the `api_bookings.py`/`order_environment.py` extractions are
+  behaviour-preserving.
 
 ---
 
