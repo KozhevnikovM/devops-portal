@@ -1215,6 +1215,24 @@ and the request fails with `409` as before.
   "namespace_name": "dev1", "cluster_name": "prod-cluster" }
 ```
 
+**Order-time Ansible variables (`item_vars`).** A blueprint's VM items carry their own
+`vars` (set by an admin when the blueprint is defined — see *Role variables* under
+`POST /api/environment-blueprints`), but a single blueprint often needs to be parameterized
+per order (e.g. building from a different git branch). Optionally add **`item_vars`** — a
+dict keyed by the VM item's blueprint **`label`**, each value itself a `portal.*` var dict:
+
+```json
+{ "blueprint_name": "dev-stack", "ttl_minutes": 240,
+  "item_vars": { "web": { "git_branch": "feature-x" } } }
+```
+
+Keys in `item_vars["web"]` override the blueprint's own `vars` for that item on conflict;
+keys the blueprint doesn't already have are added. An item whose label isn't present in
+`item_vars` is unaffected. Var names must match `[a-zA-Z_][a-zA-Z0-9_]*` (same rule as
+blueprint-level `vars`) — an invalid name in either source is rejected with `400`, even if
+only the override introduces it. Not yet exposed on the HTMX order form — API/pipeline use
+only for now.
+
 Blueprint item names are resolved up front, so a bad name creates nothing. A child quota failure
 rolls the whole environment back. **Responses:** `201` (the environment + its children); `404`
 unknown blueprint; `400` a blueprint item references an unknown catalog entry, only one of the
