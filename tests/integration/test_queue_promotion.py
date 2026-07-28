@@ -17,7 +17,7 @@ from app.domain.enums import BookingStatus, ResourceType
 from app.infrastructure.database.models import BookingAuditModel, BookingModel
 from app.infrastructure.repositories.booking_repo import BookingRepository
 
-pytestmark = pytest.mark.integration
+pytestmark = [pytest.mark.integration, pytest.mark.asyncio(loop_scope="session")]
 
 
 def _queued_ns_booking() -> BookingModel:
@@ -36,7 +36,6 @@ def _queued_ns_booking() -> BookingModel:
     )
 
 
-@pytest.mark.asyncio
 async def test_no_double_promotion_under_concurrent_reads(
     async_engine: AsyncEngine, seed_catalog: dict
 ):
