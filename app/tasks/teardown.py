@@ -2,6 +2,7 @@ import asyncio
 import logging
 from uuid import UUID
 
+from app.application.ports import SyncBookingRepositoryPort
 from app.config import settings
 from app.domain.enums import BookingStatus, ResourceType
 from app.infrastructure.celery_app import celery_app
@@ -14,7 +15,7 @@ from app.infrastructure.terraform.vcd_adapter import TerraformVcdAdapter
 
 logger = logging.getLogger(__name__)
 
-repo = BookingRepository()
+repo: SyncBookingRepositoryPort = BookingRepository()
 image_repo = ImageRepository()
 hw_config_repo = HWConfigRepository()
 terraform = StubTerraformAdapter() if settings.USE_STUB_TERRAFORM else TerraformVcdAdapter()
