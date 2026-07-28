@@ -7,7 +7,7 @@ is accepted and the other raises QuotaExceededError.
 """
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock
-from uuid import UUID, uuid4
+from uuid import UUID
 
 import pytest
 import asyncio
@@ -22,7 +22,7 @@ from app.infrastructure.repositories.hw_config_repo import HWConfigRepository
 from app.infrastructure.repositories.image_repo import ImageRepository
 from app.infrastructure.repositories.quota_repo import QuotaRepository
 
-pytestmark = pytest.mark.integration
+pytestmark = [pytest.mark.integration, pytest.mark.asyncio(loop_scope="session")]
 
 _HW_CPUS = 3  # > half of the tight quota below so two together exceed the limit
 _QUOTA_MAX_CPUS = 4
@@ -46,19 +46,18 @@ async def _try_create(engine: AsyncEngine, uc, user_id, image_id, hw_id):
         )
 
 
-@pytest.mark.asyncio
 async def test_quota_ceiling_enforced_under_concurrent_writes(
-    async_engine: AsyncEngine, seed_catalog: dict
+    async_engine: AsyncEngine, seed_catalog: dict, seed_user: str
 ):
     """Only one of two concurrent bookings is accepted when the second would exceed quota."""
-    user_id = str(uuid4())
+    user_id = seed_user
     image_id = seed_catalog["image_id"]
     hw_id = seed_catalog["hw_id"]
     uc = _make_uc()
 
     # Seed a tight quota for the test user (max_cpus=4; each booking uses 3 CPUs).
     quota_repo = QuotaRepository()
-    async with AsyncSession(async_engine) as session:
+    async with AsyncSession(async_engine, expire_on_commit=False) as session:
         await quota_repo.set(
             session, UUID(user_id),
             max_cpus=_QUOTA_MAX_CPUS, max_memory_gb=32, max_ssd_gb=500, max_hdd_gb=500,

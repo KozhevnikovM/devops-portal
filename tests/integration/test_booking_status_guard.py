@@ -15,7 +15,7 @@ from app.domain.enums import BookingStatus
 from app.domain.exceptions import IllegalStatusTransitionError
 from app.infrastructure.repositories.booking_repo import BookingRepository
 
-pytestmark = pytest.mark.integration
+pytestmark = [pytest.mark.integration, pytest.mark.asyncio(loop_scope="session")]
 
 
 def _booking(image_id, hw_id, status=BookingStatus.PENDING) -> Booking:
@@ -38,7 +38,6 @@ def _booking(image_id, hw_id, status=BookingStatus.PENDING) -> Booking:
     )
 
 
-@pytest.mark.asyncio
 async def test_allowed_transition_succeeds(async_session: AsyncSession, seed_catalog: dict):
     """PENDING → PROVISIONING is a valid move; update_status must not raise."""
     repo = BookingRepository()
@@ -48,7 +47,6 @@ async def test_allowed_transition_succeeds(async_session: AsyncSession, seed_cat
     assert refreshed.status == BookingStatus.PROVISIONING
 
 
-@pytest.mark.asyncio
 async def test_disallowed_transition_raises(async_session: AsyncSession, seed_catalog: dict):
     """PENDING → READY is not in ALLOWED_TRANSITIONS; must raise IllegalStatusTransitionError."""
     repo = BookingRepository()
@@ -57,7 +55,6 @@ async def test_disallowed_transition_raises(async_session: AsyncSession, seed_ca
         await repo.update_status(async_session, b.id, BookingStatus.READY)
 
 
-@pytest.mark.asyncio
 async def test_terminal_status_blocks_all_moves(async_session: AsyncSession, seed_catalog: dict):
     """A RELEASED booking (terminal) cannot move anywhere; any transition raises."""
     repo = BookingRepository()
@@ -69,7 +66,6 @@ async def test_terminal_status_blocks_all_moves(async_session: AsyncSession, see
         await repo.update_status(async_session, b.id, BookingStatus.FAILED)
 
 
-@pytest.mark.asyncio
 async def test_savepoint_isolation_no_cross_test_leak(
     async_session: AsyncSession, seed_catalog: dict
 ):

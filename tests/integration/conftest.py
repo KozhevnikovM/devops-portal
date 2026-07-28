@@ -23,6 +23,7 @@ from app.infrastructure.database.models import (
     HWConfigModel,
     NamespaceModel,
     QuotaModel,
+    UserModel,
     VMImageModel,
 )
 
@@ -93,6 +94,25 @@ async def seed_catalog(async_engine: AsyncEngine) -> dict:
         await session.execute(delete(VMImageModel).where(VMImageModel.id == image_id))
         await session.execute(delete(HWConfigModel).where(HWConfigModel.id == hw_id))
         await session.execute(delete(NamespaceModel).where(NamespaceModel.id == ns_id))
+        await session.commit()
+
+
+@pytest_asyncio.fixture(scope="session", loop_scope="session")
+async def seed_user(async_engine: AsyncEngine) -> AsyncGenerator[str, None]:
+    """Insert one `users` row once per session, for tests that need a real FK-satisfying user_id."""
+    user_id = uuid4()
+
+    async with AsyncSession(async_engine, expire_on_commit=False) as session:
+        session.add(UserModel(
+            id=user_id, username=f"inttest-user-{user_id}",
+            password_hash="unused", role="user",
+        ))
+        await session.commit()
+
+    yield str(user_id)
+
+    async with AsyncSession(async_engine) as session:
+        await session.execute(delete(UserModel).where(UserModel.id == user_id))
         await session.commit()
 
 
