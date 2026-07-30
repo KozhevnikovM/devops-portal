@@ -139,7 +139,7 @@ def provision_vm_task(
                     if redis_client and lock_key:
                         redis_client.expire(lock_key, settings.VCD_TOKEN_LOCK_TTL)
                     # Each progress write gets its own short-lived session/connection.
-                    _run(lambda s: repo.sync_set_status_message(s, booking_uuid, msg))
+                    _run(lambda s: repo.sync_record_progress(s, booking_uuid, msg))
 
                 # No DB connection is held across the (minutes-long) terraform apply.
                 result = asyncio.run(

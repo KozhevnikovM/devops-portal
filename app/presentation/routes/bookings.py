@@ -347,3 +347,25 @@ async def booking_audit_page(
         request, "audit_log.html",
         {"booking": booking, "entries": entries, "current_user": current_user},
     )
+
+
+@router.get("/bookings/{booking_id}/log", response_class=HTMLResponse)
+async def booking_log_page(
+    booking_id: UUID,
+    request: Request,
+    session: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(require_user),
+):
+    """Full accumulated Terraform/Ansible provisioning (and teardown) log for a booking (#378)."""
+    try:
+        booking = await _repo.get(session, booking_id)
+    except BookingNotFoundError:
+        raise HTTPException(status_code=404, detail="Booking not found")
+
+    if not can_manage(owner_id=booking.user_id, created_by=booking.created_by, user=current_user):
+        raise HTTPException(status_code=403, detail="Not the booking owner")
+
+    return templates.TemplateResponse(
+        request, "booking_log.html",
+        {"booking": booking, "current_user": current_user},
+    )

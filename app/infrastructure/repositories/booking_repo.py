@@ -127,6 +127,7 @@ def _to_entity(
         disk_mb=m.disk_mb,
         drive_type=m.drive_type,
         status_message=m.status_message,
+        provisioning_log=m.provisioning_log,
         startup_script=m.startup_script,
         config_roles=m.config_roles or [],
         extra_vars=m.extra_vars or {},
@@ -526,6 +527,17 @@ class BookingRepository:
         if model is None:
             raise BookingNotFoundError(booking_id)
         model.status_message = message
+        session.commit()
+
+    def sync_record_progress(self, session: Session, booking_id: UUID, message: str) -> None:
+        """Set the compact status_message (unchanged) and append to the capped provisioning_log,
+        in one commit rather than two — this fires on every Ansible/script output line (#378)."""
+        model = session.get(BookingModel, booking_id)
+        if model is None:
+            raise BookingNotFoundError(booking_id)
+        model.status_message = message
+        combined = (model.provisioning_log or "") + message + "\n"
+        model.provisioning_log = combined[-50_000:]
         session.commit()
 
     def sync_list_expired(self, session: Session) -> list[Booking]:

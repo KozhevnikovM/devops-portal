@@ -82,7 +82,7 @@ def teardown_vm_task(
 
             def _on_progress(msg: str) -> None:
                 # Each progress write gets its own short-lived session/connection.
-                _run(lambda s: repo.sync_set_status_message(s, booking_uuid, msg))
+                _run(lambda s: repo.sync_record_progress(s, booking_uuid, msg))
 
             # No DB connection is held across the (minutes-long) terraform destroy.
             asyncio.run(terraform.destroy(workspace_id, config, api_token, on_progress=_on_progress, force=force))

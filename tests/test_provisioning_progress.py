@@ -95,14 +95,18 @@ def _run_provision(booking_id, image_id, hw_config_id, *, terraform_apply_side_e
 
 
 def test_provision_task_on_progress_called_and_cleared():
-    """on_progress is wired: adapter message written, then cleared on READY."""
+    """on_progress writes go through sync_record_progress (#378), not sync_set_status_message;
+    the terminal clear-to-None call is unchanged."""
     booking_id = str(uuid4())
     mock_repo = _run_provision(booking_id, str(uuid4()), str(uuid4()))
 
+    progress_calls = [c.args[2] for c in mock_repo.sync_record_progress.call_args_list]
+    assert "Provisioning (stub mode)…" in progress_calls
+
     msg_calls = [c.args[2] for c in mock_repo.sync_set_status_message.call_args_list]
-    assert "Provisioning (stub mode)…" in msg_calls
     assert None in msg_calls  # cleared on success
     assert msg_calls[-1] is None  # last message is the clear
+    assert "Provisioning (stub mode)…" not in msg_calls  # progress no longer goes here
 
 
 def test_provision_task_sets_failure_message():
@@ -160,13 +164,17 @@ def _run_teardown(booking_id, *, terraform_destroy_side_effect=None):
 
 
 def test_teardown_task_on_progress_called_and_cleared():
-    """Teardown adapter message written, then cleared on RELEASED."""
+    """Teardown on_progress writes go through sync_record_progress (#378), not
+    sync_set_status_message; the terminal clear-to-None call is unchanged."""
     mock_repo = _run_teardown(str(uuid4()))
 
+    progress_calls = [c.args[2] for c in mock_repo.sync_record_progress.call_args_list]
+    assert "Destroying (stub mode)…" in progress_calls
+
     msg_calls = [c.args[2] for c in mock_repo.sync_set_status_message.call_args_list]
-    assert "Destroying (stub mode)…" in msg_calls
     assert None in msg_calls
     assert msg_calls[-1] is None
+    assert "Destroying (stub mode)…" not in msg_calls
 
 
 def test_teardown_task_sets_failure_message():

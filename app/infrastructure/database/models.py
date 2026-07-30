@@ -147,6 +147,7 @@ class BookingModel(Base):
     vm_ip: Mapped[str | None] = mapped_column(String(64), nullable=True)
     vm_password: Mapped[str | None] = mapped_column(String(128), nullable=True)
     status_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    provisioning_log: Mapped[str | None] = mapped_column(Text, nullable=True)
     startup_script: Mapped[str | None] = mapped_column(Text, nullable=True)
     config_roles: Mapped[list] = mapped_column(JSONB, nullable=False, default=list, server_default="[]")
     extra_vars: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb"))

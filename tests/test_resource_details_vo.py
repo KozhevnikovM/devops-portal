@@ -33,6 +33,7 @@ def _base_model(**overrides) -> BookingModel:
         disk_mb=51200,
         drive_type=DriveType.HDD.value,
         status_message=None,
+        provisioning_log=None,
         startup_script=None,
         config_roles=[],
         extra_vars={},

@@ -86,6 +86,9 @@ class SyncBookingRepositoryPort(Protocol):
     def sync_set_status_message(
         self, session: Session, booking_id: UUID, message: str | None,
     ) -> None: ...
+    def sync_record_progress(
+        self, session: Session, booking_id: UUID, message: str,
+    ) -> None: ...
     def sync_promote_next_queued(self, session: Session, resource_type: str) -> Booking | None: ...
 
 
