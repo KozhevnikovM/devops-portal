@@ -1,14 +1,17 @@
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
 import bcrypt
+import redis.asyncio as aioredis
 from fastapi import FastAPI
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.routing import APIRoute
 from fastapi.staticfiles import StaticFiles
+from sqlalchemy import text
 
 from app.config import settings
-from app.infrastructure.database.session import SyncSessionLocal
+from app.infrastructure.database.session import AsyncSessionLocal, SyncSessionLocal
 from app.infrastructure.logging_config import configure_logging
 from app.infrastructure.repositories.booking_repo import BookingRepository
 from app.infrastructure.repositories.user_repo import UserRepository
@@ -175,4 +178,45 @@ app.openapi = _custom_openapi
 
 @app.get("/health", tags=["platform"], summary="Liveness probe")
 async def health():
+    return {"status": "ok"}
+
+
+_HEALTH_CHECK_TIMEOUT = 2  # seconds
+
+
+def _get_redis() -> aioredis.Redis:
+    return aioredis.from_url(settings.REDIS_URL, decode_responses=True)
+
+
+async def _check_postgres() -> None:
+    async with AsyncSessionLocal() as session:
+        await session.execute(text("SELECT 1"))
+
+
+async def _check_redis() -> None:
+    r = _get_redis()
+    try:
+        await r.ping()
+    finally:
+        await r.aclose()
+
+
+@app.get("/health/ready", tags=["platform"], summary="Readiness probe")
+async def health_ready():
+    """Pings Postgres and Redis with a short timeout each (#371 F-4).
+
+    Not wired into any container's `healthcheck:` block — this is for manual ops checks /
+    a future load balancer, kept deliberately separate from the plain liveness probe above so
+    a transient dependency blip can't get the app container restarted.
+    """
+    for name, check in (("postgres", _check_postgres), ("redis", _check_redis)):
+        try:
+            await asyncio.wait_for(check(), timeout=_HEALTH_CHECK_TIMEOUT)
+        except Exception:
+            logger.warning("readiness check failed: %s unreachable", name)
+            return JSONResponse(
+                status_code=503,
+                content={"status": "unavailable", "detail": f"{name} unreachable"},
+            )
+
     return {"status": "ok"}
