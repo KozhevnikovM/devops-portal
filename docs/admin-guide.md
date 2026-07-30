@@ -689,6 +689,12 @@ link. It opens `/bookings/{id}/audit` — a timeline of the booking's status tra
 and metadata (e.g. the captured error) — to help diagnose why provisioning failed. The owner or
 an admin can view it; the same trail is available as JSON at `GET /api/bookings/{id}/audit`.
 
+The row's inline log snippet is height-contained (scrolls within a fixed box instead of pushing
+the rest of the row down), and a **"View full log ↗"** link opens `/bookings/{id}/log` in a new
+tab whenever the booking has one: the full accumulated Terraform/Ansible provisioning-and-teardown
+output (capped at the last 50,000 characters), as opposed to the audit page's structured
+status-transition timeline. Same owner-or-admin access as the audit page.
+
 ---
 
 ## Terraform Adapter Setup
@@ -1096,6 +1102,12 @@ playbook from the booking's role snapshot and runs `ansible-playbook` over SSH. 
 fails (VM reachable) is treated like a failed script — `READY` + "⚠ configuration failed"; an
 unreachable VM is `FAILED`. Roles are **snapshotted** at order time, so editing a catalog role
 doesn't change a running VM.
+
+> The **Ansible roles** checkbox list on the booking form is **admin-only** — non-admins don't
+> see it at all (the field is simply omitted from their form). `POST /api/bookings`'s `roles`
+> field is unaffected by this — any client can still submit roles directly via the API. The
+> **Ansible variables** textarea next to it is unaffected either way and stays available to
+> every user.
 
 **Using `portal.*` variables inside a role.** Every Ansible run injects a `portal` dict into
 the play vars. Two keys are always present:

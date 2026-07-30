@@ -26,6 +26,23 @@ logs too). Send your own `X-Request-ID` on a request to have it echoed back and 
 correlation id instead of a server-generated one; useful for tying a client-side trace to the
 server-side one.
 
+### `GET /health`
+
+Liveness probe. Always returns `200 OK` with `{"status": "ok"}` — no dependency checks. This is
+what the `app` container's own `healthcheck:` polls; it should never fail just because Postgres
+or Redis had a transient blip.
+
+### `GET /health/ready`
+
+Readiness probe. Pings Postgres (`SELECT 1`) and Redis (`PING`), each with a 2s timeout.
+
+- `200 OK` — `{"status": "ok"}` — both dependencies reachable.
+- `503 Service Unavailable` — `{"status": "unavailable", "detail": "<postgres|redis> unreachable"}`
+  — one dependency didn't respond in time.
+
+Not wired into any container's `healthcheck:` block — for manual ops checks or a future load
+balancer, not liveness/restart decisions.
+
 ---
 
 ## Authentication
@@ -845,6 +862,18 @@ updated `partials/booking_row.html` fragment.
 Renders the **HTML audit-log page** for a booking (timeline of status transitions, actors, and
 metadata). Linked from the **Audit log** item in a FAILED booking's ⋮ menu. This is a browser
 presentation route (omitted from `/docs`); the machine-readable trail is `GET /api/bookings/{id}/audit`.
+
+**Auth:** the booking **owner** or an **admin**. A non-owner gets `403`; an unknown id gets `404`.
+
+---
+
+### `GET /bookings/{booking_id}/log`
+
+Renders the **full accumulated Terraform/Ansible provisioning (and teardown) log** for a booking,
+in a standalone page meant to be opened in a new tab (linked from the booking row's "View full
+log ↗"). This is a different, log-focused view from the audit page above — it's raw
+provisioning/teardown output, not the structured status-transition timeline. Browser presentation
+route (omitted from `/docs`); no JSON API equivalent yet.
 
 **Auth:** the booking **owner** or an **admin**. A non-owner gets `403`; an unknown id gets `404`.
 
