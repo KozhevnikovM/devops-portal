@@ -94,7 +94,9 @@ async def _render_bookings_page(
     hw_configs = await _hw_config_repo.list_active(session)
     available_namespaces = await _namespace_repo.list_available(session)
     available_static_vms = await _static_vm_repo.list_available(session)
-    roles = await _role_repo.list_active(session)
+    # F-6 (#377): the role/vars picker is admin-only — non-admins get an empty list so the
+    # template's existing `{% if roles %}` gate hides the whole block.
+    roles = await _role_repo.list_active(session) if current_user.role == "admin" else []
     return templates.TemplateResponse(
         request, "index.html",
         {
@@ -155,7 +157,8 @@ async def _render_form_error(request, session, current_user, booking_type="VM", 
         "hw_configs": await _hw_config_repo.list_active(session),
         "available_namespaces": await _namespace_repo.list_available(session),
         "available_static_vms": await _static_vm_repo.list_available(session),
-        "roles": await _role_repo.list_active(session),
+        # F-6 (#377): admin-only picker — see _render_bookings_page for the same gate.
+        "roles": await _role_repo.list_active(session) if current_user.role == "admin" else [],
         "current_user": current_user,
         "booking_type": booking_type,
     }
@@ -211,6 +214,10 @@ async def create_booking(
             return await _render_form_error(
                 request, session, current_user, quota_error="Select an image and hardware config",
             )
+        # F-6 (#377): defense in depth — the picker is hidden from non-admins client-side, but
+        # ignore any `roles` form data submitted anyway (e.g. a direct POST bypassing the UI).
+        if current_user.role != "admin":
+            roles = []
         try:
             config_roles = await resolve_config_roles(session, _role_repo, roles)
         except RoleNotFoundError as exc:

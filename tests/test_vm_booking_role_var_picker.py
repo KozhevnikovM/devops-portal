@@ -140,7 +140,26 @@ def client():
     app.dependency_overrides.clear()
 
 
-def test_post_booking_with_roles_and_vars_forwards_to_use_case(client):
+@pytest.fixture
+def admin_client():
+    """The role picker is admin-only as of #377 (F-6) — tests that exercise `roles` need an
+    admin `current_user`; non-admin `roles` behavior is covered in
+    test_admin_gate_role_picker.py."""
+    from app.main import app
+    from app.infrastructure.auth import require_user
+    from app.infrastructure.database.session import get_async_session
+    from tests.conftest import make_fake_admin
+
+    session_mock = AsyncMock()
+    fake_user = make_fake_admin()
+    app.dependency_overrides[get_async_session] = lambda: session_mock
+    app.dependency_overrides[require_user] = lambda: fake_user
+    yield TestClient(app)
+    app.dependency_overrides.clear()
+
+
+def test_post_booking_with_roles_and_vars_forwards_to_use_case(admin_client):
+    client = admin_client
     booking = _vm_booking()
     with patch("app.presentation.routes.bookings._use_case") as mock_uc, \
          patch("app.presentation.routes.bookings._role_repo") as mock_role_repo:
@@ -179,7 +198,8 @@ def test_post_booking_no_roles_no_vars_behaves_as_before(client):
     assert kwargs["extra_vars"] == {}
 
 
-def test_post_booking_unknown_role_shows_error_banner(client):
+def test_post_booking_unknown_role_shows_error_banner(admin_client):
+    client = admin_client
     with patch("app.presentation.routes.bookings._use_case") as mock_uc, \
          patch("app.presentation.routes.bookings._role_repo") as mock_role_repo, \
          patch("app.presentation.routes.bookings._image_repo") as mock_img, \
