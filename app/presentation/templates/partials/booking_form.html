@@ -103,6 +103,7 @@
             </details>
         </div>
         {% endif %}
+        {% if current_user is defined and current_user.role == 'admin' %}
         <div class="flex flex-col gap-1 w-full sm:w-auto">
             <label for="vars_yaml" class="text-xs text-gray-500">Ansible variables <span class="text-gray-600">(optional)</span></label>
             <textarea
@@ -114,6 +115,7 @@
                 class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-gray-100 focus:outline-none focus:border-green-500 text-xs font-mono w-full sm:w-56"
             >{{ vars_yaml or '' }}</textarea>
         </div>
+        {% endif %}
     </div>
 
     <div id="static-fields" class="flex flex-col gap-1 {% if sel != 'STATIC_VM' %}hidden{% endif %}">

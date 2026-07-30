@@ -1,13 +1,17 @@
-"""Tests for #377 (v0.13.0 F-6): restrict the Ansible role picker to admins.
+"""Tests for #377 (v0.13.0 F-6, plus the vars-textarea follow-up): restrict the Ansible
+role picker AND variables textarea to admins.
 
 v0.12.0 (#357) added a role/vars picker to the VM booking form, sourced from
 `_role_repo.list_active(session)` and passed into the template as `roles`, with no admin
-check anywhere. Fix: `_render_bookings_page`/`_render_form_error` only pass a non-empty
-`roles` list when `current_user.role == "admin"` (the template's existing `{% if roles %}`
-gate then hides the picker entirely for everyone else — no template change needed), and
-`create_booking` ignores submitted `roles` form data for non-admins server-side (defense in
-depth against a direct POST bypassing the hidden UI). `POST /api/bookings` is unchanged and
-still applies roles regardless of role — see test_vm_ansible_roles.py's
+check anywhere. F-6 initially gated only the roles picker; a follow-up (per the #377 issue
+comment) extended the same admin gate to the vars textarea, since a half-hidden picker (roles
+gone, vars still visible) read as an incomplete restriction rather than an intentional one.
+Fix: `_render_bookings_page`/`_render_form_error` only pass a non-empty `roles` list when
+`current_user.role == "admin"`, and the template now wraps *both* the roles picker and the
+vars textarea in the same `{% if roles %}` gate — so they can never disagree again.
+`create_booking` ignores submitted `roles`/`vars_yaml` form data for non-admins server-side
+(defense in depth against a direct POST bypassing the hidden UI). `POST /api/bookings` is
+unchanged and still applies roles/vars regardless of role — see test_vm_ansible_roles.py's
 `test_order_vm_with_roles_snapshots`, which already covers that with a non-admin fake user.
 """
 from datetime import datetime, timedelta, timezone
@@ -81,6 +85,9 @@ def test_non_admin_sees_no_roles_picker_on_bookings_page():
     # The role-picker JS (querySelectorAll('input[name="roles"]')) is unconditional in the
     # template, so check for the actual checkbox markup rather than the bare substring.
     assert '<input type="checkbox" name="roles"' not in resp.text
+    # Follow-up: the vars textarea shares the same admin gate as the roles picker now.
+    assert 'name="vars_yaml"' not in resp.text
+    assert "Ansible variables" not in resp.text
 
 
 def test_admin_sees_roles_picker_on_bookings_page():
@@ -111,6 +118,8 @@ def test_admin_sees_roles_picker_on_bookings_page():
 
     assert 'id="roles-dropdown"' in resp.text
     assert "docker-machine" in resp.text
+    # Follow-up: admins still see the vars textarea too.
+    assert 'name="vars_yaml"' in resp.text
 
 
 # ── POST /bookings — server-side defense in depth ─────────────────────────────
@@ -137,6 +146,53 @@ def test_non_admin_post_bookings_roles_silently_ignored():
             assert kwargs["config_roles"] == []
             # Never even attempted to resolve the (ignored) role name.
             mock_role_repo.get_by_name.assert_not_called()
+    finally:
+        from app.main import app
+        app.dependency_overrides.clear()
+
+
+def test_non_admin_post_bookings_vars_silently_ignored():
+    """A non-admin POSTing `vars_yaml` directly (bypassing the hidden UI) still creates the
+    booking, with the vars ignored rather than applied or erroring."""
+    from tests.conftest import make_fake_user
+
+    client = _client_as(make_fake_user())
+    try:
+        booking = _vm_booking()
+        with patch("app.presentation.routes.bookings._use_case") as mock_uc:
+            mock_uc.execute = AsyncMock(return_value=booking)
+            resp = client.post("/bookings", data={
+                "resource_type": "VM", "ttl_minutes": "240",
+                "image_id": str(uuid4()), "hw_config_id": str(uuid4()),
+                "vars_yaml": "foo: bar",
+            })
+
+            assert resp.status_code == 201
+            kwargs = mock_uc.execute.call_args.kwargs
+            assert kwargs["extra_vars"] == {}
+    finally:
+        from app.main import app
+        app.dependency_overrides.clear()
+
+
+def test_admin_post_bookings_vars_still_applied():
+    """Regression: admins posting `vars_yaml` still get them parsed and applied."""
+    from tests.conftest import make_fake_admin
+
+    client = _client_as(make_fake_admin())
+    try:
+        booking = _vm_booking()
+        with patch("app.presentation.routes.bookings._use_case") as mock_uc:
+            mock_uc.execute = AsyncMock(return_value=booking)
+            resp = client.post("/bookings", data={
+                "resource_type": "VM", "ttl_minutes": "240",
+                "image_id": str(uuid4()), "hw_config_id": str(uuid4()),
+                "vars_yaml": "foo: bar",
+            })
+
+            assert resp.status_code == 201
+            kwargs = mock_uc.execute.call_args.kwargs
+            assert kwargs["extra_vars"] == {"foo": "bar"}
     finally:
         from app.main import app
         app.dependency_overrides.clear()

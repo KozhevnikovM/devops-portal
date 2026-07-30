@@ -224,7 +224,11 @@ def test_post_booking_unknown_role_shows_error_banner(admin_client):
     mock_uc.execute.assert_not_called()
 
 
-def test_post_booking_invalid_vars_yaml_shows_error_banner_and_preserves_input(client):
+def test_post_booking_invalid_vars_yaml_shows_error_banner_and_preserves_input(admin_client):
+    """The vars textarea is admin-only as of the #377 follow-up — a non-admin's `vars_yaml` is
+    now silently ignored server-side rather than validated (test_admin_gate_role_picker.py's
+    test_non_admin_post_bookings_vars_silently_ignored covers that path)."""
+    client = admin_client
     with patch("app.presentation.routes.bookings._use_case") as mock_uc, \
          patch("app.presentation.routes.bookings._image_repo") as mock_img, \
          patch("app.presentation.routes.bookings._hw_config_repo") as mock_hw, \
