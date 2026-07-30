@@ -1103,11 +1103,10 @@ fails (VM reachable) is treated like a failed script — `READY` + "⚠ configur
 unreachable VM is `FAILED`. Roles are **snapshotted** at order time, so editing a catalog role
 doesn't change a running VM.
 
-> The **Ansible roles** checkbox list on the booking form is **admin-only** — non-admins don't
-> see it at all (the field is simply omitted from their form). `POST /api/bookings`'s `roles`
-> field is unaffected by this — any client can still submit roles directly via the API. The
-> **Ansible variables** textarea next to it is unaffected either way and stays available to
-> every user.
+> The **Ansible roles** checkbox list and the **Ansible variables** textarea on the booking form
+> are both **admin-only** — non-admins don't see either field at all (both are simply omitted
+> from their form). `POST /api/bookings`'s `roles`/`vars` fields are unaffected by this — any
+> client can still submit both directly via the API regardless of the submitting user's role.
 
 **Using `portal.*` variables inside a role.** Every Ansible run injects a `portal` dict into
 the play vars. Two keys are always present:

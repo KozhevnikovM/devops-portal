@@ -94,8 +94,10 @@ async def _render_bookings_page(
     hw_configs = await _hw_config_repo.list_active(session)
     available_namespaces = await _namespace_repo.list_available(session)
     available_static_vms = await _static_vm_repo.list_available(session)
-    # F-6 (#377): the role/vars picker is admin-only — non-admins get an empty list so the
-    # template's existing `{% if roles %}` gate hides the whole block.
+    # F-6 (#377): the role picker is admin-only — non-admins get an empty list so the
+    # template's `{% if roles %}` gate hides it. The vars textarea (#377 follow-up) is gated
+    # independently in the template on `current_user.role`, so it stays visible to admins
+    # even when the role catalog itself is empty.
     roles = await _role_repo.list_active(session) if current_user.role == "admin" else []
     return templates.TemplateResponse(
         request, "index.html",
@@ -157,7 +159,7 @@ async def _render_form_error(request, session, current_user, booking_type="VM", 
         "hw_configs": await _hw_config_repo.list_active(session),
         "available_namespaces": await _namespace_repo.list_available(session),
         "available_static_vms": await _static_vm_repo.list_available(session),
-        # F-6 (#377): admin-only picker — see _render_bookings_page for the same gate.
+        # F-6 (#377) + follow-up: admin-only picker/vars — see _render_bookings_page.
         "roles": await _role_repo.list_active(session) if current_user.role == "admin" else [],
         "current_user": current_user,
         "booking_type": booking_type,
@@ -214,10 +216,12 @@ async def create_booking(
             return await _render_form_error(
                 request, session, current_user, quota_error="Select an image and hardware config",
             )
-        # F-6 (#377): defense in depth — the picker is hidden from non-admins client-side, but
-        # ignore any `roles` form data submitted anyway (e.g. a direct POST bypassing the UI).
+        # F-6 (#377) + follow-up: defense in depth — the roles/vars picker is hidden from
+        # non-admins client-side, but ignore any `roles`/`vars_yaml` form data submitted anyway
+        # (e.g. a direct POST bypassing the UI).
         if current_user.role != "admin":
             roles = []
+            vars_yaml = ""
         try:
             config_roles = await resolve_config_roles(session, _role_repo, roles)
         except RoleNotFoundError as exc:
