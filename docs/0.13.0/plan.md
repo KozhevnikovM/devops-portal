@@ -7,7 +7,10 @@ logging, no request correlation, and no dependency-aware health check anywhere i
 codebase — including one previously unnoticed, genuinely critical finding (F-1) where the
 FastAPI process's `INFO`-level logs are silently dropped in production. This release fixes
 the foundational gaps and deliberately stops short of a full metrics/tracing platform,
-which is called out below as separately-scoped follow-on work.
+which is called out below as separately-scoped follow-on work. Two user-facing visibility
+gaps (F-6, F-7) are folded in alongside the backend logging work — both are "observability"
+from the other direction (what a specific user/booking can see), reported after the initial
+plan was written.
 
 ---
 
@@ -37,7 +40,28 @@ threaded through to dispatched Celery tasks, so one booking's technical-log trai
 `logger.error` → `logger.exception` in the generic-exception branches, matching the
 pattern `beat_tasks.py` already uses correctly.
 
-Full technical detail for all five: `docs/features/observability.md`.
+Full technical detail for F-1..F-5: `docs/features/observability.md`.
+
+**F-6: Restrict the Ansible role/variable picker to admins on the VM booking form** (#377)
+— the checkbox/dropdown role picker and vars textarea added in v0.12.0 (#357) currently
+render for *any* authenticated user booking a VM; there's no admin check anywhere in
+`bookings.py`. Fix is narrowly scoped to the browser form only (`POST /api/bookings`'s
+`roles`/`vars` fields are unchanged — API/CI callers are unaffected): `_render_bookings_page`/
+`_render_form_error` only pass a non-empty `roles` list when `current_user.role == 'admin'`
+(the template's existing `{% if roles %}` gate already hides the block otherwise — no
+template change needed), and `create_booking` ignores submitted `roles` form data for
+non-admins server-side (defense in depth against a direct POST bypassing the hidden UI).
+Whether the vars textarea should *also* be admin-gated is a related but separate question —
+the issue names roles specifically, so vars stays as-is unless told otherwise.
+
+**F-7: Dedicated Terraform/Ansible provisioning log view** (#378) — fully speced in
+`docs/features/vm-provisioning-log-view.md`. Summary: today only the last 3 lines of
+provisioning/teardown output are ever retained (overwritten each tick) — nothing
+accumulates, so there's no way to see a full run's output, and a single long wrapped line
+can visually dominate the booking row. Adds a bounded (50,000-char) accumulated log column,
+a new `GET /bookings/{id}/log` page (opens in a new tab, same owner-or-admin permission as
+the existing audit-log route), and contains the row's inline snippet to a fixed, scrollable
+height instead of letting it push the page around.
 
 ### Out of scope, with reason
 
@@ -63,22 +87,29 @@ Full technical detail for all five: `docs/features/observability.md`.
 
 ## DB Migrations
 
-None. Every item in scope is logging/config/routing — no new tables or columns.
+One: F-7 adds `bookings.provisioning_log` (`Text`, nullable, no backfill). F-1..F-6 are
+logging/config/routing/permission changes — no schema impact.
 
 ## API Changes
 
-- New `GET /health/ready` (F-4). `GET /health` is unchanged. No booking/environment/
-  catalog endpoint changes.
+- New `GET /health/ready` (F-4). `GET /health` is unchanged.
+- New `GET /bookings/{id}/log` (F-7, HTML only this pass — no JSON API twin yet).
+- F-6 changes no API surface — it's a browser-form-only restriction; `POST /api/bookings`'s
+  `roles`/`vars` fields are unchanged.
+- No other booking/environment/catalog endpoint changes.
 
 ---
 
 ## Testing Plan
 
-See `docs/features/observability.md`'s own Testing Plan section for the full breakdown
-(logging-config unit tests, correlation-id middleware/task-dispatch tests, health-check
-route tests for both the healthy and unhealthy paths, and a traceback-capture check for
-F-5). Full suite (`pytest tests/ -m "not integration"` + the integration tier) gates
-the release, matching v0.12.0's own precedent.
+See `docs/features/observability.md`'s own Testing Plan section for F-1..F-5 (logging-config
+unit tests, correlation-id middleware/task-dispatch tests, health-check route tests for both
+the healthy and unhealthy paths, and a traceback-capture check for F-5), and
+`docs/features/vm-provisioning-log-view.md`'s for F-7 (capped-append unit test, task-callback
+routing test, log-route permission tests). F-6: route tests confirming a non-admin's rendered
+form has no roles picker, and that submitted `roles` form data from a non-admin is silently
+ignored server-side. Full suite (`pytest tests/ -m "not integration"` + the integration tier)
+gates the release, matching v0.12.0's own precedent.
 
 ---
 
@@ -92,3 +123,7 @@ the release, matching v0.12.0's own precedent.
 4. **F-4** — no dependency on F-1/F-2/F-3; can be worked in parallel with any of them.
 5. **F-5** — no dependency on the others; smallest item, can land anytime, bundled here
    since it's directly adjacent to F-1's exception-handling code.
+6. **F-6** — no dependency on F-1..F-5; smallest new item, can land anytime.
+7. **F-7** — no dependency on F-1..F-6; has its own migration, so sequence its own Alembic
+   revision relative to whatever else is in flight at merge time (no shared schema surface
+   with anything else in this release).
