@@ -86,7 +86,15 @@
       "Bash(mypy app/infrastructure/logging_config.py app/presentation/middleware/correlation_id.py app/infrastructure/celery_app.py app/infrastructure/celery_dispatcher.py app/application/ports.py app/application/use_cases/create_booking.py app/application/use_cases/release_booking.py app/application/use_cases/force_release_booking.py app/application/use_cases/order_environment.py app/application/use_cases/release_environment.py app/tasks/provision.py app/tasks/teardown.py app/main.py app/presentation/routes/bookings.py app/presentation/routes/api_bookings.py app/presentation/routes/environments.py app/presentation/routes/api_environments.py app/presentation/routes/admin.py --ignore-missing-imports --no-error-summary)",
       "Bash(mypy app/application/use_cases/order_environment.py app/main.py --ignore-missing-imports --no-error-summary)",
       "Bash(bandit -r app/infrastructure/logging_config.py app/presentation/middleware/correlation_id.py app/infrastructure/celery_app.py app/infrastructure/celery_dispatcher.py app/application/ports.py app/application/use_cases/create_booking.py app/application/use_cases/release_booking.py app/application/use_cases/force_release_booking.py app/application/use_cases/order_environment.py app/application/use_cases/release_environment.py app/tasks/provision.py app/tasks/teardown.py app/main.py --severity-level medium -q)",
-      "Bash(ruff format *)"
+      "Bash(ruff format *)",
+      "Bash(DATABASE_URL_SYNC=postgresql+psycopg2://portal:portal@localhost:5432/portal alembic current)",
+      "Bash(alembic heads *)",
+      "Bash(export DATABASE_URL_SYNC=postgresql+psycopg2://portal:portal@localhost:5432/portal)",
+      "Bash(alembic current *)",
+      "Bash(export PYTHONPATH=/home/mike/devops-portal)",
+      "Bash(alembic upgrade *)",
+      "Bash(alembic downgrade *)",
+      "Bash(PYTHONPATH=/home/mike/devops-portal DATABASE_URL_SYNC=postgresql+psycopg2://portal:portal@localhost:5432/portal alembic current)"
     ],
     "additionalDirectories": [
       "/home/mike/devops-portal/tests"

@@ -160,6 +160,7 @@ class Booking:
     disk_mb: int = 0                      # deprecated: use self.footprint.disk_mb
     drive_type: str = DriveType.HDD.value # deprecated: use self.footprint.drive_type
     status_message: str | None = None
+    provisioning_log: str | None = None
     startup_script: str | None = None     # deprecated: use self.details.startup_script (VMDetails)
     config_roles: list = field(default_factory=list)  # deprecated: use self.details.config_roles
     extra_vars: dict = field(default_factory=dict)    # deprecated: use self.details.extra_vars
