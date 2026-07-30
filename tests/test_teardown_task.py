@@ -1,3 +1,5 @@
+import logging
+
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
@@ -134,3 +136,28 @@ async def test_stub_adapter_destroy_completes():
     adapter = StubTerraformAdapter()
     with patch("asyncio.sleep", return_value=None):
         await adapter.destroy("booking-test-workspace", config={})
+
+
+def test_teardown_task_failure_logs_with_exc_info(caplog):
+    """#371 F-5: the generic-exception handler uses logger.exception (not logger.error), so the
+    traceback isn't silently dropped on an unexpected failure."""
+    booking_id = str(uuid4())
+    mock_session, mock_repo, mock_image_repo, mock_hw_repo = _patched(booking_id)
+
+    with (
+        patch("app.tasks.teardown.SyncSessionLocal") as mock_session_factory,
+        patch("app.tasks.teardown.repo", mock_repo),
+        patch("app.tasks.teardown.image_repo", mock_image_repo),
+        patch("app.tasks.teardown.hw_config_repo", mock_hw_repo),
+        patch("app.tasks.teardown.asyncio.run", side_effect=RuntimeError("destroy failed")),
+    ):
+        mock_session_factory.return_value.__enter__ = MagicMock(return_value=mock_session)
+        mock_session_factory.return_value.__exit__ = MagicMock(return_value=False)
+
+        from app.tasks.teardown import teardown_vm_task
+        with caplog.at_level(logging.ERROR, logger="app.tasks.teardown"):
+            teardown_vm_task.apply(args=[booking_id])
+
+    matching = [r for r in caplog.records if "Teardown failed" in r.getMessage()]
+    assert matching, f"expected a 'Teardown failed' log record, got: {caplog.records}"
+    assert matching[0].exc_info is not None

@@ -1,3 +1,5 @@
+import logging
+
 import pytest
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
@@ -189,3 +191,36 @@ def test_provision_task_sets_retry_status_on_failure():
     assert statuses[-1] == BookingStatus.FAILED
     assert BookingStatus.RETRY in statuses
     assert statuses.count(BookingStatus.FAILED) == 1
+
+
+def test_provision_task_failure_logs_with_exc_info(caplog):
+    """#371 F-5: the generic-exception handler uses logger.exception (not logger.error), so the
+    traceback isn't silently dropped on an unexpected failure."""
+    booking_id = str(uuid4())
+    image_id = str(uuid4())
+    hw_config_id = str(uuid4())
+
+    mock_session = MagicMock()
+    mock_repo = MagicMock()
+    mock_image_repo = MagicMock()
+    mock_image_repo.sync_get = MagicMock(return_value=_make_image())
+    mock_hw_repo = MagicMock()
+    mock_hw_repo.sync_get = MagicMock(return_value=_make_hw())
+
+    with (
+        patch("app.tasks.provision.SyncSessionLocal") as mock_session_factory,
+        patch("app.tasks.provision.repo", mock_repo),
+        patch("app.tasks.provision.image_repo", mock_image_repo),
+        patch("app.tasks.provision.hw_config_repo", mock_hw_repo),
+        patch("app.tasks.provision.asyncio.run", side_effect=RuntimeError("boom")),
+    ):
+        mock_session_factory.return_value.__enter__ = MagicMock(return_value=mock_session)
+        mock_session_factory.return_value.__exit__ = MagicMock(return_value=False)
+
+        from app.tasks.provision import provision_vm_task
+        with caplog.at_level(logging.ERROR, logger="app.tasks.provision"):
+            provision_vm_task.apply(args=[booking_id, image_id, hw_config_id])
+
+    matching = [r for r in caplog.records if "Provisioning failed" in r.getMessage()]
+    assert matching, f"expected a 'Provisioning failed' log record, got: {caplog.records}"
+    assert matching[0].exc_info is not None

@@ -84,7 +84,7 @@ async def test_dispatcher_releases_dispatched_booking():
     uc = ReleaseBookingUseCase(repo, dispatcher)
 
     await uc.execute(AsyncMock(), booking.id, disp)  # no exception → allowed
-    dispatcher.dispatch_teardown.assert_called_once_with(str(booking.id))
+    dispatcher.dispatch_teardown.assert_called_once_with(str(booking.id), request_id=None)
 
 
 @pytest.mark.asyncio

@@ -9,8 +9,10 @@ from fastapi.staticfiles import StaticFiles
 
 from app.config import settings
 from app.infrastructure.database.session import SyncSessionLocal
+from app.infrastructure.logging_config import configure_logging
 from app.infrastructure.repositories.booking_repo import BookingRepository
 from app.infrastructure.repositories.user_repo import UserRepository
+from app.presentation.middleware.correlation_id import CorrelationIdMiddleware
 from app.presentation.middleware.csrf_origin import CSRFOriginMiddleware
 from app.presentation.routes.admin import router as admin_router
 from app.presentation.routes.auth import router as auth_router
@@ -116,12 +118,18 @@ def _recover_stuck_releases() -> None:
     logger.info("startup recovery: re-queued %d stuck-releasing booking(s)", len(bookings))
 
 
+configure_logging()
+
 app = FastAPI(
     title="DevOps Portal",
     lifespan=lifespan,
     swagger_ui_parameters={"persistAuthorization": True},
     root_path=settings.ROOT_PATH,
 )
+# Middleware added first ends up outermost (Starlette wraps in reverse-add order) — Correlation
+# binds request_id before CSRFOriginMiddleware runs, and echoes the header back on every
+# response, including a CSRF rejection (#371 F-3).
+app.add_middleware(CorrelationIdMiddleware)
 app.add_middleware(CSRFOriginMiddleware, base_url=settings.BASE_URL)
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
 app.include_router(admin_router)

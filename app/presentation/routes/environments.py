@@ -15,6 +15,7 @@ from app.domain.exceptions import (
 )
 from app.infrastructure.auth import require_user
 from app.infrastructure.database.session import get_async_session
+from app.presentation.middleware.correlation_id import get_request_id
 from app.presentation.routes.api_environments import (
     _blueprint_repo, _derived_status, _env_repo, _namespace_repo, _order_use_case, _release_use_case,
     _update_name_use_case,
@@ -104,6 +105,7 @@ async def order_environment(
         env = await _order_use_case.execute(
             session, blueprint_name, ttl_minutes, user_id=str(current_user.id),
             namespace_id=namespace_id,
+            request_id=get_request_id(),
         )
     except (BlueprintNotFoundError, EnvironmentItemError,
             QuotaExceededError, NamespaceUnavailableError, StaticVMUnavailableError) as exc:
@@ -183,7 +185,9 @@ async def release_environment(
             raise HTTPException(status_code=403, detail=f"Environment is not owned by '{on_behalf_of}'")
         force = True
     try:
-        env = await _release_use_case.execute(session, environment_id, current_user, force=force)
+        env = await _release_use_case.execute(
+            session, environment_id, current_user, force=force, request_id=get_request_id(),
+        )
     except EnvironmentNotFoundError:
         raise HTTPException(status_code=404, detail="Environment not found")
     except BookingPermissionError as exc:

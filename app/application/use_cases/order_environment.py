@@ -66,6 +66,7 @@ class OrderEnvironmentUseCase:
         namespace_id: UUID | None = None, namespace_name: str | None = None,
         cluster_name: str | None = None,
         item_vars: dict[str, dict] | None = None,
+        request_id: str | None = None,
     ) -> Environment:
         blueprint = await self._blueprint_repo.get_by_name(session, blueprint_name)
         if blueprint is None:
@@ -171,7 +172,7 @@ class OrderEnvironmentUseCase:
 
         # All children created — now dispatch VM provisioning (nothing dispatched before this point).
         for booking_id, image_id, hw_config_id in vm_dispatch:
-            self._dispatcher.dispatch_provision(booking_id, image_id, hw_config_id)
+            self._dispatcher.dispatch_provision(booking_id, image_id, hw_config_id, request_id=request_id)
 
         return await self._env_repo.get(session, env.id)
 
