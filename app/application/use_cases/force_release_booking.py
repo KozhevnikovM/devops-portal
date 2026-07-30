@@ -21,7 +21,10 @@ class ForceReleaseBookingUseCase:
         self._repo = repo
         self._dispatcher = dispatcher
 
-    async def execute(self, session: AsyncSession, booking_id: UUID, actor_id: str) -> Booking:
+    async def execute(
+        self, session: AsyncSession, booking_id: UUID, actor_id: str,
+        request_id: str | None = None,
+    ) -> Booking:
         booking = await self._repo.get(session, booking_id)  # raises BookingNotFoundError
 
         if booking.resource_type != ResourceType.VM:
@@ -35,6 +38,6 @@ class ForceReleaseBookingUseCase:
             await self._repo.update_status(
                 session, booking_id, BookingStatus.RELEASING, actor_id=actor_id
             )
-        self._dispatcher.dispatch_teardown_force(str(booking_id))
+        self._dispatcher.dispatch_teardown_force(str(booking_id), request_id=request_id)
 
         return await self._repo.get(session, booking_id)

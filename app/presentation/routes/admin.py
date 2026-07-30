@@ -15,6 +15,7 @@ from app.domain.exceptions import BookingNotFoundError, NotFoundError
 from app.infrastructure.auth import require_admin
 from app.infrastructure.database.session import get_async_session
 from app.presentation import deps as _deps
+from app.presentation.middleware.correlation_id import get_request_id
 from app.presentation.templating import templates
 from app.presentation.utils import hx_error
 
@@ -147,7 +148,9 @@ async def admin_force_release_booking(
     current_user: User = Depends(require_admin),
 ):
     try:
-        booking = await _force_release_uc.execute(session, booking_id, str(current_user.id))
+        booking = await _force_release_uc.execute(
+            session, booking_id, str(current_user.id), request_id=get_request_id(),
+        )
     except BookingNotFoundError:
         raise HTTPException(status_code=404, detail="Booking not found")
     except ValueError as exc:

@@ -18,6 +18,16 @@ unversioned at this time.
 
 ---
 
+## Observability
+
+Every response carries an `X-Request-ID` header — a correlation id for tying a request to the
+server's own logs (and, for endpoints that dispatch a provisioning/teardown task, to that task's
+logs too). Send your own `X-Request-ID` on a request to have it echoed back and used as the
+correlation id instead of a server-generated one; useful for tying a client-side trace to the
+server-side one.
+
+---
+
 ## Authentication
 
 ### `GET /auth/login`

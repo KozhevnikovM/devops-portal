@@ -22,6 +22,7 @@ from app.domain.validation import validate_var_names
 from app.infrastructure.auth import require_user
 from app.infrastructure.database.session import get_async_session
 from app.presentation import deps
+from app.presentation.middleware.correlation_id import get_request_id
 from app.presentation.routes._dispatch import resolve_owner
 
 router = APIRouter(prefix="/bookings", tags=["bookings"])
@@ -256,6 +257,7 @@ async def create_booking(
                 user_id=owner_id, created_by=created_by, startup_script=body.startup_script,
                 config_roles=config_roles, extra_vars=extra_vars,
                 label=body.label[:128].strip() if body.label else None,
+                request_id=get_request_id(),
             )
         except QuotaExceededError as exc:
             raise HTTPException(status_code=409, detail=str(exc))
@@ -273,7 +275,9 @@ async def release_booking(
     current_user: User = Depends(require_user),
 ):
     try:
-        booking = await _release_use_case.execute(session, booking_id, current_user)
+        booking = await _release_use_case.execute(
+            session, booking_id, current_user, request_id=get_request_id(),
+        )
     except BookingNotFoundError:
         raise HTTPException(status_code=404, detail="Booking not found")
     except BookingPermissionError as exc:

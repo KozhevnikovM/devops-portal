@@ -80,7 +80,11 @@ def test_admin_can_force_delete_in_flight_booking(admin_client, status):
 
     assert resp.status_code == 202, f"Expected 202 for admin force-delete of {status.value}"
     assert resp.json()["status"] == "RELEASING"
-    mock_dispatcher.dispatch_teardown.assert_called_once_with(str(booking.id))
+    # Dispatched via HTTP — CorrelationIdMiddleware binds a real request_id, so only the
+    # booking_id positional arg is asserted exactly; request_id is covered by
+    # tests/test_correlation_id.py.
+    mock_dispatcher.dispatch_teardown.assert_called_once()
+    assert mock_dispatcher.dispatch_teardown.call_args.args == (str(booking.id),)
 
 
 def test_admin_gets_409_for_releasing_booking(admin_client):

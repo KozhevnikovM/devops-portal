@@ -128,7 +128,7 @@ async def test_admin_force_deletes_configuring_booking():
     result = await uc.execute(MagicMock(), booking.id, _user("admin"))
 
     assert result.status == BookingStatus.RELEASING
-    dispatcher.dispatch_teardown.assert_called_once_with(str(booking.id))
+    dispatcher.dispatch_teardown.assert_called_once_with(str(booking.id), request_id=None)
 
 
 @pytest.mark.asyncio

@@ -163,7 +163,7 @@ async def test_uc_failed_booking_dispatches_teardown():
 
     repo.update_status.assert_called_once()
     assert repo.update_status.call_args.args[2] == BookingStatus.RELEASING
-    disp.dispatch_teardown_force.assert_called_once_with(str(booking.id))
+    disp.dispatch_teardown_force.assert_called_once_with(str(booking.id), request_id=None)
     assert result.status == BookingStatus.RELEASING
 
 
@@ -186,7 +186,7 @@ async def test_uc_releasing_booking_redispatches_forced_teardown():
     )
 
     repo.update_status.assert_not_called()  # already RELEASING — no-op transition skipped
-    disp.dispatch_teardown_force.assert_called_once_with(str(booking.id))
+    disp.dispatch_teardown_force.assert_called_once_with(str(booking.id), request_id=None)
     assert result.status == BookingStatus.RELEASING
 
 

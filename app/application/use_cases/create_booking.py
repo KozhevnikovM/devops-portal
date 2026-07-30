@@ -44,6 +44,7 @@ class CreateBookingUseCase:
         environment_label: str | None = None,
         created_by: str | None = None,
         dispatch: bool = True,
+        request_id: str | None = None,
     ) -> Booking:
         image = await self._image_repo.get(session, image_id)
         hw = await self._hw_config_repo.get(session, hw_config_id)
@@ -106,5 +107,7 @@ class CreateBookingUseCase:
         booking = await self._repo.create(session, booking)
         # Ordering an environment defers dispatch until all children are created (clean rollback).
         if dispatch:
-            self._dispatcher.dispatch_provision(str(booking.id), str(image.id), str(hw.id))
+            self._dispatcher.dispatch_provision(
+                str(booking.id), str(image.id), str(hw.id), request_id=request_id,
+            )
         return booking

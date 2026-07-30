@@ -24,7 +24,8 @@ class ReleaseEnvironmentUseCase:
         self._release = release_booking_use_case
 
     async def execute(
-        self, session: AsyncSession, environment_id: UUID, current_user: User, *, force: bool = False
+        self, session: AsyncSession, environment_id: UUID, current_user: User, *, force: bool = False,
+        request_id: str | None = None,
     ) -> Environment:
         env = await self._env_repo.get(session, environment_id)
 
@@ -34,6 +35,6 @@ class ReleaseEnvironmentUseCase:
         for child in env.bookings:
             if child.status in _TERMINAL:
                 continue  # idempotent — already gone
-            await self._release.execute(session, child.id, current_user, force=True)
+            await self._release.execute(session, child.id, current_user, force=True, request_id=request_id)
 
         return await self._env_repo.get(session, environment_id)

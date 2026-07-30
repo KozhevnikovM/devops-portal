@@ -29,11 +29,22 @@ from app.domain.enums import BookingStatus
 
 class TaskDispatcher(Protocol):
     """Port for dispatching background jobs, so the application layer never imports the
-    concrete Celery tasks (preserves the one-way dependency rule)."""
+    concrete Celery tasks (preserves the one-way dependency rule).
 
-    def dispatch_provision(self, booking_id: str, image_id: str, hw_config_id: str) -> None: ...
+    Every method accepts an optional `request_id` (#371 F-3): the correlation id the FastAPI
+    middleware bound to the request that triggered the dispatch, threaded through by the calling
+    use case (same pattern as `booking_id`). `None` when there is no request in flight (e.g. the
+    startup-recovery / beat-scheduled dispatches that call the concrete tasks directly rather than
+    through this port). Celery task args must be JSON-serialisable, so this can't rely on the
+    contextvar crossing the process boundary — it has to travel as an explicit argument."""
 
-    def dispatch_teardown(self, booking_id: str) -> None: ...
+    def dispatch_provision(
+        self, booking_id: str, image_id: str, hw_config_id: str, request_id: str | None = None,
+    ) -> None: ...
+
+    def dispatch_teardown(self, booking_id: str, request_id: str | None = None) -> None: ...
+
+    def dispatch_teardown_force(self, booking_id: str, request_id: str | None = None) -> None: ...
 
 
 @runtime_checkable

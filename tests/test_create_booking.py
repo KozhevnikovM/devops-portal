@@ -106,7 +106,9 @@ async def test_create_booking_dispatches_task(mock_repo, mock_image_repo, mock_h
     use_case = CreateBookingUseCase(mock_repo, mock_image_repo, mock_hw_repo, mock_quota_repo, dispatcher=dispatcher)
 
     booking = await use_case.execute(mock_session, ttl_minutes=60, image_id=mock_image.id, hw_config_id=mock_hw.id, user_id="test-user")
-    dispatcher.dispatch_provision.assert_called_once_with(str(booking.id), str(mock_image.id), str(mock_hw.id))
+    dispatcher.dispatch_provision.assert_called_once_with(
+        str(booking.id), str(mock_image.id), str(mock_hw.id), request_id=None
+    )
 
 
 @pytest.mark.asyncio

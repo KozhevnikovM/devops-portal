@@ -16,6 +16,7 @@ from app.domain.exceptions import (
 from app.infrastructure.auth import require_user
 from app.infrastructure.database.session import get_async_session
 from app.presentation import deps
+from app.presentation.middleware.correlation_id import get_request_id
 
 router = APIRouter(prefix="/environments", tags=["environments"])
 
@@ -123,6 +124,7 @@ async def order_environment(
             session, body.blueprint_name, body.ttl_minutes, user_id=owner_id, created_by=created_by,
             namespace_name=body.namespace_name, cluster_name=body.cluster_name,
             item_vars=body.item_vars,
+            request_id=get_request_id(),
         )
     except BlueprintNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
@@ -269,7 +271,9 @@ async def release_environment(
 ):
     """Release the whole environment — tear down all its child resources together."""
     try:
-        env = await _release_use_case.execute(session, environment_id, current_user)
+        env = await _release_use_case.execute(
+            session, environment_id, current_user, request_id=get_request_id(),
+        )
     except EnvironmentNotFoundError:
         raise HTTPException(status_code=404, detail="Environment not found")
     except BookingPermissionError as exc:

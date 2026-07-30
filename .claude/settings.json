@@ -81,7 +81,12 @@
       "Read(//home/mike/.local/lib/python3.11/site-packages/celery/app/**)",
       "Read(//home/mike/.local/lib/python3.11/site-packages/celery/utils/**)",
       "Bash(grep -rn \"DEFAULT_PROCESS_LOG_FMT\\\\s*=\\\\|DEFAULT_TASK_LOG_FMT\\\\s*=\" /home/mike/.local/lib/python3.11/site-packages/celery/)",
-      "Read(//home/mike/.local/lib/python3.11/site-packages/celery/**)"
+      "Read(//home/mike/.local/lib/python3.11/site-packages/celery/**)",
+      "Bash(ruff check *)",
+      "Bash(mypy app/infrastructure/logging_config.py app/presentation/middleware/correlation_id.py app/infrastructure/celery_app.py app/infrastructure/celery_dispatcher.py app/application/ports.py app/application/use_cases/create_booking.py app/application/use_cases/release_booking.py app/application/use_cases/force_release_booking.py app/application/use_cases/order_environment.py app/application/use_cases/release_environment.py app/tasks/provision.py app/tasks/teardown.py app/main.py app/presentation/routes/bookings.py app/presentation/routes/api_bookings.py app/presentation/routes/environments.py app/presentation/routes/api_environments.py app/presentation/routes/admin.py --ignore-missing-imports --no-error-summary)",
+      "Bash(mypy app/application/use_cases/order_environment.py app/main.py --ignore-missing-imports --no-error-summary)",
+      "Bash(bandit -r app/infrastructure/logging_config.py app/presentation/middleware/correlation_id.py app/infrastructure/celery_app.py app/infrastructure/celery_dispatcher.py app/application/ports.py app/application/use_cases/create_booking.py app/application/use_cases/release_booking.py app/application/use_cases/force_release_booking.py app/application/use_cases/order_environment.py app/application/use_cases/release_environment.py app/tasks/provision.py app/tasks/teardown.py app/main.py --severity-level medium -q)",
+      "Bash(ruff format *)"
     ],
     "additionalDirectories": [
       "/home/mike/devops-portal/tests"

@@ -34,6 +34,7 @@ class ReleaseBookingUseCase:
 
     async def execute(
         self, session: AsyncSession, booking_id: UUID, current_user: User, force: bool = False,
+        request_id: str | None = None,
     ) -> Booking:
         booking = await self._repo.get(session, booking_id)  # raises BookingNotFoundError
 
@@ -68,6 +69,6 @@ class ReleaseBookingUseCase:
                 await self._repo.update_status(
                     session, booking_id, BookingStatus.RELEASING, actor_id=str(current_user.id)
                 )
-                self._dispatcher.dispatch_teardown(str(booking_id))
+                self._dispatcher.dispatch_teardown(str(booking_id), request_id=request_id)
 
         return await self._repo.get(session, booking_id)

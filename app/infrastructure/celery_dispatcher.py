@@ -6,14 +6,16 @@ Concrete tasks are imported lazily inside each method to avoid import cycles at 
 
 
 class CeleryTaskDispatcher:
-    def dispatch_provision(self, booking_id: str, image_id: str, hw_config_id: str) -> None:
+    def dispatch_provision(
+        self, booking_id: str, image_id: str, hw_config_id: str, request_id: str | None = None,
+    ) -> None:
         from app.tasks.provision import provision_vm_task
-        provision_vm_task.delay(booking_id, image_id, hw_config_id)
+        provision_vm_task.delay(booking_id, image_id, hw_config_id, request_id=request_id)
 
-    def dispatch_teardown(self, booking_id: str) -> None:
+    def dispatch_teardown(self, booking_id: str, request_id: str | None = None) -> None:
         from app.tasks.teardown import teardown_vm_task
-        teardown_vm_task.delay(booking_id)
+        teardown_vm_task.delay(booking_id, request_id=request_id)
 
-    def dispatch_teardown_force(self, booking_id: str) -> None:
+    def dispatch_teardown_force(self, booking_id: str, request_id: str | None = None) -> None:
         from app.tasks.teardown import teardown_vm_task
-        teardown_vm_task.delay(booking_id, force=True)
+        teardown_vm_task.delay(booking_id, force=True, request_id=request_id)
