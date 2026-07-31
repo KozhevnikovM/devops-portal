@@ -1,0 +1,16 @@
+# Managed by ansible/deploy.yml (blue-green deploy, #387) — do not edit by hand.
+# Regenerated and re-included every `blue_green: true` deploy, immediately after the newly
+# deployed slot passes its GET /health/ready check. Include this file from your own nginx
+# server block and reference $portal_upstream in your proxy_pass, e.g.:
+#
+#   http {
+#       include /opt/devops-portal/nginx/active_slot.conf;
+#       server {
+#           location / {
+#               proxy_pass http://$portal_upstream;
+#           }
+#       }
+#   }
+#
+# See "Blue-green deployment" in docs/admin-guide.md.
+set $portal_upstream 127.0.0.1:{{ blue_green_inactive_port }};

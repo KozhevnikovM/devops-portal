@@ -209,6 +209,98 @@ docker compose -f docker-compose.prod.yml up -d
 
 The `init` service (runs migrations on startup) and the shared `portal_static` volume behave the same in both files.
 
+`docker-compose.prod.yml`'s app tier is actually two services, `app_blue` and `app_green`
+(identical apart from name, host port, and an `APP_SLOT` env var) — see "Blue-green deployment"
+below for what that's for. A plain `docker compose -f docker-compose.prod.yml up -d` brings up
+both; the Ansible playbook (next section) is what normally chooses which one(s) to run.
+
+---
+
+## Blue-green deployment
+
+By default, `ansible/deploy.yml` deploys a single app-tier slot (`app_blue`) and recreates it
+in place — the same behavior as before this feature existed. Set **`blue_green: true`** (an
+Ansible extra-var or `group_vars` entry) to switch to a health-gated blue-green cutover instead:
+the new version is built and started on the *other* slot, health-checked for real, and only then
+does live traffic move over — the old slot keeps serving until the new one has proven itself.
+
+### What `blue_green: true` does
+
+1. Reads `{{ deploy_dir }}/active_slot` on the target host to find the currently-live slot
+   (defaults to `blue` if the file doesn't exist yet — i.e. first-ever blue-green deploy).
+2. Builds and starts the **inactive** slot's `app_<slot>` service only (plus `init`, since
+   migrations always need to run first) — the active slot's container is never touched.
+3. Polls the inactive slot's own port at `GET /health/ready` (Postgres + Redis dependency
+   checks, not just liveness) until it returns 200, bounded by `blue_green_health_timeout`
+   (default 120s). **If it times out, the playbook fails the run** — live traffic never moves,
+   the old slot keeps serving, and the half-started new slot is left running for you to inspect.
+4. Writes the new `active_slot` marker and renders `{{ deploy_dir }}/nginx/active_slot.conf`
+   (a one-line `set $portal_upstream 127.0.0.1:<port>;`) — see the nginx integration point below.
+5. Gracefully drains and restarts `worker`/`beat`: `docker compose stop -t
+   {{ blue_green_worker_drain_timeout }} worker beat` (default 300s grace period, long enough for
+   an in-flight Terraform apply/Ansible run to finish) followed by `docker compose up -d worker
+   beat`. This is a brief gap in *task processing*, not in traffic — already-`PROVISIONING`/
+   `RELEASING` bookings just wait a bit longer, and the startup-recovery logic re-dispatches
+   anything that got killed mid-run as a safety net.
+6. Stops (does not remove) the now-idle previous slot's container, so a rollback needs no rebuild.
+
+A successful blue-green deploy leaves **two** app containers running (one live, one idle-but-warm)
+— expect roughly double the app-tier memory footprint during the bake window.
+
+### Required nginx integration point
+
+This playbook does **not** manage nginx for you by default (`blue_green_manage_nginx: false`) —
+many deployments run nginx outside Ansible's control, per "Running behind an HTTPS reverse proxy"
+below. When `blue_green_manage_nginx` is left `false`, the playbook prints a `debug` message
+telling you the new active port so you can update/reload nginx by hand; set it to `true` only if
+this playbook already owns your host's `nginx` service, and it will run
+`systemctl reload nginx` for you after writing the new `active_slot.conf`.
+
+Either way, your own nginx config needs to `include` the generated file and reference its
+variable in `proxy_pass`, e.g. (adapting the subdomain example above):
+
+```nginx
+# /etc/nginx/conf.d/dp.conf
+include /opt/devops-portal/nginx/active_slot.conf;   # defines $portal_upstream
+
+server {
+    listen 443 ssl;
+    server_name dp.my-domain.com;
+    ...
+    location / {
+        proxy_pass http://$portal_upstream;   # instead of a hard-coded host:port
+        ...
+    }
+}
+```
+
+`active_slot.conf` is templated from `ansible/templates/active_slot.conf.j2` and rewritten (then
+nginx reloaded, not restarted, so no listening socket is ever dropped) on every successful
+blue-green deploy. If your nginx doesn't yet include this file, the feature is simply inert for
+you — no breaking change to the reverse-proxy setups already documented below.
+
+### Migration compatibility (required)
+
+Because Postgres is shared and unversioned per-slot, **any Alembic migration shipped as part of a
+blue-green deploy must be additive/backward-compatible** for the (short) window both the old and
+new app code could be running against the already-migrated schema: add nullable columns, don't
+drop or rename columns/tables, don't tighten a constraint an old row wouldn't satisfy. This is the
+standard expand/contract discipline blue-green deployments require against a shared database — see
+"Database Migrations" below, and note this is the same kind of process discipline as "never edit
+an applied migration." It is **not enforced by tooling** in this pass (no migration linter, no
+CI) — it's on the person shipping the migration to keep it additive.
+
+### Manual rollback
+
+Rollback after a bad cutover is a manual runbook step (not automated):
+
+1. Edit `{{ deploy_dir }}/nginx/active_slot.conf` back to the previous slot's port
+   (`127.0.0.1:{{ blue_green_app_blue_port }}` or `..._green_port`, defaults 8001/8002).
+2. Reload nginx (`systemctl reload nginx`, or your own mechanism if `blue_green_manage_nginx` is
+   false).
+3. If the previous slot's container was stopped, start it back up:
+   `docker compose start app_blue` (or `app_green`) — no rebuild needed, it was left in place.
+
 ---
 
 ## Running behind an HTTPS reverse proxy
@@ -1420,6 +1512,11 @@ docker compose run --rm init alembic revision --autogenerate -m "describe_change
 ```
 
 Always commit the generated migration file alongside the model change.
+
+> **Blue-green deploys (`blue_green: true`)** briefly run two app versions against this same,
+> already-migrated schema. Any migration shipped in that deploy must be additive/backward
+> compatible (nullable adds only, no drops/renames, no tightened constraints) — see "Migration
+> compatibility" under "Blue-green deployment" above.
 
 ---
 

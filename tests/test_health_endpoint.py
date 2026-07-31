@@ -27,6 +27,26 @@ def test_health_requires_no_auth():
     assert resp.status_code == 200
 
 
+# ── GET /health "slot" field (#387 blue-green) ────────────────────────────────
+
+def test_health_includes_slot_when_app_slot_set():
+    with patch("app.main.settings.APP_SLOT", "blue"):
+        resp = _client().get("/health")
+
+    assert resp.status_code == 200
+    assert resp.json() == {"status": "ok", "slot": "blue"}
+
+
+def test_health_omits_slot_when_app_slot_unset():
+    with patch("app.main.settings.APP_SLOT", ""):
+        resp = _client().get("/health")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body == {"status": "ok"}
+    assert "slot" not in body
+
+
 # ── GET /health/ready (#371 F-4) ──────────────────────────────────────────────
 
 def _mock_session_ctx():

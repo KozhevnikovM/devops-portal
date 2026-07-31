@@ -15,6 +15,11 @@ class Settings(BaseSettings):
     # root_path so the generated docs/OpenAPI URLs carry the prefix.
     ROOT_PATH: str = ""
 
+    # Which blue-green slot this process is running as ("blue" / "green"), purely informational.
+    # Set via the APP_SLOT env var in docker-compose.prod.yml's app_blue/app_green services.
+    # Empty = not running under blue-green (e.g. dev compose). Surfaced read-only on GET /health.
+    APP_SLOT: str = ""
+
     # Auth
     ADMIN_USERNAME: str = "admin"
     ADMIN_PASSWORD: str = ""
