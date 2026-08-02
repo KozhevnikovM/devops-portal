@@ -178,7 +178,10 @@ app.openapi = _custom_openapi
 
 @app.get("/health", tags=["platform"], summary="Liveness probe")
 async def health():
-    return {"status": "ok"}
+    body = {"status": "ok"}
+    if settings.APP_SLOT:
+        body["slot"] = settings.APP_SLOT
+    return body
 
 
 _HEALTH_CHECK_TIMEOUT = 2  # seconds

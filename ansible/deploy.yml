@@ -83,6 +83,49 @@
     # registry's TLS. Not secret, but typically kept with the deploy config.
     npm_ca_cert: ""
 
+    # ── Blue-green app-tier deploys (#387) ──────────────────────────────────────
+    # Opt-in, default false. docker-compose.prod.yml's `app` service is now two services,
+    # app_blue/app_green (see that file's header comment) — that split happens unconditionally
+    # for everyone, but which service(s) this playbook actually starts is gated on `blue_green`
+    # below, so a deploy that doesn't opt in still only ever runs app_blue, never app_green, and
+    # sees byte-for-byte the same behavior as before the split.
+    blue_green: false
+
+    # Seconds to wait for the newly-deployed (inactive) slot's GET /health/ready to return 200
+    # before giving up and failing the play without touching live traffic.
+    blue_green_health_timeout: 120
+
+    # Seconds of grace period given to worker/beat on `docker compose stop` during the drain step
+    # (long enough for an in-flight terraform apply/Ansible run to finish rather than being killed
+    # mid-task — see #374/#376).
+    blue_green_worker_drain_timeout: 300
+
+    # Whether this playbook is allowed to reload the host's `nginx` service itself. Many real
+    # deployments run nginx outside this playbook's control (see docs/admin-guide.md's "Running
+    # behind an HTTPS reverse proxy" — nginx config is hand-written by the admin there). Default
+    # false: the playbook only writes the active_slot.conf include and tells the operator what
+    # port to point at; it never assumes ownership of a service it didn't install.
+    blue_green_manage_nginx: false
+
+    # Host ports for each slot — must match docker-compose.prod.yml's APP_BLUE_PORT/APP_GREEN_PORT
+    # defaults. Override here (or per-host) if you've overridden those in your rendered .env.
+    blue_green_app_blue_port: 8001
+    blue_green_app_green_port: 8002
+
+    # The service set that makes up a *non*-blue-green ("single slot") deploy: every service in
+    # docker-compose.prod.yml except app_green. The default (blue_green: false) build/restart
+    # tasks below are explicitly scoped to this list — without that scoping, a plain `docker
+    # compose up` against the post-#387 compose file would start app_green too, which would be a
+    # silent, un-opted-in behavior change (and double the app-tier footprint) for every existing
+    # deploy. Scoping it here is what keeps `blue_green: false` truly byte-for-byte unchanged.
+    blue_green_single_slot_services:
+      - postgres
+      - redis
+      - init
+      - app_blue
+      - worker
+      - beat
+
   handlers:
     - name: Restart portal stack
       community.docker.docker_compose_v2:
@@ -90,7 +133,16 @@
         files: [docker-compose.prod.yml]
         build: always
         state: restarted
+        # See blue_green_single_slot_services above: this handler predates #387 and exists purely
+        # to force a recreate when code/.env changed but the image didn't. Scoping it keeps a
+        # non-opted-in deploy's restart-on-change behavior identical to before the app/app_blue
+        # split (never touches app_green). It's skipped entirely in blue_green: true mode (see
+        # `when` below) — the dedicated blue-green task block further down is what performs the
+        # actual (health-gated, one-slot-at-a-time) rebuild there, and letting this handler also
+        # fire would race with that sequence and potentially recreate the wrong slot.
+        services: "{{ blue_green_single_slot_services }}"
       become_user: "{{ deploy_user }}"
+      when: not (blue_green | bool)
 
   tasks:
     - name: Install Docker engine and compose plugin
@@ -193,16 +245,199 @@
       notify: Restart portal stack
 
     # ── Bring the stack up (build images, run init/migrations, start services) ─
+    # This task only runs when blue_green is false (the default) — see the dedicated blue-green
+    # block below for the blue_green: true path. Scoped to blue_green_single_slot_services so a
+    # non-opted-in deploy only ever brings up app_blue (never app_green): see the comment on that
+    # var above for why this scoping is required now that the compose file's `app` service is
+    # split in two.
     - name: Build and start the portal stack
       community.docker.docker_compose_v2:
         project_src: "{{ deploy_dir }}"
         files: [docker-compose.prod.yml]
+        services: "{{ blue_green_single_slot_services }}"
         build: always
         state: present
         wait: true
       become_user: "{{ deploy_user }}"
       register: compose_up
+      when: not (blue_green | bool)
 
     - name: Show running services
       ansible.builtin.debug:
         var: compose_up.containers
+      when: not (blue_green | bool)
+
+    # ── Blue-green cutover (#387) ────────────────────────────────────────────
+    # Entirely skipped (block-level `when`) unless blue_green: true — the whole sequence below
+    # has zero effect on a default run.
+    - name: Blue-green cutover sequence
+      when: blue_green | bool
+      block:
+        - name: "[blue-green] Check for an existing active_slot marker"
+          ansible.builtin.stat:
+            path: "{{ deploy_dir }}/active_slot"
+          register: blue_green_marker_stat
+
+        - name: "[blue-green] Read the active_slot marker, if present"
+          ansible.builtin.slurp:
+            src: "{{ deploy_dir }}/active_slot"
+          register: blue_green_marker_raw
+          when: blue_green_marker_stat.stat.exists
+
+        - name: "[blue-green] Determine the currently-active slot (defaults to blue on first run)"
+          ansible.builtin.set_fact:
+            blue_green_active_slot: >-
+              {{ (blue_green_marker_raw.content | b64decode | trim)
+                 if blue_green_marker_stat.stat.exists else 'blue' }}
+
+        - name: "[blue-green] Compute the inactive slot (today's deploy target)"
+          ansible.builtin.set_fact:
+            blue_green_inactive_slot: "{{ 'green' if blue_green_active_slot == 'blue' else 'blue' }}"
+
+        - name: "[blue-green] Resolve the inactive slot's service name and host port"
+          ansible.builtin.set_fact:
+            blue_green_inactive_service: "app_{{ blue_green_inactive_slot }}"
+            blue_green_active_service: "app_{{ blue_green_active_slot }}"
+            blue_green_inactive_port: >-
+              {{ blue_green_app_blue_port if blue_green_inactive_slot == 'blue'
+                 else blue_green_app_green_port }}
+
+        - name: "[blue-green] Run migrations (init) before starting the inactive slot"
+          community.docker.docker_compose_v2:
+            project_src: "{{ deploy_dir }}"
+            files: [docker-compose.prod.yml]
+            services: [init]
+            build: always
+            state: present
+            wait: true
+          become_user: "{{ deploy_user }}"
+
+        - name: "[blue-green] Build and start the inactive slot only"
+          community.docker.docker_compose_v2:
+            project_src: "{{ deploy_dir }}"
+            files: [docker-compose.prod.yml]
+            services: ["{{ blue_green_inactive_service }}"]
+            build: always
+            state: present
+            # docker_compose_v2 has no literal --no-deps flag; `dependencies: false` is its
+            # equivalent here — it stops this call from also starting/recreating this service's
+            # depends_on links (init, redis). init was just handled explicitly above and
+            # redis/postgres are already running from the active slot, so this guarantees the
+            # call touches *only* the inactive slot's own container — critically, it never comes
+            # near the active slot's app_<slot> service, which must keep serving untouched.
+            dependencies: false
+            wait: true
+          become_user: "{{ deploy_user }}"
+
+        - name: "[blue-green] Poll the inactive slot's readiness endpoint"
+          # status_code includes 503 so a "not ready yet" response doesn't fail the module before
+          # the retry loop gets a chance to run; ignore_errors additionally absorbs connection
+          # refused/reset while the container is still starting. The `until` condition is what
+          # actually decides success — bounded by blue_green_health_timeout via retries * delay.
+          ansible.builtin.uri:
+            url: "http://localhost:{{ blue_green_inactive_port }}/health/ready"
+            status_code: [200, 503]
+            timeout: 5
+          register: blue_green_health
+          until: (blue_green_health.status | default(0)) == 200
+          retries: "{{ (blue_green_health_timeout | int) // 5 }}"
+          delay: 5
+          ignore_errors: true
+
+        - name: "[blue-green] Fail the deploy if the inactive slot never became ready"
+          ansible.builtin.fail:
+            msg: >-
+              Blue-green deploy aborted: {{ blue_green_inactive_service }} did not report ready at
+              http://localhost:{{ blue_green_inactive_port }}/health/ready within
+              {{ blue_green_health_timeout }}s. The active slot ({{ blue_green_active_service }})
+              was never touched and is still serving all traffic — nothing has been cut over. The
+              half-started {{ blue_green_inactive_service }} container has been left running for
+              you to inspect; tear it down manually
+              (`docker compose -f docker-compose.prod.yml stop {{ blue_green_inactive_service }}`)
+              once you've diagnosed the failure.
+          when: (blue_green_health.status | default(0)) != 200
+
+        - name: "[blue-green] Record the newly active slot"
+          ansible.builtin.copy:
+            content: "{{ blue_green_inactive_slot }}"
+            dest: "{{ deploy_dir }}/active_slot"
+            owner: "{{ deploy_user }}"
+            group: "{{ deploy_group }}"
+            mode: "0644"
+
+        - name: "[blue-green] Ensure the nginx include directory exists"
+          ansible.builtin.file:
+            path: "{{ deploy_dir }}/nginx"
+            state: directory
+            owner: "{{ deploy_user }}"
+            group: "{{ deploy_group }}"
+            mode: "0755"
+
+        - name: "[blue-green] Render the nginx active-slot upstream include"
+          ansible.builtin.template:
+            src: templates/active_slot.conf.j2
+            dest: "{{ deploy_dir }}/nginx/active_slot.conf"
+            owner: "{{ deploy_user }}"
+            group: "{{ deploy_group }}"
+            mode: "0644"
+
+        - name: "[blue-green] Reload nginx to pick up the new active slot"
+          # Only when this playbook has been told it owns the host's nginx service (default
+          # false) — see blue_green_manage_nginx above. Many real deployments manage nginx
+          # entirely outside Ansible, so we never assume we're allowed to touch it.
+          ansible.builtin.service:
+            name: nginx
+            state: reloaded
+          when: blue_green_manage_nginx | bool
+
+        - name: "[blue-green] Tell the operator to update nginx manually"
+          ansible.builtin.debug:
+            msg: >-
+              blue_green_manage_nginx is false (default) — this playbook does not manage your
+              nginx service. {{ deploy_dir }}/nginx/active_slot.conf has been updated to point at
+              127.0.0.1:{{ blue_green_inactive_port }} ({{ blue_green_inactive_service }}); make
+              sure your nginx config includes that file and reference $portal_upstream in
+              proxy_pass (see "Blue-green deployment" in docs/admin-guide.md), then reload nginx
+              yourself.
+          when: not (blue_green_manage_nginx | bool)
+
+        - name: "[blue-green] Gracefully drain worker/beat (stop with a grace period)"
+          # docker_compose_v2's `timeout` option maps directly to `docker compose stop -t <secs>`
+          # ("Timeout in seconds for container shutdown when ... already running") — that's the
+          # actual mechanism honoring blue_green_worker_drain_timeout, not just a documented
+          # intention. state: stopped == `docker compose stop` (containers kept, not removed).
+          community.docker.docker_compose_v2:
+            project_src: "{{ deploy_dir }}"
+            files: [docker-compose.prod.yml]
+            services: [worker, beat]
+            state: stopped
+            timeout: "{{ blue_green_worker_drain_timeout }}"
+          become_user: "{{ deploy_user }}"
+
+        - name: "[blue-green] Restart worker/beat on the new image"
+          community.docker.docker_compose_v2:
+            project_src: "{{ deploy_dir }}"
+            files: [docker-compose.prod.yml]
+            services: [worker, beat]
+            build: always
+            state: present
+            dependencies: false
+            wait: true
+          become_user: "{{ deploy_user }}"
+
+        - name: "[blue-green] Stop (do not remove) the now-idle previous slot"
+          community.docker.docker_compose_v2:
+            project_src: "{{ deploy_dir }}"
+            files: [docker-compose.prod.yml]
+            services: ["{{ blue_green_active_service }}"]
+            state: stopped
+          become_user: "{{ deploy_user }}"
+
+        - name: "[blue-green] Show the result of the cutover"
+          ansible.builtin.debug:
+            msg: >-
+              Blue-green deploy complete: {{ blue_green_inactive_service }} is now active on port
+              {{ blue_green_inactive_port }}. {{ blue_green_active_service }} (previous active
+              slot) has been stopped but not removed — start it again
+              (`docker compose -f docker-compose.prod.yml start {{ blue_green_active_service }}`)
+              for an instant manual rollback alongside flipping active_slot.conf back.

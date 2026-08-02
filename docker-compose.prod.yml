@@ -6,6 +6,12 @@
 #   - beat:   no .:/app bind-mount
 #   - app / worker / beat: restart: unless-stopped
 #   - postgres / redis: ports not exposed to the host
+#
+# Blue-green app tier (#387): the single `app` service is split into app_blue/app_green —
+# identical services apart from name, host port, and the APP_SLOT env var (surfaced read-only on
+# GET /health). ansible/deploy.yml defaults to using only app_blue (opt-in `blue_green: true`
+# switches on the full blue-green cutover sequence). See docs/admin-guide.md's "Blue-green
+# deployment" section and docs/features/blue-green-deployment.md.
 
 services:
   postgres:
@@ -65,7 +71,7 @@ services:
         condition: service_healthy
     restart: "no"
 
-  app:
+  app_blue:
     build:
       context: .
       secrets:
@@ -89,8 +95,54 @@ services:
         APT_REPO_USER: ${APT_REPO_USER:-token}
         ANSIBLE_COLLECTIONS_REQUIREMENTS: ${ANSIBLE_COLLECTIONS_REQUIREMENTS:-ansible/requirements.yml}
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers ${APP_WORKERS:-2}
+    environment:
+      APP_SLOT: blue
     ports:
-      - "8000:8000"
+      - "${APP_BLUE_PORT:-8001}:8000"
+    env_file: .env
+    volumes:
+      - portal_static:/app/app/static
+    depends_on:
+      init:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+
+  app_green:
+    build:
+      context: .
+      secrets:
+        - npm_token
+        - npm_ca
+        - apt_password
+      args:
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-}
+        PIP_TRUSTED_HOST: ${PIP_TRUSTED_HOST:-}
+        NPM_REGISTRY: ${NPM_REGISTRY:-}
+        TERRAFORM_IMAGE: ${TERRAFORM_IMAGE:-hashicorp/terraform:1.9}
+        NODE_IMAGE: ${NODE_IMAGE:-node:20-slim}
+        PYTHON_IMAGE: ${PYTHON_IMAGE:-python:3.11-slim}
+        PORTAL_UID: ${PORTAL_UID:-1000}
+        PORTAL_GID: ${PORTAL_GID:-1000}
+        APT_MIRROR: ${APT_MIRROR:-}
+        APT_SECURITY_MIRROR: ${APT_SECURITY_MIRROR:-}
+        APT_SUITE: ${APT_SUITE:-}
+        APT_COMPONENTS: ${APT_COMPONENTS:-main contrib}
+        APT_REPO_HOST: ${APT_REPO_HOST:-}
+        APT_REPO_USER: ${APT_REPO_USER:-token}
+        ANSIBLE_COLLECTIONS_REQUIREMENTS: ${ANSIBLE_COLLECTIONS_REQUIREMENTS:-ansible/requirements.yml}
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers ${APP_WORKERS:-2}
+    environment:
+      APP_SLOT: green
+    ports:
+      - "${APP_GREEN_PORT:-8002}:8000"
     env_file: .env
     volumes:
       - portal_static:/app/app/static
