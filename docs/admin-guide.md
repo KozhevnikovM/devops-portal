@@ -316,20 +316,11 @@ session cookie is only sent over HTTPS, and forward `X-Forwarded-Proto`.
 > **`GET /events/stream` needs unbuffered, long-lived proxying.** This endpoint (v0.14.0) pushes
 > live booking/environment row updates over Server-Sent Events — one connection held open per
 > open browser tab. By default nginx buffers proxied responses and applies its normal
-> `proxy_read_timeout` (60s), so without the settings below events arrive in bursts instead of
-> immediately, and the connection gets killed and silently reopened every minute:
-> ```nginx
-> location /events/stream {
->     proxy_pass http://MY_LOCAL_IP:8000;
->     proxy_http_version 1.1;
->     proxy_set_header Connection '';
->     proxy_buffering off;
->     proxy_read_timeout 1h;
-> }
-> ```
-> Add this `location` block (adjusted to whichever `proxy_pass` target your setup uses) alongside
-> the ones below. Nothing breaks without it — the row templates keep a 60s fallback poll — updates
-> just arrive up to a minute late and the browser reconnects every `proxy_read_timeout`.
+> `proxy_read_timeout` (60s), so without `proxy_buffering off` and a longer `proxy_read_timeout`
+> events arrive in bursts instead of immediately, and the connection gets killed and silently
+> reopened every minute. Nothing breaks without it — the row templates keep a 60s fallback poll —
+> updates just arrive up to a minute late and the browser reconnects constantly. Both configs below
+> include the required `location` block already.
 
 ### Option A — subdomain (recommended)
 
@@ -359,6 +350,23 @@ server {
         proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_set_header X-Forwarded-Host  $host;
+    }
+
+    # More specific than location / — nginx matches the longest prefix, so this wins for
+    # /events/stream regardless of where it's declared in the file.
+    location /events/stream {
+        proxy_pass http://MY_LOCAL_IP:8000;
+        proxy_http_version 1.1;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Host  $host;
+
+        # SSE: don't buffer or time out a deliberately long-held connection.
+        proxy_set_header Connection '';
+        proxy_buffering off;
+        proxy_read_timeout 1h;
     }
 }
 ```
@@ -410,6 +418,27 @@ location /dp/ {
     # 3) Swagger UI (/dp/docs) fetches the OpenAPI schema from a root-absolute URL; rewrite it
     #    so the browser requests /dp/openapi.json (stripped back to /openapi.json above).
     sub_filter "url: '/openapi.json'" "url: '/dp/openapi.json'";
+
+    # 4) index.html/environments.html connect to SSE via a root-absolute attribute too.
+    sub_filter 'sse-connect="/events/stream"' 'sse-connect="/dp/events/stream"';
+}
+
+# More specific than location /dp/ — nginx matches the longest prefix, so this wins for
+# /dp/events/stream regardless of where it's declared in the file. A separate location because
+# it needs different proxy_buffering/proxy_read_timeout settings than the rest of the app.
+location /dp/events/stream {
+    proxy_pass http://MY_LOCAL_IP:8000/events/stream;   # strips /dp, same as location /dp/ above
+    proxy_http_version 1.1;
+
+    proxy_set_header Host              $host;
+    proxy_set_header X-Real-IP         $remote_addr;
+    proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+
+    # SSE: don't buffer or time out a deliberately long-held connection.
+    proxy_set_header Connection '';
+    proxy_buffering off;
+    proxy_read_timeout 1h;
 }
 ```
 
@@ -429,14 +458,24 @@ location /dp/ {
     proxy_pass http://MY_LOCAL_IP:8000;   # NO trailing slash — forwards /dp/... unchanged
     # ... same proxy_set_header lines as above ...
     # still need the sub_filter rules, because the templates emit root-absolute URLs
+    # (including rule 4 above, for sse-connect="/events/stream")
+}
+
+location /dp/events/stream {
+    proxy_pass http://MY_LOCAL_IP:8000;   # NO trailing slash — forwards /dp/events/stream unchanged
+    # ... same proxy_set_header lines as above ...
+
+    proxy_set_header Connection '';
+    proxy_buffering off;
+    proxy_read_timeout 1h;
 }
 ```
 
 With `ROOT_PATH=/dp` the app serves under `/dp` natively: `/dp/static/...` and `/dp/openapi.json`
 resolve directly and the docs page needs no special `sub_filter`. You still need the `sub_filter`
 rules that rewrite the *templates'* root-absolute links (`/static`, `/auth`, …) to `/dp/...`,
-since those are hard-coded in the HTML. Pick **one** approach — stripping **or** `ROOT_PATH` — never
-both, or static assets will 404.
+since those are hard-coded in the HTML — including the `sse-connect` rule. Pick **one** approach —
+stripping **or** `ROOT_PATH` — never both, or static assets will 404.
 
 ---
 
