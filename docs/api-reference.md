@@ -842,10 +842,37 @@ curl -s http://localhost:8000/api/bookings/<booking-id>/audit \
 
 ### `GET /bookings/{booking_id}/row`
 
-Returns an HTML fragment for a single booking row. Used by **HTMX polling in the browser** — this
-is a presentation route, not part of the JSON API (and is omitted from `/docs`).
+Returns an HTML fragment for a single booking row. Used by **HTMX polling in the browser** (now a
+60s fallback — see `GET /events/stream` below for the primary live-update path) — this is a
+presentation route, not part of the JSON API (and is omitted from `/docs`).
 
 **Auth:** the booking **owner** or an **admin**. A non-owner gets `403`; an unknown id gets `404`.
+
+---
+
+### `GET /events/stream`
+
+Server-Sent Events stream (`text/event-stream`) pushing live updates for booking and environment
+rows — replaces most of the 3s HTMX polling `index.html`/`environments.html` used to do, cutting
+sustained request volume down to one held-open connection per open browser tab. One connection
+serves every row on the page; `index.html`/`environments.html` connect once via
+`hx-ext="sse" sse-connect="/events/stream"` on the table body.
+
+Each event is named `booking-{id}` or `environment-{id}` and carries the same HTML
+`GET /bookings/{id}/row` / `GET /environments/{id}/row` would return; the row's `sse-swap`
+attribute picks up the matching event and swaps itself in, same as an HTMX poll would. A row a
+connected user isn't authorized to see (not the owner/creating dispatcher/admin) is never rendered
+onto their connection — the same `can_manage()` check the polling row endpoints already enforce,
+applied per-connection per-event.
+
+Delivery is via Redis pub/sub, which has no replay guarantee — a message published while
+disconnected (a dropped connection, a Redis restart) is lost. Each row keeps a much slower 60s
+fallback poll (`GET /bookings/{id}/row` / `GET /environments/{id}/row`) as the safety net, so a
+missed push is never more than a minute stale.
+
+**Auth:** any authenticated user (`require_user`); authorization is enforced per-row, per-event,
+not at connection time. Presentation route (omitted from `/docs`). Behind a reverse proxy, see
+"`GET /events/stream` needs unbuffered, long-lived proxying" in `docs/admin-guide.md`.
 
 ---
 

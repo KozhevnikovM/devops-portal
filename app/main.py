@@ -24,6 +24,7 @@ from app.presentation.routes.api import router as api_router
 from app.presentation.routes.api_bookings import router as api_bookings_router
 from app.presentation.routes.api_environments import router as api_environments_router
 from app.presentation.routes.environments import router as environments_router
+from app.presentation.routes.events import router as events_router
 from app.tasks.provision import provision_vm_task
 from app.tasks.teardown import teardown_vm_task
 
@@ -147,6 +148,7 @@ app.include_router(api_router, prefix="/api/v1")
 app.include_router(api_bookings_router, prefix="/api/v1")
 app.include_router(api_environments_router, prefix="/api/v1")
 app.include_router(environments_router)
+app.include_router(events_router)
 
 # Keep the OpenAPI schema (/docs) to the JSON API surface: hide the HTML/HTMX page and
 # fragment routes, which all declare response_class=HTMLResponse. get_openapi() skips routes

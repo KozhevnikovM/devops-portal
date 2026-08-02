@@ -65,7 +65,7 @@
                         <th class="text-left px-4 py-3">Actions</th>
                     </tr>
                 </thead>
-                <tbody id="bookings-list">
+                <tbody id="bookings-list" hx-ext="sse" sse-connect="/events/stream">
                     {% for booking in bookings %}
                         {% set is_first_row = loop.first %}
                         {% include "partials/booking_row.html" %}

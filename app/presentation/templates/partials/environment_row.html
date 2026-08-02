@@ -7,8 +7,9 @@
     id="environment-{{ environment.id }}"
     class="border-b border-gray-800 last:border-0 align-top hover:bg-gray-800/40 transition-colors"
     {% if not is_terminal %}
+        sse-swap="environment-{{ environment.id }}"
         hx-get="/environments/{{ environment.id }}/row"
-        hx-trigger="every 3s"
+        hx-trigger="every 60s"
         hx-swap="outerHTML"
     {% endif %}
 >

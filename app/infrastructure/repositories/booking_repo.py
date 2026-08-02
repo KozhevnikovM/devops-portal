@@ -17,6 +17,7 @@ from app.domain.resource_details import (
 from app.infrastructure.database.models import (
     BookingAuditModel, BookingModel, NamespaceModel, StaticVMModel, UserModel,
 )
+from app.infrastructure.events import apublish_row_changed, publish_row_changed
 
 # Second alias of users to resolve created_by (the dispatcher) → username, distinct from the
 # owner join on user_id.
@@ -313,6 +314,9 @@ class BookingRepository:
             extra={"vm_ip": vm_ip} if vm_ip is not None else None,
         ))
         await session.commit()
+        await apublish_row_changed(
+            booking_id=booking_id, environment_id=getattr(model, "environment_id", None),
+        )
 
     async def list_all(
         self,
@@ -394,6 +398,9 @@ class BookingRepository:
             extra={"extend_minutes": extend_minutes},
         ))
         await session.commit()
+        await apublish_row_changed(
+            booking_id=booking_id, environment_id=getattr(model, "environment_id", None),
+        )
 
     async def update_label(
         self, session: AsyncSession, booking_id: UUID, label: str | None, actor_id: str,
@@ -411,6 +418,9 @@ class BookingRepository:
             extra={"old_label": old_label, "new_label": label},
         ))
         await session.commit()
+        await apublish_row_changed(
+            booking_id=booking_id, environment_id=getattr(model, "environment_id", None),
+        )
 
     async def get_live_standalone_namespace_booking(
         self, session: AsyncSession, user_id: str, namespace_id: UUID
@@ -470,6 +480,9 @@ class BookingRepository:
         _assign_resource_and_ready(session, booking, resource_type, resource)
         await session.commit()
         await session.refresh(booking)
+        await apublish_row_changed(
+            booking_id=booking.id, environment_id=getattr(booking, "environment_id", None),
+        )
         return _to_entity(booking)
 
     async def queue_position(self, session: AsyncSession, resource_type: str, created_at: datetime) -> int:
@@ -519,6 +532,9 @@ class BookingRepository:
             extra={"vm_ip": vm_ip} if vm_ip is not None else None,
         ))
         session.commit()
+        publish_row_changed(
+            booking_id=booking_id, environment_id=getattr(model, "environment_id", None),
+        )
 
     def sync_set_status_message(
         self, session: Session, booking_id: UUID, message: str | None
@@ -528,6 +544,9 @@ class BookingRepository:
             raise BookingNotFoundError(booking_id)
         model.status_message = message
         session.commit()
+        publish_row_changed(
+            booking_id=booking_id, environment_id=getattr(model, "environment_id", None),
+        )
 
     def sync_record_progress(self, session: Session, booking_id: UUID, message: str) -> None:
         """Set the compact status_message (unchanged) and append to the capped provisioning_log,
@@ -539,6 +558,9 @@ class BookingRepository:
         combined = (model.provisioning_log or "") + message + "\n"
         model.provisioning_log = combined[-50_000:]
         session.commit()
+        publish_row_changed(
+            booking_id=booking_id, environment_id=getattr(model, "environment_id", None),
+        )
 
     def sync_list_expired(self, session: Session) -> list[Booking]:
         """Return READY standalone bookings whose expires_at is in the past.
@@ -605,4 +627,7 @@ class BookingRepository:
             return None
         _assign_resource_and_ready(session, booking, resource_type, resource)
         session.commit()
+        publish_row_changed(
+            booking_id=booking.id, environment_id=getattr(booking, "environment_id", None),
+        )
         return _to_entity(booking)
