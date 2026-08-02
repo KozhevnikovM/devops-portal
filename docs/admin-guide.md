@@ -313,6 +313,24 @@ session cookie is only sent over HTTPS, and forward `X-Forwarded-Proto`.
 > otherwise the browser drops the `Secure` session cookie and login silently loops back to the
 > login page.
 
+> **`GET /events/stream` needs unbuffered, long-lived proxying.** This endpoint (v0.14.0) pushes
+> live booking/environment row updates over Server-Sent Events — one connection held open per
+> open browser tab. By default nginx buffers proxied responses and applies its normal
+> `proxy_read_timeout` (60s), so without the settings below events arrive in bursts instead of
+> immediately, and the connection gets killed and silently reopened every minute:
+> ```nginx
+> location /events/stream {
+>     proxy_pass http://MY_LOCAL_IP:8000;
+>     proxy_http_version 1.1;
+>     proxy_set_header Connection '';
+>     proxy_buffering off;
+>     proxy_read_timeout 1h;
+> }
+> ```
+> Add this `location` block (adjusted to whichever `proxy_pass` target your setup uses) alongside
+> the ones below. Nothing breaks without it — the row templates keep a 60s fallback poll — updates
+> just arrive up to a minute late and the browser reconnects every `proxy_read_timeout`.
+
 ### Option A — subdomain (recommended)
 
 Serving the portal at its **own host** (e.g. `https://dp.my-domain.com`) needs **no app changes** —

@@ -63,7 +63,7 @@
                         <th class="px-4 py-2 text-xs text-gray-500 font-normal uppercase tracking-widest">Actions</th>
                     </tr>
                 </thead>
-                <tbody id="environments-tbody">
+                <tbody id="environments-tbody" hx-ext="sse" sse-connect="/events/stream">
                     {% for environment in environments %}
                     {% set is_first_row = loop.first %}
                     {% include "partials/environment_row.html" %}
@@ -72,7 +72,7 @@
             </table>
             {% else %}
             <table class="w-full text-sm">
-                <tbody id="environments-tbody"></tbody>
+                <tbody id="environments-tbody" hx-ext="sse" sse-connect="/events/stream"></tbody>
             </table>
             <p class="text-gray-600 text-sm px-4 py-6">No environments yet — order one above.</p>
             {% endif %}

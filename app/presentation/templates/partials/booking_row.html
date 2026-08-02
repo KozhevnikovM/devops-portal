@@ -3,8 +3,9 @@
     id="booking-{{ booking.id }}"
     class="border-b border-gray-800 last:border-0 hover:bg-gray-800/40 transition-colors"
     {% if not is_terminal %}
+        sse-swap="booking-{{ booking.id }}"
         hx-get="/bookings/{{ booking.id }}/row"
-        hx-trigger="every 3s [!window._bookingHovered('{{ booking.id }}')]"
+        hx-trigger="every 60s"
         hx-swap="outerHTML"
     {% endif %}
 >
