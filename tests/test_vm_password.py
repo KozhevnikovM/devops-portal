@@ -109,7 +109,8 @@ def test_provision_task_stores_password_on_ready():
 
     mock_session = MagicMock()
     mock_repo = MagicMock()
-    mock_repo.sync_get = MagicMock(return_value=SimpleNamespace(vm_password=None, startup_script=None, config_roles=[]))
+    mock_repo.sync_get = MagicMock(return_value=SimpleNamespace(
+        status=BookingStatus.PENDING, vm_password=None, startup_script=None, config_roles=[]))
     mock_image_repo = MagicMock()
     mock_image_repo.sync_get = MagicMock(return_value=fake_image)
     mock_hw_repo = MagicMock()
@@ -149,7 +150,8 @@ def test_provision_task_password_is_16_alphanumeric():
 
     mock_session = MagicMock()
     mock_repo = MagicMock()
-    mock_repo.sync_get = MagicMock(return_value=SimpleNamespace(vm_password=None, startup_script=None, config_roles=[]))
+    mock_repo.sync_get = MagicMock(return_value=SimpleNamespace(
+        status=BookingStatus.PENDING, vm_password=None, startup_script=None, config_roles=[]))
     mock_image_repo = MagicMock()
     mock_image_repo.sync_get = MagicMock(return_value=fake_image)
     mock_hw_repo = MagicMock()

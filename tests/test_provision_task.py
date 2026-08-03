@@ -57,6 +57,8 @@ def test_provision_task_sets_ready_status():
 
     mock_session = MagicMock()
     mock_repo = MagicMock()
+    # #394: provision_vm_task now only starts from PENDING/RETRY — give the booking a real status.
+    mock_repo.sync_get = MagicMock(return_value=MagicMock(status=BookingStatus.PENDING))
     mock_image_repo = MagicMock()
     mock_image_repo.sync_get = MagicMock(return_value=_make_image(id=image_id))
     mock_hw_repo = MagicMock()
@@ -96,6 +98,8 @@ def test_semaphore_acquired_and_released_on_success():
 
     mock_session = MagicMock()
     mock_repo = MagicMock()
+    # #394: provision_vm_task now only starts from PENDING/RETRY — give the booking a real status.
+    mock_repo.sync_get = MagicMock(return_value=MagicMock(status=BookingStatus.PENDING))
     mock_image_repo = MagicMock()
     mock_image_repo.sync_get = MagicMock(return_value=_make_image())
     mock_hw_repo = MagicMock()
@@ -137,6 +141,8 @@ def test_semaphore_released_on_failure():
 
     mock_session = MagicMock()
     mock_repo = MagicMock()
+    # #394: provision_vm_task now only starts from PENDING/RETRY — give the booking a real status.
+    mock_repo.sync_get = MagicMock(return_value=MagicMock(status=BookingStatus.PENDING))
     mock_image_repo = MagicMock()
     mock_image_repo.sync_get = MagicMock(return_value=_make_image())
     mock_hw_repo = MagicMock()
@@ -169,6 +175,8 @@ def test_provision_task_sets_retry_status_on_failure():
 
     mock_session = MagicMock()
     mock_repo = MagicMock()
+    # #394: provision_vm_task now only starts from PENDING/RETRY — give the booking a real status.
+    mock_repo.sync_get = MagicMock(return_value=MagicMock(status=BookingStatus.PENDING))
     mock_image_repo = MagicMock()
     mock_image_repo.sync_get = MagicMock(return_value=_make_image())
     mock_hw_repo = MagicMock()
@@ -202,6 +210,8 @@ def test_provision_task_failure_logs_with_exc_info(caplog):
 
     mock_session = MagicMock()
     mock_repo = MagicMock()
+    # #394: provision_vm_task now only starts from PENDING/RETRY — give the booking a real status.
+    mock_repo.sync_get = MagicMock(return_value=MagicMock(status=BookingStatus.PENDING))
     mock_image_repo = MagicMock()
     mock_image_repo.sync_get = MagicMock(return_value=_make_image())
     mock_hw_repo = MagicMock()

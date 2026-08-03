@@ -9,6 +9,7 @@ from uuid import uuid4
 
 import pytest
 
+from app.domain.enums import BookingStatus
 from app.infrastructure.config.runner import (
     ConfigScriptError, SshConfigRunner, StubConfigRunner, VmUnreachableError,
 )
@@ -119,7 +120,8 @@ def _provision_in_real_mode(startup_script, *, connect_exc=None, script_exc=None
     """Run provision_vm_task in real mode with a stubbed config runner; return the status calls."""
     bid, iid, hid = str(uuid4()), str(uuid4()), str(uuid4())
     mock_repo = MagicMock()
-    mock_repo.sync_get = MagicMock(return_value=SimpleNamespace(startup_script=startup_script, config_roles=[], vm_password=None))
+    mock_repo.sync_get = MagicMock(return_value=SimpleNamespace(
+        status=BookingStatus.PENDING, startup_script=startup_script, config_roles=[], vm_password=None))
     img = MagicMock(sync_get=MagicMock(return_value=SimpleNamespace(
         id=iid, name="Ubuntu", vapp_template_id="t")))
     hw = MagicMock(sync_get=MagicMock(return_value=SimpleNamespace(
