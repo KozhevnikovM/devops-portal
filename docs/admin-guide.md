@@ -479,6 +479,134 @@ stripping **or** `ROOT_PATH` — never both, or static assets will 404.
 
 ---
 
+## Log aggregation & dashboards (Grafana + Loki)
+
+The `app`/`worker`/`beat` processes emit structured JSON logs to stdout (`request_id` on every
+request-scoped line, `booking_id` on every task line — see #371). `docker-compose.observability.yml`
+is an **optional overlay** that ships those logs to Loki and dashboards them in Grafana — nothing
+about the main services changes if you don't use it, and it adds no application dependency.
+
+Recommended over Elasticsearch for this deployment's scale: Loki indexes only labels (container,
+service), not full log text, so there's no JVM/cluster to run — appropriate for one app's log
+volume. See `docs/features/grafana-loki-log-dashboards.md` for the full reasoning.
+
+### Enabling it
+
+No extra password to set up by default — Grafana's admin password defaults to the portal's own
+`ADMIN_PASSWORD` (one password to remember for both), falling back to `changeme` in dev mode the
+same way the portal's own seeded admin does (`app/main.py`) if `ADMIN_PASSWORD` isn't set either.
+Set `GF_SECURITY_ADMIN_PASSWORD` explicitly if Grafana should have its own, different password.
+
+```bash
+# Start alongside the main compose file (swap in docker-compose.prod.yml for production —
+# the overlay itself is identical either way):
+docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d
+```
+
+Grafana is reachable at `http://<host>:3000` (`GRAFANA_PORT` to change the published port), logged
+in as `admin` / your `ADMIN_PASSWORD` (or `GF_SECURITY_ADMIN_PASSWORD` if you set one). The Loki
+datasource and two starter dashboards are pre-provisioned — nothing to configure by hand:
+
+- **Booking & Request Trace** — a free-text filter (matches a `booking_id` or `request_id`, or
+  anything else) over every process's log lines, in order. This is how you reconstruct one
+  booking's full technical trail across the HTTP request, the dispatched Celery task, and any
+  retries.
+- **Errors Overview** — `ERROR`/`CRITICAL` log rate over time plus the matching recent lines, for
+  spotting spikes (repeated config/Ansible failures, illegal status transitions, etc.) at a glance.
+
+Both are starter dashboards (raw-line regex filters, not `| json`-parsed field queries) — safe
+starting points regardless of exact log line shape; refine them in Grafana's UI as needed
+(`allowUiUpdates: true` in the provisioning config, so UI edits aren't overwritten).
+
+### Retention and storage
+
+`LOKI_RETENTION_DAYS` (default 14) controls how long Loki keeps log chunks before its compactor
+deletes them — logs older than that become unavailable in Grafana. This is purely operational
+data; the durable business record for a booking's lifecycle remains the `booking_audit` table
+(`GET /bookings/{id}/audit`), which this overlay doesn't touch and isn't affected by Loki's
+retention window.
+
+### Security
+
+Grafana is **not** proxied by either nginx example earlier in this guide — it's a separate service
+on its own port (3000 by default). Do not expose it to the public internet without putting it
+behind your own reverse proxy and TLS termination, the same way you would any other admin tool.
+It has its own login (`GF_USERS_ALLOW_SIGN_UP=false` is set, so only the seeded `admin` account
+exists unless you create more users) — it is not wired into the portal's own session/auth system.
+
+### Running Grafana behind an HTTPS reverse proxy
+
+Unlike the portal app itself (see "Running behind an HTTPS reverse proxy" above), Grafana has
+**native** subpath support — no `sub_filter` HTML-rewriting tricks needed either way.
+
+#### Option A — subdomain (recommended)
+
+```nginx
+# /etc/nginx/conf.d/grafana.conf
+server {
+    listen 80;
+    server_name grafana.my-domain.com;
+    return 301 https://$host$request_uri;          # force HTTPS
+}
+
+server {
+    listen 443 ssl;
+    server_name grafana.my-domain.com;
+
+    ssl_certificate     /etc/ssl/certs/my-domain.crt;
+    ssl_certificate_key /etc/ssl/private/my-domain.key;
+
+    location / {
+        proxy_pass http://MY_LOCAL_IP:3000;         # the grafana service
+        proxy_http_version 1.1;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # Grafana Live (dashboard auto-refresh, streaming) upgrades to a WebSocket.
+        proxy_set_header Upgrade    $http_upgrade;
+        proxy_set_header Connection "upgrade";
+    }
+}
+```
+
+No Grafana-side config needed — `GF_SECURITY_ADMIN_PASSWORD` is the only required env var either
+way (see "Enabling it" above).
+
+#### Option B — subpath `https://my-domain.com/grafana`
+
+Add a `location` block to the same `server {}` already proxying the portal app (see the main
+reverse-proxy section above), and tell Grafana its subpath via two extra env vars:
+
+```bash
+# .env
+GF_SERVER_ROOT_URL=https://my-domain.com/grafana/
+GF_SERVER_SERVE_FROM_SUB_PATH=true
+```
+
+```nginx
+# inside the same server { listen 443 ssl; server_name my-domain.com; ... } block
+location /grafana/ {
+    proxy_pass http://MY_LOCAL_IP:3000/;            # trailing slash strips /grafana before proxying
+    proxy_http_version 1.1;
+    proxy_set_header Host              $host;
+    proxy_set_header X-Real-IP         $remote_addr;
+    proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+
+    proxy_set_header Upgrade    $http_upgrade;
+    proxy_set_header Connection "upgrade";
+}
+```
+
+`GF_SERVER_SERVE_FROM_SUB_PATH=true` makes Grafana itself rewrite its own asset/API links to
+include `/grafana/` — no `sub_filter` HTML-rewriting needed the way the portal app's own subpath
+option requires. This is independent of how the portal app itself is proxied (subdomain, subpath,
+or `ROOT_PATH`) — the two are unrelated services with their own separate reverse-proxy config.
+
+---
+
 ## Auth Setup
 
 ### First login
