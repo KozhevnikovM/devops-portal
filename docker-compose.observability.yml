@@ -39,6 +39,11 @@ services:
     environment:
       GF_SECURITY_ADMIN_PASSWORD: ${GF_SECURITY_ADMIN_PASSWORD:?set GF_SECURITY_ADMIN_PASSWORD in .env}
       GF_USERS_ALLOW_SIGN_UP: "false"
+      # Only needed for a reverse-proxy subpath deployment (e.g. https://host/grafana/) — see
+      # "Running Grafana behind an HTTPS reverse proxy" in docs/admin-guide.md. Empty/unset =
+      # Grafana serves at its own root, which is correct for the subdomain option (Option A).
+      GF_SERVER_ROOT_URL: ${GF_SERVER_ROOT_URL:-}
+      GF_SERVER_SERVE_FROM_SUB_PATH: ${GF_SERVER_SERVE_FROM_SUB_PATH:-false}
     volumes:
       - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
       - ./observability/grafana/dashboards:/etc/grafana/provisioning/dashboards/json:ro

@@ -526,11 +526,82 @@ retention window.
 
 ### Security
 
-Grafana is **not** proxied by either nginx example above — it's a separate service on its own
-port (3000 by default). Do not expose it to the public internet without putting it behind your
-own reverse proxy and access control, the same way you would any other admin tool. It has its own
-login (`GF_USERS_ALLOW_SIGN_UP=false` is set, so only the seeded `admin` account exists unless you
-create more users) — it is not wired into the portal's own session/auth system.
+Grafana is **not** proxied by either nginx example earlier in this guide — it's a separate service
+on its own port (3000 by default). Do not expose it to the public internet without putting it
+behind your own reverse proxy and TLS termination, the same way you would any other admin tool.
+It has its own login (`GF_USERS_ALLOW_SIGN_UP=false` is set, so only the seeded `admin` account
+exists unless you create more users) — it is not wired into the portal's own session/auth system.
+
+### Running Grafana behind an HTTPS reverse proxy
+
+Unlike the portal app itself (see "Running behind an HTTPS reverse proxy" above), Grafana has
+**native** subpath support — no `sub_filter` HTML-rewriting tricks needed either way.
+
+#### Option A — subdomain (recommended)
+
+```nginx
+# /etc/nginx/conf.d/grafana.conf
+server {
+    listen 80;
+    server_name grafana.my-domain.com;
+    return 301 https://$host$request_uri;          # force HTTPS
+}
+
+server {
+    listen 443 ssl;
+    server_name grafana.my-domain.com;
+
+    ssl_certificate     /etc/ssl/certs/my-domain.crt;
+    ssl_certificate_key /etc/ssl/private/my-domain.key;
+
+    location / {
+        proxy_pass http://MY_LOCAL_IP:3000;         # the grafana service
+        proxy_http_version 1.1;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # Grafana Live (dashboard auto-refresh, streaming) upgrades to a WebSocket.
+        proxy_set_header Upgrade    $http_upgrade;
+        proxy_set_header Connection "upgrade";
+    }
+}
+```
+
+No Grafana-side config needed — `GF_SECURITY_ADMIN_PASSWORD` is the only required env var either
+way (see "Enabling it" above).
+
+#### Option B — subpath `https://my-domain.com/grafana`
+
+Add a `location` block to the same `server {}` already proxying the portal app (see the main
+reverse-proxy section above), and tell Grafana its subpath via two extra env vars:
+
+```bash
+# .env
+GF_SERVER_ROOT_URL=https://my-domain.com/grafana/
+GF_SERVER_SERVE_FROM_SUB_PATH=true
+```
+
+```nginx
+# inside the same server { listen 443 ssl; server_name my-domain.com; ... } block
+location /grafana/ {
+    proxy_pass http://MY_LOCAL_IP:3000/;            # trailing slash strips /grafana before proxying
+    proxy_http_version 1.1;
+    proxy_set_header Host              $host;
+    proxy_set_header X-Real-IP         $remote_addr;
+    proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+
+    proxy_set_header Upgrade    $http_upgrade;
+    proxy_set_header Connection "upgrade";
+}
+```
+
+`GF_SERVER_SERVE_FROM_SUB_PATH=true` makes Grafana itself rewrite its own asset/API links to
+include `/grafana/` — no `sub_filter` HTML-rewriting needed the way the portal app's own subpath
+option requires. This is independent of how the portal app itself is proxied (subdomain, subpath,
+or `ROOT_PATH`) — the two are unrelated services with their own separate reverse-proxy config.
 
 ---
 
