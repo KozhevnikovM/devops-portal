@@ -48,8 +48,12 @@ services:
       GF_SERVER_ROOT_URL: ${GF_SERVER_ROOT_URL:-}
       GF_SERVER_SERVE_FROM_SUB_PATH: ${GF_SERVER_SERVE_FROM_SUB_PATH:-false}
     volumes:
+      # Dashboard JSONs live under provisioning/dashboards/json/ on the host (see
+      # provisioning/dashboards/dashboards.yml's `path`), so this one mount covers datasources,
+      # the dashboard provider config, and the dashboards themselves — no second, nested bind
+      # mount inside this already-read-only tree (that previously failed to start: Docker can't
+      # create a mountpoint inside a read-only parent bind mount).
       - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
-      - ./observability/grafana/dashboards:/etc/grafana/provisioning/dashboards/json:ro
       - grafana_data:/var/lib/grafana
     depends_on:
       - loki
