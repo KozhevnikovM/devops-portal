@@ -1,0 +1,48 @@
+{
+  "id": null,
+  "uid": "errors-overview",
+  "title": "Errors Overview",
+  "description": "Starter dashboard over the structured JSON logs (#371 F-2): ERROR/CRITICAL rate and recent matching log lines across app/worker/beat. Uses a raw-line regex rather than Loki's `| json` parsing stage, so it works regardless of exact field layout.",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "timezone": "browser",
+  "time": { "from": "now-24h", "to": "now" },
+  "refresh": "1m",
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "ERROR/CRITICAL log rate",
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 0 },
+      "datasource": { "type": "loki", "uid": "loki" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "loki", "uid": "loki" },
+          "expr": "sum(count_over_time({job=\"dockerlogs\"} |~ `(?i)\"level\":\\s*\"(ERROR|CRITICAL)\"` [5m]))"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "logs",
+      "title": "Recent errors",
+      "gridPos": { "h": 14, "w": 24, "x": 0, "y": 10 },
+      "datasource": { "type": "loki", "uid": "loki" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "loki", "uid": "loki" },
+          "expr": "{job=\"dockerlogs\"} |~ `(?i)\"level\":\\s*\"(ERROR|CRITICAL)\"`"
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "showLabels": true,
+        "wrapLogMessage": true,
+        "sortOrder": "Descending"
+      }
+    }
+  ]
+}

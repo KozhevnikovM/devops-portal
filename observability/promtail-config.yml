@@ -1,0 +1,28 @@
+# Ships every container's stdout/stderr to Loki via Docker service discovery — no per-container
+# log-driver configuration and no host log-file mount needed, just the Docker socket (read-only).
+# See "Log aggregation & dashboards (Grafana + Loki)" in docs/admin-guide.md.
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+  - job_name: dockerlogs
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 5s
+    relabel_configs:
+      # Container name (Docker's own, e.g. "/devops-portal-app-1") minus the leading slash.
+      - source_labels: ["__meta_docker_container_name"]
+        regex: "/(.*)"
+        target_label: "container"
+      # Compose service name (app / worker / beat / postgres / redis / ...) for easy filtering.
+      - source_labels: ["__meta_docker_container_label_com_docker_compose_service"]
+        target_label: "service"
+      - source_labels: ["__meta_docker_container_label_com_docker_compose_project"]
+        target_label: "project"
