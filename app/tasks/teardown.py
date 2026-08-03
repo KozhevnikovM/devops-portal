@@ -1,10 +1,12 @@
 import asyncio
 import logging
+import time
 from uuid import UUID
 
 from app.application.ports import SyncBookingRepositoryPort
 from app.config import settings
 from app.domain.enums import BookingStatus, ResourceType
+from app.infrastructure import provisioning_lock
 from app.infrastructure.celery_app import celery_app
 from app.infrastructure.database.session import SyncSessionLocal
 from app.infrastructure.logging_config import request_id_ctx_var
@@ -15,6 +17,21 @@ from app.infrastructure.terraform.stub_adapter import StubTerraformAdapter
 from app.infrastructure.terraform.vcd_adapter import TerraformVcdAdapter
 
 logger = logging.getLogger(__name__)
+
+# Bounded wait for an in-flight terraform apply to finish before destroy runs (#394) — reuses
+# VCD_TOKEN_LOCK_TTL as the bound, matching the provisioning lock's own TTL.
+_APPLY_WAIT_POLL_SECONDS = 5
+
+
+def _wait_for_apply_to_finish(lock_client, booking_id: str) -> None:
+    """Block until no provision_vm_task is mid-apply for this booking, or the lock's own TTL
+    would have expired anyway — destroy must never race a live terraform apply on the same
+    workspace. Not called for force teardown (admin force-release, restart recovery), which is
+    meant to push through regardless."""
+    deadline = time.monotonic() + settings.VCD_TOKEN_LOCK_TTL
+    while provisioning_lock.is_held(lock_client, booking_id) and time.monotonic() < deadline:
+        time.sleep(_APPLY_WAIT_POLL_SECONDS)
+
 
 repo: SyncBookingRepositoryPort = BookingRepository()
 image_repo = ImageRepository()
@@ -83,6 +100,9 @@ def teardown_vm_task(
             def _on_progress(msg: str) -> None:
                 # Each progress write gets its own short-lived session/connection.
                 _run(lambda s: repo.sync_record_progress(s, booking_uuid, msg))
+
+            if not settings.USE_STUB_TERRAFORM and not force:
+                _wait_for_apply_to_finish(provisioning_lock.get_client(), booking_id)
 
             # No DB connection is held across the (minutes-long) terraform destroy.
             asyncio.run(terraform.destroy(workspace_id, config, api_token, on_progress=_on_progress, force=force))

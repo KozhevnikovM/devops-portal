@@ -11,6 +11,7 @@ from app.application.ports import SyncBookingRepositoryPort
 from app.config import settings
 from app.domain.enums import BookingStatus
 from app.domain.exceptions import SecretDecryptionError
+from app.infrastructure import provisioning_lock
 from app.infrastructure.celery_app import celery_app
 from app.infrastructure.database.session import SyncSessionLocal
 from app.infrastructure.logging_config import request_id_ctx_var
@@ -22,6 +23,7 @@ from app.infrastructure.config.ansible import AnsibleConfigError, build_ansible_
 from app.infrastructure.config.runner import ConfigScriptError, build_config_runner
 from app.infrastructure.terraform.stub_adapter import StubTerraformAdapter
 from app.infrastructure.terraform.vcd_adapter import TerraformVcdAdapter
+from app.tasks.teardown import teardown_vm_task
 
 logger = logging.getLogger(__name__)
 
@@ -120,6 +122,17 @@ def provision_vm_task(
                 image = _run(lambda s: image_repo.sync_get(s, UUID(image_id)))
                 hw = _run(lambda s: hw_config_repo.sync_get(s, UUID(hw_config_id)))
                 existing = _run(lambda s: repo.sync_get(s, booking_uuid))
+                if existing.status in (BookingStatus.RELEASING, BookingStatus.RELEASED, BookingStatus.FAILED):
+                    # Booking was released while this task sat queued or waited out a RETRY
+                    # backoff — starting provisioning now would attempt an illegal transition and
+                    # spin into a retry storm (#394). Nothing to do. (Deny-list, not an allow-list
+                    # of PENDING/RETRY: startup recovery re-dispatches this task for bookings still
+                    # sitting in PROVISIONING/CONFIGURING after a restart, and that must proceed.)
+                    logger.info(
+                        "Booking %s was released (status=%s) — skipping provisioning",
+                        booking_id, existing.status.value,
+                    )
+                    return
                 vm_password = existing.vm_password or "".join(
                     secrets.choice(string.ascii_letters + string.digits) for _ in range(16)
                 )
@@ -141,10 +154,21 @@ def provision_vm_task(
                     # Each progress write gets its own short-lived session/connection.
                     _run(lambda s: repo.sync_record_progress(s, booking_uuid, msg))
 
-                # No DB connection is held across the (minutes-long) terraform apply.
-                result = asyncio.run(
-                    terraform.apply(workspace_id, config, api_token=api_token, on_progress=_on_progress)
-                )
+                # A provisioning-lock marker is held for the duration of the apply so
+                # teardown_vm_task (dispatched if this booking gets released mid-flight) never
+                # races terraform destroy against this still-running apply on the same workspace
+                # (#394). Skipped under the stub adapter — no real state lock to race.
+                lock_client = None if settings.USE_STUB_TERRAFORM else provisioning_lock.get_client()
+                if lock_client:
+                    provisioning_lock.acquire(lock_client, booking_id)
+                try:
+                    # No DB connection is held across the (minutes-long) terraform apply.
+                    result = asyncio.run(
+                        terraform.apply(workspace_id, config, api_token=api_token, on_progress=_on_progress)
+                    )
+                finally:
+                    if lock_client:
+                        provisioning_lock.release(lock_client, booking_id)
                 ip = result["ip"]
                 _run(lambda s: repo.sync_set_status_message(s, booking_uuid, None))
 
@@ -152,6 +176,15 @@ def provision_vm_task(
                 # Two distinct outcomes: an unreachable VM is an infra failure (raises → FAILED); a
                 # reachable VM whose script fails is still usable → READY with config_failed=True.
                 booking = _run(lambda s: repo.sync_get(s, booking_uuid))
+                if booking.status == BookingStatus.RELEASING:
+                    # Released while the apply above was in flight — hand off to teardown instead
+                    # of configuring a VM that's about to be destroyed (#394).
+                    logger.info(
+                        "Booking %s was released while its terraform apply was in flight — "
+                        "handing off to teardown instead of configuring", booking_id,
+                    )
+                    teardown_vm_task.delay(booking_id, request_id=request_id)
+                    return
                 config_failed = False
                 config_message = None
                 if not settings.USE_STUB_TERRAFORM:

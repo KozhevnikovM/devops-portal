@@ -56,6 +56,7 @@ def test_no_session_held_across_apply():
         return {"ip": "10.0.0.1"}
 
     mock_repo = MagicMock()
+    mock_repo.sync_get = MagicMock(return_value=MagicMock(status=BookingStatus.PENDING))
     mock_image_repo = MagicMock()
     mock_image_repo.sync_get = MagicMock(return_value=image)
     mock_hw_repo = MagicMock()
