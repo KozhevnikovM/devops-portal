@@ -492,18 +492,20 @@ volume. See `docs/features/grafana-loki-log-dashboards.md` for the full reasonin
 
 ### Enabling it
 
-```bash
-# .env — required, Grafana refuses to start without it
-GF_SECURITY_ADMIN_PASSWORD=choose-a-real-password
+No extra password to set up by default — Grafana's admin password defaults to the portal's own
+`ADMIN_PASSWORD` (one password to remember for both), falling back to `changeme` in dev mode the
+same way the portal's own seeded admin does (`app/main.py`) if `ADMIN_PASSWORD` isn't set either.
+Set `GF_SECURITY_ADMIN_PASSWORD` explicitly if Grafana should have its own, different password.
 
+```bash
 # Start alongside the main compose file (swap in docker-compose.prod.yml for production —
 # the overlay itself is identical either way):
 docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d
 ```
 
-Grafana is reachable at `http://<host>:3000` (`GRAFANA_PORT` to change the published port),
-logged in as `admin` / `GF_SECURITY_ADMIN_PASSWORD`. The Loki datasource and two starter
-dashboards are pre-provisioned — nothing to configure by hand:
+Grafana is reachable at `http://<host>:3000` (`GRAFANA_PORT` to change the published port), logged
+in as `admin` / your `ADMIN_PASSWORD` (or `GF_SECURITY_ADMIN_PASSWORD` if you set one). The Loki
+datasource and two starter dashboards are pre-provisioned — nothing to configure by hand:
 
 - **Booking & Request Trace** — a free-text filter (matches a `booking_id` or `request_id`, or
   anything else) over every process's log lines, in order. This is how you reconstruct one

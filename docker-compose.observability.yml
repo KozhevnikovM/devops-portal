@@ -37,7 +37,10 @@ services:
     ports:
       - "${GRAFANA_PORT:-3000}:3000"
     environment:
-      GF_SECURITY_ADMIN_PASSWORD: ${GF_SECURITY_ADMIN_PASSWORD:?set GF_SECURITY_ADMIN_PASSWORD in .env}
+      # Defaults to the portal's own ADMIN_PASSWORD (one password to remember for both), same
+      # dev-mode "changeme" fallback as the portal's own seeded admin (app/main.py). Set
+      # GF_SECURITY_ADMIN_PASSWORD explicitly to give Grafana a different password.
+      GF_SECURITY_ADMIN_PASSWORD: ${GF_SECURITY_ADMIN_PASSWORD:-${ADMIN_PASSWORD:-changeme}}
       GF_USERS_ALLOW_SIGN_UP: "false"
       # Only needed for a reverse-proxy subpath deployment (e.g. https://host/grafana/) — see
       # "Running Grafana behind an HTTPS reverse proxy" in docs/admin-guide.md. Empty/unset =
