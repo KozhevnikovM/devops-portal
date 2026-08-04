@@ -17,6 +17,12 @@ scrape_configs:
       - host: unix:///var/run/docker.sock
         refresh_interval: 5s
     relabel_configs:
+      # Promtail's Docker service discovery does not auto-inject a job=<job_name> label the way
+      # Prometheus scrape configs do (#400) — set it explicitly so {job="dockerlogs"} (used by
+      # both starter dashboards) actually matches something. A static replacement, not sourced
+      # from any __meta_* label.
+      - target_label: "job"
+        replacement: "dockerlogs"
       # Container name (Docker's own, e.g. "/devops-portal-app-1") minus the leading slash.
       - source_labels: ["__meta_docker_container_name"]
         regex: "/(.*)"
