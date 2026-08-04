@@ -31,11 +31,15 @@ to `app`/`worker`/`beat` if unused):
   rather than its own container — this is the standard node_exporter container pattern, not
   portal-specific. Not published to the host network; Prometheus reaches it over the compose
   network only.
-- **cadvisor** (`gcr.io/cadvisor/cadvisor`) — per-container CPU/memory/network/disk-IO metrics,
-  labeled with the same Docker Compose service/project labels Promtail already relabels onto log
-  lines (`com.docker.compose.service`, `.project`), so a container's logs (Loki) and resource usage
-  (this) can be cross-referenced by the same label in Grafana. Read-only mounts of `/`, `/var/run`,
-  `/sys`, and the Docker root dir — no write access, no host-privileged mode needed on Linux.
+- **cadvisor** (`gcr.io/cadvisor/cadvisor`) — per-container CPU/memory metrics. Read-only mounts of
+  `/`, `/var/run`, `/sys`, the Docker root dir, and the containerd socket — no write access, no
+  host-privileged mode needed on Linux. **Revised after actually running the stack** (see
+  "Discovered while testing" below): on Docker Engine 28+'s containerd-snapshotter storage
+  backend, cadvisor's Docker handler can't attribute metrics to containers at all, so it's
+  configured to talk to containerd directly instead and grouped by container **image** rather than
+  the Docker Compose service label originally planned — that label isn't visible via the
+  containerd path. Per-container network I/O isn't available either way through that path, so it's
+  out of this dashboard (host-level network is still covered by node_exporter).
 - **prometheus** (`prom/prometheus`) — scrapes node_exporter, cadvisor, and itself on a short
   interval; local TSDB storage on a named volume (`prometheus_data`), with a retention flag
   (`PROMETHEUS_RETENTION_DAYS`, default 14 — same default and same "operational data, not the
@@ -100,6 +104,20 @@ three come up with the same `docker compose -f ... -f docker-compose.observabili
 ## Testing Plan
 
 No Python test changes — Docker Compose + Prometheus/Grafana provisioning config only, same as the
-Loki plan. Verified manually: bring up the overlay, confirm `prometheus:9090/targets` (from inside
-the compose network) shows node_exporter/cadvisor/prometheus all `UP`, and confirm both new
-dashboards render data in Grafana.
+Loki plan. Verified by actually bringing up the overlay (Docker installed in the dev sandbox for
+this purpose) and querying every panel's PromQL/LogQL expression through Grafana's datasource
+proxy, not just checking that YAML/JSON parses: `prometheus:9090/targets` shows
+node_exporter/cadvisor/prometheus all `UP`, and all six dashboard panels (Host Overview ×4,
+Container Resource Usage ×2, plus the two pre-existing Loki dashboards) return real data.
+
+### Discovered while testing (not caught by static config review)
+
+- The disk-usage panel filtered on `mountpoint="/rootfs"` — node_exporter's `--path.rootfs` makes
+  it *resolve and report* the real host mountpoint (`/`), not the container-internal bind path.
+  Fixed to filter on `mountpoint="/"`.
+- cadvisor couldn't attribute any per-container metrics at all on this host's Docker Engine
+  (containerd-snapshotter storage backend) — see the revised cadvisor bullet above. Root-caused via
+  cadvisor's own logs (`failed to identify the read-write layer ID`), confirmed against
+  `docker info`'s `driver-type`, and fixed by switching cadvisor to talk to containerd directly
+  (deterministically — an earlier attempt that left both the Docker and containerd handlers
+  enabled raced non-deterministically instead of reliably falling back).

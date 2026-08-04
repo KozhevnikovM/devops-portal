@@ -2,7 +2,7 @@
   "id": null,
   "uid": "container-resource-usage",
   "title": "Container Resource Usage",
-  "description": "Starter dashboard (#397 follow-on) over cadvisor metrics: per-container CPU/memory/network for the portal's docker-compose services, broken down by the same `service` label Promtail relabels onto log lines.",
+  "description": "Starter dashboard (#397 follow-on) over cadvisor metrics: per-container CPU/memory for the portal's docker-compose services, broken down by image (each service in this stack runs a distinct image, so this reads the same as \"by service\"). Grouped by `image` rather than a docker-compose label because cadvisor's containerd fallback path (needed on Docker Engine 28+'s containerd-snapshotter storage backend — see docker-compose.observability.yml) doesn't see Docker Compose's own container labels, only containerd-level ones. Per-container network I/O isn't shown: cadvisor's containerd fallback only reports network stats for the host/root cgroup, not individual containers (confirmed by running the stack, not assumed) — use the Host Overview dashboard's network panel for aggregate throughput instead.",
   "schemaVersion": 39,
   "version": 1,
   "editable": true,
@@ -13,7 +13,7 @@
     {
       "id": 1,
       "type": "timeseries",
-      "title": "CPU usage by service",
+      "title": "CPU usage by container image",
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
       "fieldConfig": { "defaults": { "unit": "percent", "min": 0 } },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
@@ -21,15 +21,15 @@
         {
           "refId": "A",
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "sum by (container_label_com_docker_compose_service) (rate(container_cpu_usage_seconds_total{container_label_com_docker_compose_service!=\"\"}[5m])) * 100",
-          "legendFormat": "{{container_label_com_docker_compose_service}}"
+          "expr": "sum by (image) (rate(container_cpu_usage_seconds_total{image!=\"\"}[5m])) * 100",
+          "legendFormat": "{{image}}"
         }
       ]
     },
     {
       "id": 2,
       "type": "timeseries",
-      "title": "Memory usage by service",
+      "title": "Memory usage by container image",
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
       "fieldConfig": { "defaults": { "unit": "bytes" } },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
@@ -37,40 +37,8 @@
         {
           "refId": "A",
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "sum by (container_label_com_docker_compose_service) (container_memory_usage_bytes{container_label_com_docker_compose_service!=\"\"})",
-          "legendFormat": "{{container_label_com_docker_compose_service}}"
-        }
-      ]
-    },
-    {
-      "id": 3,
-      "type": "timeseries",
-      "title": "Network receive by service",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
-      "fieldConfig": { "defaults": { "unit": "Bps" } },
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "sum by (container_label_com_docker_compose_service) (rate(container_network_receive_bytes_total{container_label_com_docker_compose_service!=\"\"}[5m]))",
-          "legendFormat": "{{container_label_com_docker_compose_service}}"
-        }
-      ]
-    },
-    {
-      "id": 4,
-      "type": "timeseries",
-      "title": "Network transmit by service",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
-      "fieldConfig": { "defaults": { "unit": "Bps" } },
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "sum by (container_label_com_docker_compose_service) (rate(container_network_transmit_bytes_total{container_label_com_docker_compose_service!=\"\"}[5m]))",
-          "legendFormat": "{{container_label_com_docker_compose_service}}"
+          "expr": "sum by (image) (container_memory_usage_bytes{image!=\"\"})",
+          "legendFormat": "{{image}}"
         }
       ]
     }
