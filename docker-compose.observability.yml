@@ -75,13 +75,32 @@ services:
     restart: unless-stopped
 
   cadvisor:
-    image: ${CADVISOR_IMAGE:-gcr.io/cadvisor/cadvisor:v0.49.1}
+    image: ${CADVISOR_IMAGE:-gcr.io/cadvisor/cadvisor:v0.52.1}
+    command:
+      - "-docker_only=true"
+      # Docker Engine 28+ defaults to the containerd snapshotter storage backend, under which
+      # cadvisor's classic Docker handler can't find a container's read-write layer (it looks for
+      # a legacy /var/lib/docker/image/overlayfs/layerdb path that no longer gets populated) and
+      # silently fails to report *any* per-container metrics — confirmed by actually running this
+      # stack, not just reading cadvisor's docs. Disabling the Docker handler outright
+      # (-docker=invalid://, an unparseable endpoint) forces every container through cadvisor's
+      # containerd handler instead, which talks to containerd directly and isn't affected by the
+      # storage-backend change; leaving the Docker handler enabled at the same time was observed
+      # to race with it non-deterministically (worked sometimes, silently returned zero
+      # containers other times) rather than reliably falling back. -containerd-namespace must be
+      # "moby" (Docker's own containerd namespace), not cadvisor's k8s-oriented default of
+      # "k8s.io". Requires cadvisor v0.52+ — v0.49 (this repo's original pin) doesn't have working
+      # containerd-fallback support at all.
+      - "-docker=invalid://"
+      - "-containerd=/run/containerd/containerd.sock"
+      - "-containerd-namespace=moby"
     volumes:
       - /:/rootfs:ro
       - /var/run:/var/run:ro
       - /sys:/sys:ro
       - /var/lib/docker:/var/lib/docker:ro
       - /dev/disk:/dev/disk:ro
+      - /run/containerd/containerd.sock:/run/containerd/containerd.sock:ro
     restart: unless-stopped
 
   prometheus:

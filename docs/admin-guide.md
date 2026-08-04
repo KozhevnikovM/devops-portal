@@ -541,6 +541,18 @@ for both exporters, and mounted read-only in the compose file. Their own resourc
 small; Prometheus's disk usage grows with retention and the number of scraped series, same
 consideration as Loki's chunk storage.
 
+**cadvisor and Docker Engine 28+:** newer Docker Engine versions default to the containerd
+snapshotter storage backend, under which cadvisor's classic Docker container handler can't find a
+container's read-write layer and silently reports zero per-container metrics. The compose file
+works around this by pointing cadvisor at containerd directly (`-containerd`,
+`-containerd-namespace=moby`) and disabling its Docker handler outright (`-docker=invalid://`) so
+there's no race between the two — check `docker info | grep -i driver-type` if you want to confirm
+which backend your host uses. One side effect: this path doesn't expose Docker Compose's own
+container labels, so the "Container Resource Usage" dashboard groups by container **image**
+instead of service name (works out the same here, since every service in this stack runs a
+distinct image) — and it doesn't expose per-container network I/O at all, only per-host, so that
+dashboard has no network panel (use Host Overview's for aggregate network throughput).
+
 ### Security
 
 Grafana is **not** proxied by either nginx example earlier in this guide — it's a separate service
