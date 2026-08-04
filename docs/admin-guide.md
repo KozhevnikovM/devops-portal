@@ -479,16 +479,18 @@ stripping **or** `ROOT_PATH` — never both, or static assets will 404.
 
 ---
 
-## Log aggregation & dashboards (Grafana + Loki)
+## Log aggregation & dashboards (Grafana + Loki + Prometheus)
 
 The `app`/`worker`/`beat` processes emit structured JSON logs to stdout (`request_id` on every
 request-scoped line, `booking_id` on every task line — see #371). `docker-compose.observability.yml`
-is an **optional overlay** that ships those logs to Loki and dashboards them in Grafana — nothing
-about the main services changes if you don't use it, and it adds no application dependency.
+is an **optional overlay** that ships those logs to Loki, scrapes host/container metrics via
+Prometheus, and dashboards both in Grafana — nothing about the main services changes if you don't
+use it, and it adds no application dependency.
 
 Recommended over Elasticsearch for this deployment's scale: Loki indexes only labels (container,
 service), not full log text, so there's no JVM/cluster to run — appropriate for one app's log
-volume. See `docs/features/grafana-loki-log-dashboards.md` for the full reasoning.
+volume. See `docs/features/grafana-loki-log-dashboards.md` for the full reasoning, and
+`docs/features/prometheus-host-container-metrics.md` for the metrics follow-on.
 
 ### Enabling it
 
@@ -504,8 +506,9 @@ docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d
 ```
 
 Grafana is reachable at `http://<host>:3000` (`GRAFANA_PORT` to change the published port), logged
-in as `admin` / your `ADMIN_PASSWORD` (or `GF_SECURITY_ADMIN_PASSWORD` if you set one). The Loki
-datasource and two starter dashboards are pre-provisioned — nothing to configure by hand:
+in as `admin` / your `ADMIN_PASSWORD` (or `GF_SECURITY_ADMIN_PASSWORD` if you set one). The Loki and
+Prometheus datasources and four starter dashboards are pre-provisioned — nothing to configure by
+hand:
 
 - **Booking & Request Trace** — a free-text filter (matches a `booking_id` or `request_id`, or
   anything else) over every process's log lines, in order. This is how you reconstruct one
@@ -513,18 +516,30 @@ datasource and two starter dashboards are pre-provisioned — nothing to configu
   retries.
 - **Errors Overview** — `ERROR`/`CRITICAL` log rate over time plus the matching recent lines, for
   spotting spikes (repeated config/Ansible failures, illegal status transitions, etc.) at a glance.
+- **Host Overview** — CPU, memory, disk, and network for the machine the portal runs on, sourced
+  from `node_exporter`.
+- **Container Resource Usage** — per-service CPU/memory/network (`app`, `worker`, `beat`,
+  `postgres`, `redis`, and the observability stack's own containers), sourced from `cadvisor` and
+  broken down by the same `service` label Promtail attaches to log lines — so a container's
+  resource usage and its logs can be cross-referenced by the same label.
 
-Both are starter dashboards (raw-line regex filters, not `| json`-parsed field queries) — safe
-starting points regardless of exact log line shape; refine them in Grafana's UI as needed
-(`allowUiUpdates: true` in the provisioning config, so UI edits aren't overwritten).
+All four are starter dashboards — safe starting points, not exhaustive; refine them in Grafana's UI
+as needed (`allowUiUpdates: true` in the provisioning config, so UI edits aren't overwritten).
 
 ### Retention and storage
 
 `LOKI_RETENTION_DAYS` (default 14) controls how long Loki keeps log chunks before its compactor
-deletes them — logs older than that become unavailable in Grafana. This is purely operational
-data; the durable business record for a booking's lifecycle remains the `booking_audit` table
-(`GET /bookings/{id}/audit`), which this overlay doesn't touch and isn't affected by Loki's
-retention window.
+deletes them, and `PROMETHEUS_RETENTION_DAYS` (default 14) controls how long Prometheus keeps
+metric samples before deleting them — data older than that becomes unavailable in Grafana. Both are
+purely operational data; the durable business record for a booking's lifecycle remains the
+`booking_audit` table (`GET /bookings/{id}/audit`), which this overlay doesn't touch and isn't
+affected by either retention window.
+
+`node_exporter` and `cadvisor` need read-only access to parts of the host (`/proc`, `/sys`, the
+Docker root dir) to report on the host and its containers rather than just themselves — standard
+for both exporters, and mounted read-only in the compose file. Their own resource footprint is
+small; Prometheus's disk usage grows with retention and the number of scraped series, same
+consideration as Loki's chunk storage.
 
 ### Security
 
