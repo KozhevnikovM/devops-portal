@@ -127,7 +127,11 @@ one-off bookings that still need to parameterise roles.
 
 ## What does NOT change
 
-- Role catalog `default_vars` and `secret_vars` — unchanged, still role-scoped.
+- `secret_vars` — unchanged, still role-scoped, unaffected by anything below.
+- `default_vars` — **update (#403):** originally fully unaffected by order-time `vars` as
+  stated here; #403 added an override where an order-time key with the same name as a role's
+  `default_vars` key wins on that role. See `docs/bugfix/403-vars-ignored-in-environment-vm.md`
+  and the admin guide's "Overriding a role's own `default_vars` at order time."
 - `no_log` on the `include_vars` task — only applies to the secrets file, not to `portal` vars
   (these are non-secret).
 - `StubAnsibleRunner` — no change needed; it already ignores roles.

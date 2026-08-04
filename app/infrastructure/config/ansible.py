@@ -74,7 +74,11 @@ def _render_playbook(
         lines.append("  roles:")
     for role in config_roles:
         lines.append(f"    - role: {role['ansible_role']}")
-        vars_ = role.get("vars") or {}
+        # extra_vars (order-time overrides) win over the role's own default_vars on key
+        # collision — e.g. a booking's vars: {"pg_version": 18} overrides the postgresql role's
+        # own default_vars: {"pg_version": 14} (#403). Additive to the portal.* injection above,
+        # not a replacement for it — a key with no matching role var is simply unused here.
+        vars_ = {**(role.get("vars") or {}), **(extra_vars or {})}
         if vars_:
             lines.append(f"      vars: {json.dumps(vars_)}")
     return "\n".join(lines) + "\n"

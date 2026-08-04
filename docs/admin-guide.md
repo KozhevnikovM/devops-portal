@@ -1412,8 +1412,16 @@ doesn't change a running VM.
 > from their form). `POST /api/bookings`'s `roles`/`vars` fields are unaffected by this — any
 > client can still submit both directly via the API regardless of the submitting user's role.
 
-**Using `portal.*` variables inside a role.** Every Ansible run injects a `portal` dict into
-the play vars. Two keys are always present:
+**Overriding a role's own `default_vars` at order time.** If the `vars` you submit (blueprint
+item `spec.vars`, direct `POST /api/bookings` `vars`, or the **Ansible variables** textarea)
+share a key with a role's own catalog **Default vars**, your value wins — e.g. ordering a VM
+with a `postgresql` role (catalog default `{"pg_version": 14}`) and `vars: {"pg_version": 18}`
+configures the role with `pg_version=18`, no catalog changes needed. This applies to every role
+in the booking that declares that key; a key that doesn't match any role's `default_vars` has
+no effect beyond the `portal.*` availability described below.
+
+**Using `portal.*` variables inside a role.** Every Ansible run also injects a `portal` dict
+into the play vars, independent of the override above. Two keys are always present:
 
 | Variable | Value |
 |---|---|
@@ -1434,8 +1442,9 @@ Use them directly in role tasks:
     subject_alt_name: "IP:{{ portal.ip }}"
 ```
 
-Or, if you have an existing role that expects its own variable name and you don't want to
-change the role, map via **Default vars** in the Ansible Roles catalog:
+Or, if you have an existing role that expects a *different* variable name than the one you're
+submitting (not the override case above, which only matches on identical key names), map it via
+**Default vars** in the Ansible Roles catalog:
 
 ```json
 { "subject_alt_name_ip": "{{ portal.ip }}" }

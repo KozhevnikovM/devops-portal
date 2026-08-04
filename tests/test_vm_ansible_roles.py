@@ -36,6 +36,22 @@ def test_render_playbook_lists_roles_with_vars():
     assert "- role: postgres_database" in pb
 
 
+def test_render_playbook_extra_vars_override_role_default_vars():
+    """Order-time vars win over a role's own default_vars on key collision (#403)."""
+    snapshot = [{"name": "postgresql", "ansible_role": "postgresql", "vars": {"pg_version": 14}}]
+    pb = _render_playbook(snapshot, extra_vars={"pg_version": 18})
+    role_block = pb.split("roles:")[1]
+    assert '"pg_version": 18' in role_block
+    assert '"pg_version": 14' not in role_block
+    assert "pg_version: 18" in pb  # still present in the portal.* play-level vars too
+
+
+def test_render_playbook_extra_vars_keep_unrelated_role_defaults():
+    pb = _render_playbook(SNAPSHOT, extra_vars={"pg_version": 18})
+    role_block = pb.split("roles:")[1]
+    assert '"docker_users"' in role_block  # untouched — no key collision for this role
+
+
 # ── AnsibleConfigRunner ───────────────────────────────────────────────────────
 def _booking(roles):
     return SimpleNamespace(id=uuid4(), config_roles=roles)
