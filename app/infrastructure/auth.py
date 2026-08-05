@@ -1,7 +1,9 @@
+import asyncio
 import hashlib
 import json
 from uuid import UUID
 
+import bcrypt
 import redis.asyncio as aioredis
 from fastapi import Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,6 +23,21 @@ def _get_redis() -> aioredis.Redis:
     if _redis is None:
         _redis = aioredis.from_url(settings.REDIS_URL, decode_responses=True)
     return _redis
+
+
+async def hash_password(password: str) -> str:
+    """bcrypt has no async variant and is deliberately slow (~100-300ms); calling it directly
+    from an `async def` route blocks the whole event loop for that long, stalling every other
+    in-flight request — including ones just waiting to release a DB connection back to the pool.
+    Under a burst of concurrent requests this exhausts the pool outright. Run it on a worker
+    thread instead so the event loop stays free."""
+    return await asyncio.to_thread(
+        lambda: bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+    )
+
+
+async def verify_password(password: str, password_hash: str) -> bool:
+    return await asyncio.to_thread(bcrypt.checkpw, password.encode(), password_hash.encode())
 
 
 async def get_current_user(

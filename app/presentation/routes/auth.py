@@ -13,7 +13,7 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.infrastructure.auth import VALID_ROLES, require_admin, require_user
+from app.infrastructure.auth import VALID_ROLES, hash_password, require_admin, require_user, verify_password
 from app.infrastructure.database.session import get_async_session
 from app.domain.entities import User
 from app.presentation import deps as _deps
@@ -69,7 +69,7 @@ async def login(
     # Always run one bcrypt comparison (against a dummy hash when the user is missing) so the
     # response time doesn't reveal whether the username exists.
     password_hash = user.password_hash if user else _DUMMY_PASSWORD_HASH
-    password_ok = bcrypt.checkpw(password.encode(), password_hash.encode())
+    password_ok = await verify_password(password, password_hash)
     if not user or not password_ok:
         return templates.TemplateResponse(
             request, "login.html",
@@ -160,7 +160,7 @@ async def create_user(
         raise HTTPException(status_code=400, detail=f"invalid role '{body.role}'")
     if len(body.password) < 8:
         raise HTTPException(status_code=422, detail="password must be at least 8 characters")
-    pw_hash = bcrypt.hashpw(body.password.encode(), bcrypt.gensalt()).decode()
+    pw_hash = await hash_password(body.password)
     user = await _user_repo.create(session, body.username, pw_hash, body.role)
     return UserResponse(id=user.id, username=user.username, role=user.role, is_active=user.is_active)
 
@@ -183,7 +183,7 @@ async def admin_reset_password(
     user = await _user_repo.get(session, user_id)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
-    new_hash = bcrypt.hashpw(body.new_password.encode(), bcrypt.gensalt()).decode()
+    new_hash = await hash_password(body.new_password)
     await _user_repo.update_password(session, user_id, new_hash)
     r = _get_redis()
     await _invalidate_user_sessions(r, str(user_id))
@@ -298,7 +298,7 @@ async def admin_create_user(
             content='<span class="text-red-400 text-xs">Password must be at least 8 characters.</span>',
             headers={"HX-Retarget": "#user-create-error", "HX-Reswap": "innerHTML"},
         )
-    pw_hash = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+    pw_hash = await hash_password(password)
     try:
         await _user_repo.create(session, username, pw_hash, role)
     except IntegrityError:
@@ -380,7 +380,7 @@ async def admin_reset_user_password_ui(
     user = await _user_repo.get(session, user_id)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
-    new_hash = bcrypt.hashpw(new_password.encode(), bcrypt.gensalt()).decode()
+    new_hash = await hash_password(new_password)
     await _user_repo.update_password(session, user_id, new_hash)
     r = _get_redis()
     await _invalidate_user_sessions(r, str(user_id))
@@ -496,10 +496,10 @@ async def change_password(
         return _card(error="New password must be at least 8 characters.")
 
     db_user = await _user_repo.get(session, current_user.id)
-    if not db_user or not bcrypt.checkpw(current_password.encode(), db_user.password_hash.encode()):
+    if not db_user or not await verify_password(current_password, db_user.password_hash):
         return _card(error="Current password is incorrect.")
 
-    new_hash = bcrypt.hashpw(new_password.encode(), bcrypt.gensalt()).decode()
+    new_hash = await hash_password(new_password)
     await _user_repo.update_password(session, current_user.id, new_hash)
 
     session_id = request.cookies.get("session_id")
