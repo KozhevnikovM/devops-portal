@@ -24,7 +24,7 @@ from app.domain.entities import User
 from app.domain.enums import BookingStatus
 from app.domain.exceptions import BookingNotFoundError, EnvironmentNotFoundError
 from app.infrastructure.auth import require_user
-from app.infrastructure.database.session import get_async_session
+from app.infrastructure.database.session import AsyncSessionLocal, get_async_session
 from app.infrastructure.events import ROW_CHANGED_CHANNEL, get_async_redis
 from app.presentation import deps
 from app.presentation.routes.environments import _annotate
@@ -48,37 +48,43 @@ def _sse_event(event: str, html: str) -> str:
     return f"event: {event}\n{data}\n\n"
 
 
-async def _render_booking_event(session: AsyncSession, current_user: User, booking_id: str) -> str | None:
-    try:
-        booking = await _booking_repo.get(session, UUID(booking_id))
-    except (BookingNotFoundError, ValueError):
-        return None
-    if not can_manage(owner_id=booking.user_id, created_by=booking.created_by, user=current_user):
-        return None
-    if booking.status == BookingStatus.QUEUED:
-        booking.queue_position = await _booking_repo.queue_position(
-            session, booking.resource_type.value, booking.created_at
-        )
+async def _render_booking_event(current_user: User, booking_id: str) -> str | None:
+    # Short-lived session for this one lookup — the SSE connection this is called from stays
+    # open for as long as the tab does, so a session held for the whole connection (rather than
+    # per render) pins a DB pool connection per open tab indefinitely and exhausts the pool
+    # under enough concurrently-open tabs (#407).
+    async with AsyncSessionLocal() as session:
+        try:
+            booking = await _booking_repo.get(session, UUID(booking_id))
+        except (BookingNotFoundError, ValueError):
+            return None
+        if not can_manage(owner_id=booking.user_id, created_by=booking.created_by, user=current_user):
+            return None
+        if booking.status == BookingStatus.QUEUED:
+            booking.queue_position = await _booking_repo.queue_position(
+                session, booking.resource_type.value, booking.created_at
+            )
     html = templates.get_template("partials/booking_row.html").render(
         booking=booking, current_user=current_user,
     )
     return _sse_event(f"booking-{booking_id}", html)
 
 
-async def _render_environment_event(session: AsyncSession, current_user: User, environment_id: str) -> str | None:
-    try:
-        env = await _env_repo.get(session, UUID(environment_id))
-    except (EnvironmentNotFoundError, ValueError):
-        return None
-    if not can_manage(owner_id=env.user_id, created_by=env.created_by, user=current_user):
-        return None
+async def _render_environment_event(current_user: User, environment_id: str) -> str | None:
+    async with AsyncSessionLocal() as session:
+        try:
+            env = await _env_repo.get(session, UUID(environment_id))
+        except (EnvironmentNotFoundError, ValueError):
+            return None
+        if not can_manage(owner_id=env.user_id, created_by=env.created_by, user=current_user):
+            return None
     html = templates.get_template("partials/environment_row.html").render(
         environment=_annotate(env), current_user=current_user,
     )
     return _sse_event(f"environment-{environment_id}", html)
 
 
-async def _event_stream(request: Request, session: AsyncSession, current_user: User):
+async def _event_stream(request: Request, current_user: User):
     redis_client = get_async_redis()
     pubsub = redis_client.pubsub()
     await pubsub.subscribe(ROW_CHANGED_CHANNEL)
@@ -105,13 +111,13 @@ async def _event_stream(request: Request, session: AsyncSession, current_user: U
 
             booking_id = payload.get("booking_id")
             if booking_id:
-                chunk = await _render_booking_event(session, current_user, booking_id)
+                chunk = await _render_booking_event(current_user, booking_id)
                 if chunk:
                     yield chunk
 
             environment_id = payload.get("environment_id")
             if environment_id:
-                chunk = await _render_environment_event(session, current_user, environment_id)
+                chunk = await _render_environment_event(current_user, environment_id)
                 if chunk:
                     yield chunk
     finally:
@@ -125,8 +131,14 @@ async def events_stream(
     session: AsyncSession = Depends(get_async_session),
     current_user: User = Depends(require_user),
 ):
+    # `session` (from require_user's auth check) is only needed transiently, before the stream
+    # starts. FastAPI doesn't release a yield-dependency's connection until the response body
+    # finishes — for this StreamingResponse that's "when the tab closes," which would otherwise
+    # pin a DB pool connection per open tab indefinitely (#407). Release it explicitly now;
+    # each row render below opens its own short-lived session instead.
+    await session.close()
     return StreamingResponse(
-        _event_stream(request, session, current_user),
+        _event_stream(request, current_user),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
