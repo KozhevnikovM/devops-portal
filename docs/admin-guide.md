@@ -1794,3 +1794,13 @@ Scale workers to match the total slot count (`tokens × max_parallel`):
 ```bash
 docker compose up -d --scale worker=4
 ```
+
+## Load testing
+
+`loadtest/` (repo root) holds a Locust-based load test that simulates ~1000 concurrent portal
+users against a local stack (`USE_STUB_TERRAFORM=true`) — most holding an open SSE connection
+and doing nothing else, a smaller fraction actively ordering/releasing bookings, modeled on real
+usage. It doubles as a regression check for the DB-connection-pool exhaustion class of bug (see
+`docs/bugfix/407-sse-session-pins-db-connection.md`). See `loadtest/README.md` for setup and run
+instructions. It can be run alongside the Prometheus/Grafana overlay above to watch container
+CPU/memory and DB connection behavior live during a run.
