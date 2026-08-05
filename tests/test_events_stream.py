@@ -69,7 +69,7 @@ async def test_owner_receives_booking_event():
     with patch.object(mod, "_booking_repo") as mock_repo:
         mock_repo.get = AsyncMock(return_value=booking)
         mock_repo.queue_position = AsyncMock(return_value=None)
-        chunk = await mod._render_booking_event(AsyncMock(), owner, str(booking.id))
+        chunk = await mod._render_booking_event(owner, str(booking.id))
 
     assert chunk is not None
     assert chunk.startswith(f"event: booking-{booking.id}\n")
@@ -85,7 +85,7 @@ async def test_admin_receives_foreign_booking_event():
     with patch.object(mod, "_booking_repo") as mock_repo:
         mock_repo.get = AsyncMock(return_value=booking)
         mock_repo.queue_position = AsyncMock(return_value=None)
-        chunk = await mod._render_booking_event(AsyncMock(), admin, str(booking.id))
+        chunk = await mod._render_booking_event(admin, str(booking.id))
 
     assert chunk is not None
 
@@ -100,7 +100,7 @@ async def test_non_owner_gets_nothing_for_booking_event():
     booking.vm_password = "hunter2-plaintext"
     with patch.object(mod, "_booking_repo") as mock_repo:
         mock_repo.get = AsyncMock(return_value=booking)
-        chunk = await mod._render_booking_event(AsyncMock(), stranger, str(booking.id))
+        chunk = await mod._render_booking_event(stranger, str(booking.id))
 
     assert chunk is None
 
@@ -112,7 +112,7 @@ async def test_unknown_booking_id_gets_nothing():
     user = _user("user")
     with patch.object(mod, "_booking_repo") as mock_repo:
         mock_repo.get = AsyncMock(side_effect=BookingNotFoundError("nope"))
-        chunk = await mod._render_booking_event(AsyncMock(), user, str(uuid4()))
+        chunk = await mod._render_booking_event(user, str(uuid4()))
 
     assert chunk is None
 
@@ -122,7 +122,7 @@ async def test_malformed_booking_id_gets_nothing():
     from app.presentation.routes import events as mod
 
     user = _user("user")
-    chunk = await mod._render_booking_event(AsyncMock(), user, "not-a-uuid")
+    chunk = await mod._render_booking_event(user, "not-a-uuid")
     assert chunk is None
 
 
@@ -135,7 +135,7 @@ async def test_owner_receives_environment_event():
     env = _environment(str(owner.id))
     with patch.object(mod, "_env_repo") as mock_repo:
         mock_repo.get = AsyncMock(return_value=env)
-        chunk = await mod._render_environment_event(AsyncMock(), owner, str(env.id))
+        chunk = await mod._render_environment_event(owner, str(env.id))
 
     assert chunk is not None
     assert chunk.startswith(f"event: environment-{env.id}\n")
@@ -149,7 +149,7 @@ async def test_non_owner_gets_nothing_for_environment_event():
     env = _environment("someone-else")
     with patch.object(mod, "_env_repo") as mock_repo:
         mock_repo.get = AsyncMock(return_value=env)
-        chunk = await mod._render_environment_event(AsyncMock(), stranger, str(env.id))
+        chunk = await mod._render_environment_event(stranger, str(env.id))
 
     assert chunk is None
 
@@ -161,7 +161,7 @@ async def test_unknown_environment_id_gets_nothing():
     user = _user("user")
     with patch.object(mod, "_env_repo") as mock_repo:
         mock_repo.get = AsyncMock(side_effect=EnvironmentNotFoundError("nope"))
-        chunk = await mod._render_environment_event(AsyncMock(), user, str(uuid4()))
+        chunk = await mod._render_environment_event(user, str(uuid4()))
 
     assert chunk is None
 
@@ -175,6 +175,68 @@ def test_sse_event_prefixes_every_line_with_data():
     assert lines[0] == "event: booking-abc"
     assert lines[1:-1] == ["data: <tr>", "data: <td>x</td>", "data: </tr>"]
     assert chunk.endswith("\n\n")  # blank line terminates the SSE event
+
+
+# ── #407: SSE connection must not pin a DB pool connection for the tab's lifetime ──
+@pytest.mark.asyncio
+async def test_events_stream_closes_injected_session_before_streaming():
+    """The `require_user` auth check's session must be released immediately, not held open
+    for the life of the SSE connection — otherwise every open tab pins a pool connection."""
+    from app.presentation.routes import events as mod
+
+    user = _user("user")
+    fake_session = AsyncMock()
+
+    await mod.events_stream(request=AsyncMock(), session=fake_session, current_user=user)
+
+    fake_session.close.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_render_booking_event_opens_and_closes_its_own_short_lived_session():
+    """Each row render opens a fresh session and closes it immediately after — not one session
+    shared for the whole SSE connection (#407)."""
+    from app.presentation.routes import events as mod
+
+    owner = _user("user")
+    booking = _booking(str(owner.id))
+    fake_session = AsyncMock()
+    fake_session_cm = AsyncMock()
+    fake_session_cm.__aenter__.return_value = fake_session
+    fake_session_cm.__aexit__.return_value = False
+
+    with patch.object(mod, "_booking_repo") as mock_repo, \
+            patch.object(mod, "AsyncSessionLocal", return_value=fake_session_cm) as mock_sessionmaker:
+        mock_repo.get = AsyncMock(return_value=booking)
+        mock_repo.queue_position = AsyncMock(return_value=None)
+        chunk = await mod._render_booking_event(owner, str(booking.id))
+
+    assert chunk is not None
+    mock_sessionmaker.assert_called_once_with()
+    mock_repo.get.assert_awaited_once_with(fake_session, booking.id)
+    fake_session_cm.__aexit__.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_render_environment_event_opens_and_closes_its_own_short_lived_session():
+    from app.presentation.routes import events as mod
+
+    owner = _user("user")
+    env = _environment(str(owner.id))
+    fake_session = AsyncMock()
+    fake_session_cm = AsyncMock()
+    fake_session_cm.__aenter__.return_value = fake_session
+    fake_session_cm.__aexit__.return_value = False
+
+    with patch.object(mod, "_env_repo") as mock_repo, \
+            patch.object(mod, "AsyncSessionLocal", return_value=fake_session_cm) as mock_sessionmaker:
+        mock_repo.get = AsyncMock(return_value=env)
+        chunk = await mod._render_environment_event(owner, str(env.id))
+
+    assert chunk is not None
+    mock_sessionmaker.assert_called_once_with()
+    mock_repo.get.assert_awaited_once_with(fake_session, env.id)
+    fake_session_cm.__aexit__.assert_awaited_once()
 
 
 # ── row templates: sse-swap replaces the 3s poll, gated the same as the old trigger ─
