@@ -31,6 +31,29 @@ def _encrypt_secret_vars(raw: dict) -> dict:
     return encrypt_dict(raw, settings.SECRETS_ENCRYPTION_KEY)
 
 
+# The UI masks existing secret values as ●●● and submits this same string for any key the admin
+# left untouched (ansible_vars_editor.js). Keep both sides in sync.
+SECRET_UNCHANGED_SENTINEL = "●●●"  # ●●●
+
+
+def _merge_secret_vars(existing_encrypted: dict, submitted: dict) -> tuple[dict, list[str]]:
+    """Merge a submitted secret_vars mapping against the stored (encrypted) one, per-key.
+
+    A submitted value equal to the sentinel ●●● for a key that already exists reuses that key's
+    stored ciphertext verbatim (so the client never needs the plaintext of secrets it isn't
+    changing). Any other value is a new plaintext secret to encrypt. Keys absent from *submitted*
+    are dropped. Returns the new encrypted dict plus the keys whose value was (re)encrypted.
+    """
+    preserved: dict = {}
+    to_encrypt: dict = {}
+    for key, value in submitted.items():
+        if value == SECRET_UNCHANGED_SENTINEL and key in existing_encrypted:
+            preserved[key] = existing_encrypted[key]
+        else:
+            to_encrypt[key] = value
+    return {**preserved, **_encrypt_secret_vars(to_encrypt)}, list(to_encrypt.keys())
+
+
 class RoleRepository:
     async def list_all(self, session: AsyncSession) -> list[Role]:
         result = await session.execute(select(RoleModel).order_by(RoleModel.name))
@@ -87,13 +110,13 @@ class RoleRepository:
         for key, value in fields.items():
             setattr(model, key, value)
         if secret_vars is not None:
-            encrypted = _encrypt_secret_vars(secret_vars)
-            model.secret_vars = encrypted
-            if encrypted:
+            merged, changed_keys = _merge_secret_vars(model.secret_vars or {}, secret_vars)
+            model.secret_vars = merged
+            if changed_keys:
                 logger.info(
                     "role_secret_vars_changed",
                     extra={"event": "role_secret_vars_changed", "actor": actor,
-                           "role_id": str(role_id), "keys": sorted(encrypted.keys())},
+                           "role_id": str(role_id), "keys": sorted(changed_keys)},
                 )
         await session.commit()
         await session.refresh(model)
