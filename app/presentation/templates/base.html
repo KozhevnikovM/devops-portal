@@ -5,8 +5,33 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}DevOps Portal{% endblock %}</title>
     <link rel="stylesheet" href="/static/css/tailwind.css?v=2">
+    <style>
+      /* Key-value editor for Ansible variable fields (ansible_vars_editor.js). Kept as a
+         self-contained block so it doesn't depend on Tailwind's purged utility set. */
+      .kv-tabs { display: flex; gap: .25rem; margin-bottom: .375rem; }
+      .kv-tab { font-size: .75rem; padding: .125rem .5rem; border-radius: .25rem;
+                border: 1px solid #374151; color: #9ca3af; background: transparent; cursor: pointer; }
+      .kv-tab.kv-active { background: #374151; color: #e5e7eb; }
+      .kv-rows { display: flex; flex-direction: column; gap: .375rem; }
+      .kv-row { display: flex; gap: .375rem; align-items: center; }
+      .kv-key, .kv-val { background: #1f2937; border: 1px solid #374151; border-radius: .25rem;
+                padding: .375rem .5rem; color: #f3f4f6; font-size: .8125rem;
+                font-family: ui-monospace, SFMono-Regular, Menlo, monospace; min-width: 0; }
+      .kv-key { width: 40%; }
+      .kv-val { flex: 1; }
+      .kv-key:focus, .kv-val:focus { outline: none; border-color: #16a34a; }
+      .kv-remove { color: #f87171; background: transparent; border: none; cursor: pointer;
+                font-size: 1rem; line-height: 1; padding: 0 .25rem; }
+      .kv-remove:hover { color: #fca5a5; }
+      .kv-add { margin-top: .375rem; font-size: .75rem; color: #34d399; background: transparent;
+                border: none; cursor: pointer; padding: 0; }
+      .kv-add:hover { color: #6ee7b7; }
+      .kv-notice { margin-top: .375rem; font-size: .75rem; color: #fbbf24; }
+      .kv-editor textarea.kv-raw { width: 100%; }
+    </style>
     <script src="/static/js/htmx.min.js"></script>
     <script src="/static/js/htmx-sse.js"></script>
+    <script src="/static/js/ansible_vars_editor.js"></script>
     <script>
       (function () {
         // Close any open <details> dropdown (⋮ row menu, ☰ nav) when clicking outside it.

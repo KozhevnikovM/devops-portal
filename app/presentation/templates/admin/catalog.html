@@ -355,11 +355,13 @@
                         class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-full sm:w-56"
                         placeholder="Install Docker Engine">
                 </div>
-                <div class="flex flex-col gap-1.5 w-full sm:w-auto">
-                    <label class="text-xs text-gray-500" for="new-role-vars">Default vars (YAML)</label>
-                    <textarea id="new-role-vars" name="default_vars" rows="3" autocomplete="off"
-                        class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-full sm:w-56 font-mono"
-                        placeholder="version: latest"></textarea>
+                <div class="flex flex-col gap-1.5 w-full sm:w-64">
+                    <label class="text-xs text-gray-500" for="new-role-vars">Default vars</label>
+                    <div data-kv-editor data-kv-secret="false" class="w-full">
+                        <textarea id="new-role-vars" name="default_vars" rows="3" autocomplete="off"
+                            class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-green-600 w-full font-mono"
+                            placeholder="version: latest"></textarea>
+                    </div>
                 </div>
                 <div class="flex flex-col gap-1.5 w-full sm:w-auto">
                     <div id="role-create-error" class="text-xs h-4"></div>
