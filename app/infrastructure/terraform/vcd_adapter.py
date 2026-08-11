@@ -16,9 +16,12 @@ logger = logging.getLogger(__name__)
 _LOCK_ERROR_MARKER = "Error acquiring the state lock"
 _LOCK_ID_RE = re.compile(r"^\s*ID:\s*(\S+)", re.MULTILINE)
 
-# VCD rejects creating a vApp that already exists — happens when an apply created the vApp but a
-# reboot (SIGKILL) killed terraform before the new resource was persisted to state.
+# VCD rejects creating a resource that already exists — happens when an apply created it in VCD but a
+# reboot (SIGKILL) killed terraform before the new resource was persisted to state. Two forms, both
+# recoverable the same way (destroy the vApp, which cascades to whatever partial resources it holds,
+# then re-apply): the vApp itself is orphaned, or the vApp is tracked but the VM inside it is orphaned.
 _ALREADY_EXISTS_RE = re.compile(r"entity (\S+) already exists")
+_VM_ALREADY_EXISTS_RE = re.compile(r'already a VM named "([^"]+)"')
 
 
 class TerraformError(Exception):
@@ -188,20 +191,24 @@ class TerraformVcdAdapter:
         try:
             await self._apply(workspace_dir, on_progress, cred_env=cred_env)
         except TerraformError as exc:
-            if not self._is_orphaned_vapp(str(exc), config["name"]):
+            if not self._is_orphaned_resource(str(exc), config["name"]):
                 raise
-            # The vApp exists in VCD but not in state (an apply created it, then a reboot killed
-            # terraform before it persisted state) — refresh can't reconcile a resource it never
-            # recorded. Import the orphan, destroy it (which also clears any partial VMs/networks
-            # inside the vApp), and apply again from a clean slate.
+            # A resource we own exists in VCD but not in state (an apply created it, then a reboot
+            # killed terraform before it persisted state) — refresh can't reconcile a resource it
+            # never recorded. Two shapes: the vApp itself is orphaned, or the vApp is tracked but the
+            # VM inside it is orphaned. Both recover the same way: make sure the vApp is in state
+            # (import it only if it isn't already managed — importing a tracked resource errors),
+            # destroy it (which also clears any partial VMs/networks inside the vApp), and apply
+            # again from a clean slate.
             logger.warning(
-                "vApp %s exists in VCD but not in state — importing, destroying, recreating",
+                "Resource for %s exists in VCD but not in state — reconciling by destroy + recreate",
                 config["name"],
             )
             if on_progress:
-                on_progress(f"Recovering orphaned vApp {config['name']}")
-            import_id = f"{settings.VCD_ORG}.{settings.VCD_VDC}.{config['name']}"
-            await self._run("import", "-no-color", "vcd_vapp.this", import_id, cwd=workspace_dir, on_progress=on_progress, extra_env=cred_env)
+                on_progress(f"Recovering orphaned resource for {config['name']}")
+            if not await self._vapp_in_state(workspace_dir, on_progress=on_progress, cred_env=cred_env):
+                import_id = f"{settings.VCD_ORG}.{settings.VCD_VDC}.{config['name']}"
+                await self._run("import", "-no-color", "vcd_vapp.this", import_id, cwd=workspace_dir, on_progress=on_progress, extra_env=cred_env)
             await self._destroy_state(workspace_id, workspace_dir, on_progress=on_progress, cred_env=cred_env)
             await self._apply(workspace_dir, on_progress, cred_env=cred_env)
 
@@ -221,10 +228,24 @@ class TerraformVcdAdapter:
         )
 
     @staticmethod
-    def _is_orphaned_vapp(message: str, vapp_name: str) -> bool:
-        """True if `message` is a VCD 'entity already exists' conflict for our own vApp."""
-        match = _ALREADY_EXISTS_RE.search(message)
-        return match is not None and match.group(1) == vapp_name
+    def _is_orphaned_resource(message: str, name: str) -> bool:
+        """True if `message` is a VCD 'already exists' conflict for our own resource.
+
+        Covers both recoverable shapes, each naming our own `name`:
+        - the vApp is orphaned: ``entity <name> already exists``
+        - the vApp is tracked but the VM inside it is orphaned: ``already a VM named "<name>"``
+        A conflict for a different name is not ours to reconcile and returns False.
+        """
+        vapp = _ALREADY_EXISTS_RE.search(message)
+        if vapp is not None and vapp.group(1) == name:
+            return True
+        vm = _VM_ALREADY_EXISTS_RE.search(message)
+        return vm is not None and vm.group(1) == name
+
+    async def _vapp_in_state(self, workspace_dir: Path, on_progress=None, cred_env: dict | None = None) -> bool:
+        """Whether ``vcd_vapp.this`` is already tracked in this workspace's terraform state."""
+        listed = await self._run("state", "list", cwd=workspace_dir, on_progress=on_progress, extra_env=cred_env)
+        return any(line.strip() == "vcd_vapp.this" for line in listed.splitlines())
 
     async def destroy(
         self,

@@ -1,0 +1,4 @@
+schema: spec-driven
+created: 2026-08-10
+goal: "Recover provisioning when a VM already exists in VCD but is absent from
+  terraform state (issue #415)"

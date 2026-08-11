@@ -1138,14 +1138,31 @@ returns it to the pool. See **Booking Queue** below for what happens when the po
 
 Roles are reusable configuration units applied to a provisioned VM. Each entry records a `name`,
 the **Ansible role** directory it maps to (`ansible_role`, under `ansible/roles/`), an optional
-description, and **default variables** entered as a **JSON object** (invalid JSON is rejected
-inline).
+description, and **default variables**.
+
+Default variables are edited with a **key-value editor** — one `[Key] [Value]` row per variable,
+with **+ Add variable** and remove (`×`) controls, so you don't have to hand-write YAML/JSON.
+Values are typed the way YAML would read them (`3` → integer, `true` → boolean, everything else a
+string). A **Key-Value | Raw** toggle switches to a raw YAML/JSON textarea for complex or nested
+values; the editor opens in **Raw** automatically when existing content isn't a flat key-value
+mapping. Whatever you enter is serialized to a JSON object on submit (invalid Raw content is
+rejected inline).
 
 Roles may also carry **secret variables** — sensitive Ansible variables (passwords, tokens, API
-keys) stored encrypted in the database. In the Edit form a **Secret vars** textarea accepts a JSON
-object; values are Fernet-encrypted before storage. The read view shows key names only
-(`db_password=●●● api_token=●●●`) — values are never rendered. On edit, **leave the field blank
-to keep existing secrets**; supply `{}` to clear them; supply a full JSON object to replace all.
+keys) stored encrypted in the database. The **Secret vars** editor works the same way, with
+masking: existing secret keys load as rows whose value shows `●●●` and is never revealed. Editing
+is **per-key**:
+
+- **Leave a row masked (`●●●`)** to keep that secret unchanged.
+- **Type over the value** to replace just that one secret.
+- **Add a row** for a new secret; **remove a row** (`×`) to delete that secret.
+- **Leave the whole editor empty** to keep all existing secrets; switch to **Raw** and enter `{}`
+  to clear them all.
+
+Values are Fernet-encrypted before storage, and the read view (table) shows key names only
+(`db_password=●●● api_token=●●●`). Unchanged (masked) secrets reuse their stored ciphertext
+verbatim — the browser never handles their plaintext, and only the keys you actually changed are
+re-encrypted.
 
 > **Requires `SECRETS_ENCRYPTION_KEY`** — generate once with
 > `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` and
@@ -1163,7 +1180,7 @@ Setting it to `false` disables the feature across the whole stack without data l
 
 | Layer | Behaviour when disabled |
 |---|---|
-| Admin UI | Secret vars textarea and masked key list are hidden |
+| Admin UI | Secret vars editor and masked key list are hidden |
 | API (`POST`/`PATCH /api/roles`) | `secret_vars` field is accepted but silently ignored |
 | Booking snapshot | `secret_vars` always written as `{}` — new bookings carry no secrets |
 | Ansible runner | Decrypt/`secrets.yml` step is skipped unconditionally |

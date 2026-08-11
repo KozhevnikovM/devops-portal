@@ -121,29 +121,28 @@ Before writing code, think about the design first:
 - **Apply design principles** — respect the one-way dependency rule, keep each use case to one business operation, separate async (FastAPI/domain) from sync (Celery) concerns.
 - **Minimize special-case handling** — prefer a single general path over branches for edge cases. If you find yourself adding an `if` for a specific input, ask whether the model can be reshaped so the case stops being special.
 
-## Feature Planning
+## Spec-Driven Development (OpenSpec)
 
-When planning or creating a new feature:
+Every new feature **and** every bug fix follows spec-driven development (SDD) through OpenSpec, and ships as **two pull requests**: a spec PR first, then an implementation PR. This replaces the old "write a `docs/features/` or `docs/bugfix/` doc, then implement" process for new work — those directories stay as historical reference only (see **Feature/bugfix history as reference** above); do not add new docs there.
 
-1. Save a feature description document in `docs/features/` covering: goal, what changes (API, CLI, DB migrations), and expected behaviour/edge cases.
-2. Ask the user to review the feature description and wait for explicit approval ("ok", "looks good", etc.) before writing any code.
-3. Only begin implementation after the user confirms.
+The two-PR flow, in order:
 
-When a feature is complete:
-- Write tests covering the new behaviour (see **Testing** below).
-- Update `docs/admin-guide.md` and `docs/api-reference.md` to reflect any new or changed CLI commands, API endpoints, and workflows.
+### 1. Spec PR — the plan (no implementation code)
 
-## Bug Fixing
+1. Create the change with `/opsx:propose` (use `/opsx:explore` first if the problem needs thinking through). It scaffolds the planning artifacts under `openspec/changes/<change-name>/`: `proposal.md`, `specs/`, `design.md`, `tasks.md`. For a feature the proposal states the goal and scope; for a bug fix it states the root cause and expected behaviour after the fix.
+2. Validate with `openspec validate --change "<change-name>"` and revise with `/opsx:update` as needed.
+3. On a **spec branch** (see **Git Workflow**), open a PR that contains **only** the spec (`openspec/changes/<change-name>/`) — no application code.
+4. Wait for the spec to be reviewed and **approved**, then merge the spec PR into `main`. **Do not write any implementation code until the spec PR is merged.** If review asks for changes, amend the artifacts with `/opsx:update` on the same branch.
 
-When fixing a bug, follow the same process as feature planning:
+### 2. Implementation PR — apply + archive
 
-1. Save a bugfix description document in `docs/bugfix/` covering: root cause, what changes, and expected behaviour after the fix.
-2. Ask the user to review the bugfix description and wait for explicit approval before writing any code.
-3. Only begin implementation after the user confirms.
+1. Start a fresh branch off `main` (which now carries the approved spec).
+2. `/opsx:apply --change "<change-name>"` — implement the tasks in `tasks.md`, checking each off as it lands. Write tests as you go (a feature: cover the new behaviour, see **Testing**; a bug: a regression test that fails before the fix and passes after) and verify at runtime, not just statically.
+3. Update `docs/admin-guide.md` and `docs/api-reference.md` for any user-facing change (API endpoints, CLI commands, workflows), and run the `py-review` quality gate on changed Python.
+4. When every task is done and verified, archive the change with `/opsx:archive` — it moves the change into `openspec/changes/archive/` and folds its delta specs into the main specs.
+5. Open the implementation PR with the code, doc updates, **and** the archived spec.
 
-When a bugfix is complete:
-- Write a regression test that fails before the fix and passes after.
-- If the fix changes any user-facing behaviour (CLI output, API responses, workflows), update `docs/admin-guide.md` and `docs/api-reference.md` accordingly.
+If implementation reveals the plan is wrong, update the artifacts (`/opsx:update`) rather than silently diverging — amend the spec PR if it hasn't merged yet, or raise a follow-up spec change if it has. The spec is the source of truth.
 
 ## Git Workflow
 
@@ -152,6 +151,8 @@ When a bugfix is complete:
 - Never force-push to the main branch.
 - Never force-push
 - Never add `Co-Authored-By: Claude` or any AI co-author line to commit messages.
+- Each change is two branches/PRs (see **Spec-Driven Development**): a spec branch, then — after the spec PR merges — a fresh implementation branch off `main`.
 - Branch naming conventions:
-  - Features: `feature/<issue-number>/<short-description>` (e.g. `feature/14/product-group-and-purl`)
-  - Bug fixes: `bugfix/<issue-number>/<short-description>` (e.g. `bugfix/13/pypi-missing-licenses`)
+  - Spec PRs: `spec/<issue-number>/<short-description>` (e.g. `spec/14/product-group-and-purl`)
+  - Feature implementation: `feature/<issue-number>/<short-description>` (e.g. `feature/14/product-group-and-purl`)
+  - Bug-fix implementation: `bugfix/<issue-number>/<short-description>` (e.g. `bugfix/13/pypi-missing-licenses`)

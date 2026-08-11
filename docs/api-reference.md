@@ -1493,12 +1493,21 @@ env var; controlled by `SECRET_VARS_ENABLED` feature flag.
 **Admin write endpoints:** `POST /api/roles` (201), `PATCH /api/roles/{id}`,
 `DELETE /api/roles/{id}` (deactivate). `default_vars` and `secret_vars` must be JSON objects;
 duplicate `name` → `409`. `secret_vars` is **write-only** — `GET /api/roles` and `RoleResponse`
-never return secret values. On `PATCH`, omitting `secret_vars` keeps existing secrets; `{}` clears them.
+never return secret values. On `PATCH`, omitting `secret_vars` keeps all existing secrets; `{}`
+clears them all. Within a **non-empty** `secret_vars` object, keys are merged per-key: a key
+whose value is the mask sentinel `●●●` keeps its existing stored (encrypted) value untouched, any
+other value replaces or adds that key, and existing keys **not** present in the object are removed.
+This lets the admin UI submit unchanged secrets as `●●●` without ever holding their plaintext (see
+the key-value editor in the [admin guide](admin-guide.md)); a real secret whose literal value is
+`●●●` therefore can't be set on a key that already exists — clear it first, or set it via a
+different value.
 
 | Condition | Outcome |
 |---|---|
 | `SECRET_VARS_ENABLED=false` | `secret_vars` accepted but ignored |
-| `secret_vars` non-empty, key absent | `422` — fail-closed, never stores plaintext |
+| `secret_vars` non-empty, key absent (no `SECRETS_ENCRYPTION_KEY`) | `422` — fail-closed, never stores plaintext |
+| `secret_vars` value `●●●` on an **existing** key | that key's stored ciphertext is reused verbatim (kept unchanged) |
+| `secret_vars` value `●●●` on a **new** key | stored literally as a new secret (nothing to preserve) |
 | Wrong key on worker at provision time | Booking goes `FAILED` immediately, no retries |
 
 ---
