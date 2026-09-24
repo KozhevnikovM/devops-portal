@@ -18,16 +18,25 @@ Every committed change to a booking that is not a progress-output line SHALL pub
 
 ### Requirement: Progress notifications are coalesced per booking
 
-Row-changed notifications caused by progress output (Ansible, startup-script, SSH-wait, or Terraform progress lines) SHALL be rate-limited per booking. At most one progress notification is published per booking in each coalescing window. The window is configurable and defaults to 750 ms. Every progress line SHALL still be persisted. Only the notification is coalesced.
+Row-changed notifications caused by progress output (Ansible, startup-script, SSH-wait, or Terraform progress lines) SHALL be rate-limited per booking. A progress producer (one provisioning or teardown task execution for a booking) SHALL publish at most one progress notification for that booking in each coalescing window. A booking normally has a single active producer, so this is at most one per window per booking. When producers overlap for the same booking (for example a teardown that starts while post-provision configuration is still streaming output), each producer SHALL be bounded independently, so the per-booking rate is at most one per window per overlapping producer. The window is configurable and defaults to 750 ms. Every progress line SHALL still be persisted. Only the notification is coalesced.
 
 #### Scenario: A burst of 100 lines within one second
-- **WHEN** a single booking records 100 progress lines within one second, with the default 750 ms window
+- **WHEN** a single producer records 100 progress lines for a booking within one second, with the default 750 ms window
 - **THEN** at most 3 progress row-changed notifications are published for that booking during and immediately after the burst
 - **AND** all 100 lines are persisted to the booking's provisioning log
 
 #### Scenario: Isolated progress line
 - **WHEN** a booking records a progress line and no progress notification has been published for it within the current window
 - **THEN** a row-changed notification is published immediately for that line
+
+#### Scenario: Progress line right after a lifecycle notification
+- **WHEN** a lifecycle notification for a booking is published (for example the status message is cleared at a step boundary) and the next progress line for that booking follows shortly after, within one coalescing window
+- **THEN** that progress line publishes a row-changed notification immediately, because a lifecycle notification does not start or extend a progress coalescing window
+
+#### Scenario: Overlapping producers for one booking
+- **WHEN** two producers record bursts of progress lines for the same booking concurrently
+- **THEN** each producer publishes at most one progress notification per window for that booking, plus its own trailing notification
+- **AND** each producer's final progress state is still announced
 
 #### Scenario: Coalescing disabled
 - **WHEN** the coalescing window is configured as 0
@@ -44,7 +53,12 @@ When progress lines are suppressed inside a coalescing window, the system SHALL 
 
 #### Scenario: Lifecycle change supersedes a pending trailing notification
 - **WHEN** a trailing progress notification is pending for a booking and a lifecycle change for that booking is published
-- **THEN** the pending trailing progress notification is discarded, because the lifecycle notification already causes a render of the latest state
+- **THEN** the pending trailing progress notification is discarded on a best-effort basis, because the lifecycle notification already causes a render of the latest state
+- **AND** at most one progress notification for that booking, one that was already being published when the lifecycle change happened, may be delivered after the lifecycle notification
+
+#### Scenario: A late progress notification never shows stale state
+- **WHEN** a progress notification for a booking is delivered after a lifecycle notification for the same booking
+- **THEN** a subscriber rendering the booking in response shows the booking's current state, including the lifecycle change, because notifications only signal that a booking changed and carry no row state
 
 ### Requirement: Bookings are throttled independently
 
