@@ -59,12 +59,13 @@ When progress lines are suppressed inside a coalescing window, the system SHALL 
 #### Scenario: Lifecycle change supersedes a pending trailing notification
 - **WHEN** a trailing progress notification is pending for a booking and a lifecycle change for that booking is published
 - **THEN** the pending trailing progress notification is discarded on a best-effort basis, because the lifecycle notification already causes a render of the latest state
-- **AND** at most one progress notification for that booking, one that was already being published when the lifecycle change happened, may be delivered after the lifecycle notification
+- **AND** at most one progress notification for lines recorded *before* the lifecycle change, one that was already being published when the lifecycle change happened, may be delivered after the lifecycle notification
+- **AND** progress lines recorded *after* the lifecycle change are new progress. They are announced normally (see "Progress line right after a lifecycle notification" and its in-flight variant) and do not count toward that bound
 
 #### Scenario: Redis slower than the coalescing window
 - **WHEN** a progress notification for a booking takes longer than one coalescing window to publish, while more progress lines for that booking are recorded and then a lifecycle change is published
 - **THEN** no second progress notification for that booking starts until the first has returned
-- **AND** at most one progress notification for that booking is delivered after the lifecycle notification
+- **AND** at most one progress notification for lines recorded before the lifecycle change (the one already in flight) is delivered after the lifecycle notification
 
 #### Scenario: A late progress notification never shows stale state
 - **WHEN** a progress notification for a booking is delivered after a lifecycle notification for the same booking

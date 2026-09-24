@@ -131,8 +131,10 @@ class ProgressCoalescer:
     delay, so a slow Redis stretches the cadence instead of stacking concurrent publishes. This
     holds across a lifecycle ``cancel()`` too: if a publish is in flight, the entry is kept as a
     tombstone rather than forgotten, and a progress line recorded after the lifecycle event is
-    published as soon as that publish returns, not concurrently with it. The only progress
-    signal that can land after a lifecycle notification is therefore the one already in flight.
+    published as soon as that publish returns, not concurrently with it. So at most one *late*
+    progress signal (for lines recorded before the lifecycle event: the one already in flight)
+    can land after a lifecycle notification. Lines recorded after it are new progress and are
+    published normally.
 
     State is per process, so the bound is per producer (one task execution). Two producers
     overlapping for the same booking are each bounded independently.
@@ -172,8 +174,8 @@ class ProgressCoalescer:
         Forgetting rather than restarting the window means the next progress line is a leading
         edge again. If a publish is in flight, the entry stays as a tombstone until it returns,
         so that next line waits for it instead of running concurrently. Best-effort: the
-        in-flight publish still lands after the lifecycle one — harmless, since the subscriber
-        renders current DB state either way.
+        in-flight publish (for pre-lifecycle lines) still lands after the lifecycle one —
+        harmless, since the subscriber renders current DB state either way.
         """
         key = str(booking_id)
         with self._lock:

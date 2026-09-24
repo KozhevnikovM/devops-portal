@@ -401,7 +401,7 @@ def test_lifecycle_racing_a_deciding_timer_allows_at_most_one_late_progress(redi
     kinds = [p["kind"] for p in _published(redis_mock)]
     assert kinds == ["progress", "lifecycle", "progress"]        # the race really happened
     after_lifecycle = kinds[kinds.index("lifecycle") + 1:]
-    assert after_lifecycle.count("progress") <= 1
+    assert after_lifecycle.count("progress") <= 1  # no line recorded after lifecycle: all late
     assert scheduler.armed() == []                               # no further trailing armed
     scheduler.advance(5 * W)
     assert [p["kind"] for p in _published(redis_mock)] == kinds
@@ -438,7 +438,7 @@ def test_publish_slower_than_window_never_has_two_in_flight_for_one_booking(redi
     kinds = [p["kind"] for p in _published(redis_mock)]
     after_lifecycle = kinds[kinds.index("lifecycle") + 1:]
     assert state["max_in_flight"] == 1
-    assert after_lifecycle.count("progress") <= 1
+    assert after_lifecycle.count("progress") <= 1  # no line recorded after lifecycle: all late
     assert scheduler.armed() == []
     assert events._coalescer._entries == {}
 
@@ -494,7 +494,8 @@ def test_line_after_lifecycle_waits_for_the_in_flight_publish(redis_mock):
 
     kinds = [p["kind"] for p in _published(redis_mock)]
     assert state["max_in_flight"] == 1
-    assert kinds == ["progress", "lifecycle", "progress", "progress"]   # leading, lifecycle, A, B
+    # leading, lifecycle, A (the one late pre-lifecycle signal), B (new post-lifecycle progress)
+    assert kinds == ["progress", "lifecycle", "progress", "progress"]
     assert starts[-1] == state["a_returned_at"]                     # B right after A, no extra window
     assert len(scheduler.armed()) == 1                              # B opened a normal window
 
