@@ -20,6 +20,10 @@ Every pull request targeting `main` SHALL produce a CI check named `fast-tests` 
 - **WHEN** a new commit is pushed while an older `fast-tests` run for the same pull request is still running
 - **THEN** the obsolete run is cancelled and the newest commit is tested
 
+#### Scenario: Manual runs use a ref-based concurrency identity
+- **WHEN** `fast-tests` is started manually for two different refs
+- **THEN** each run uses its own ref-based concurrency group and neither run cancels the other
+
 ### Requirement: The fast test gate is reproducible locally
 
 The repository SHALL document one canonical command, `pytest tests/ -m "not integration"`, and CI SHALL execute that same command after installing `requirements-dev.txt`.

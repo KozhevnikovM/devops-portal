@@ -48,7 +48,7 @@ An import smoke check may be added only after executing it in a clean environmen
 
 ### D5. Cancel superseded runs per pull request
 
-Workflow concurrency is grouped by workflow and pull-request identity, with `cancel-in-progress: true`. A force-push or follow-up commit therefore replaces the stale run while independent PRs continue in parallel.
+Workflow concurrency uses the group `${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}` with `cancel-in-progress: true`. Pull-request runs therefore group by PR number, so a force-push or follow-up commit replaces the stale run while independent PRs continue in parallel. A manual `workflow_dispatch` event has no pull-request number and falls back to its full Git ref, so manual runs for different refs cannot collapse into one empty/null group and cancel each other.
 
 ### D6. Least-privilege workflow permissions
 

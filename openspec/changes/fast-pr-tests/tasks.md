@@ -2,7 +2,7 @@
 
 - [ ] 1.1 Verify the supported Python version from the production Dockerfile and add `.github/workflows/fast-tests.yml` for pull requests targeting `main` plus manual dispatch
 - [ ] 1.2 Configure least-privilege contents read permission, checkout, Python setup, pip installation from `requirements-dev.txt`, and `pytest tests/ -m "not integration"`
-- [ ] 1.3 Add per-PR concurrency with cancellation of superseded runs and keep the job id/name stable as `fast-tests`
+- [ ] 1.3 Add concurrency group `${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}` with cancellation of superseded runs, and keep the job id/name stable as `fast-tests`
 
 ## 2. Local reproducibility and isolation
 
