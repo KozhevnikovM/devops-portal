@@ -1,8 +1,9 @@
-## Purpose
+# live-row-updates Specification
 
+## Purpose
 Defines how row-visible booking changes are announced to live UI subscribers. Lifecycle changes are delivered immediately. High-frequency progress output is coalesced per booking, so notification volume stays bounded while the final visible state is still guaranteed to be delivered.
 
-## ADDED Requirements
+## Requirements
 
 ### Requirement: Lifecycle changes are announced immediately
 
@@ -33,6 +34,11 @@ Row-changed notifications caused by progress output (Ansible, startup-script, SS
 - **WHEN** a lifecycle notification for a booking is published (for example the status message is cleared at a step boundary) and the next progress line for that booking follows shortly after, within one coalescing window
 - **THEN** that progress line publishes a row-changed notification immediately, because a lifecycle notification does not start or extend a progress coalescing window
 
+#### Scenario: Progress line after a lifecycle notification while a progress publish is still in flight
+- **WHEN** a progress notification for a booking is still being published (Redis slower than the window), a lifecycle notification for that booking is published, and then a new progress line for that booking is recorded before the in-flight publish returns
+- **THEN** the new line's progress notification is not published concurrently with the in-flight one
+- **AND** it is published as soon as the in-flight publish returns, without waiting for a further coalescing window
+
 #### Scenario: Overlapping producers for one booking
 - **WHEN** two producers record bursts of progress lines for the same booking concurrently
 - **THEN** each producer publishes at most one progress notification per window for that booking, plus its own trailing notification
@@ -44,7 +50,7 @@ Row-changed notifications caused by progress output (Ansible, startup-script, SS
 
 ### Requirement: The final progress state of a burst is always announced
 
-When progress lines are suppressed inside a coalescing window, the system SHALL publish one trailing row-changed notification for that booking no later than one window after the last suppressed line. Subscribers can then render the final progress state without waiting for another progress line, a lifecycle change, or the fallback poll.
+When progress lines are suppressed inside a coalescing window, the system SHALL publish one trailing row-changed notification for that booking no later than one window after the last suppressed line. If a publish for that booking is still in flight at that point (Redis slower than the window), the trailing notification SHALL be published as soon as that publish returns. A producer SHALL NOT have more than one progress notification for the same booking in flight at a time. Subscribers can then render the final progress state without waiting for another progress line, a lifecycle change, or the fallback poll.
 
 #### Scenario: Burst followed by silence
 - **WHEN** a booking records a burst of progress lines and then records nothing for several seconds
@@ -54,7 +60,13 @@ When progress lines are suppressed inside a coalescing window, the system SHALL 
 #### Scenario: Lifecycle change supersedes a pending trailing notification
 - **WHEN** a trailing progress notification is pending for a booking and a lifecycle change for that booking is published
 - **THEN** the pending trailing progress notification is discarded on a best-effort basis, because the lifecycle notification already causes a render of the latest state
-- **AND** at most one progress notification for that booking, one that was already being published when the lifecycle change happened, may be delivered after the lifecycle notification
+- **AND** at most one progress notification for lines recorded *before* the lifecycle change, one that was already being published when the lifecycle change happened, may be delivered after the lifecycle notification
+- **AND** progress lines recorded *after* the lifecycle change are new progress. They are announced normally (see "Progress line right after a lifecycle notification" and its in-flight variant) and do not count toward that bound
+
+#### Scenario: Redis slower than the coalescing window
+- **WHEN** a progress notification for a booking takes longer than one coalescing window to publish, while more progress lines for that booking are recorded and then a lifecycle change is published
+- **THEN** no second progress notification for that booking starts until the first has returned
+- **AND** at most one progress notification for lines recorded before the lifecycle change (the one already in flight) is delivered after the lifecycle notification
 
 #### Scenario: A late progress notification never shows stale state
 - **WHEN** a progress notification for a booking is delivered after a lifecycle notification for the same booking

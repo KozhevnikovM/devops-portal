@@ -8,9 +8,19 @@ Redis pub/sub has no delivery guarantee and no replay — a message published wh
 subscribed (a client mid-reconnect, or Redis itself restarting) is lost forever, silently. This
 is a deliberate trade against the bigger lift of Redis Streams; the row templates keep a much
 slower (60s) fallback poll as the safety net.
+
+Progress-only notifications (one per Ansible/script output line) go through a per-booking
+``ProgressCoalescer`` instead of being published directly (#440): at most one per
+``SSE_PROGRESS_COALESCE_MS`` window per producer, plus a trailing publish so the last line of a
+burst still reaches the UI. Every notification is an invalidation signal only — subscribers
+re-read the booking — so dropping intermediate progress signals loses nothing.
 """
 import json
 import logging
+import threading
+import time
+from collections.abc import Callable
+from typing import Literal, Protocol
 from uuid import UUID
 
 import redis as redis_lib
@@ -61,29 +71,238 @@ def get_async_redis() -> aioredis.Redis:
     return _async_redis
 
 
-def _payload(booking_id: UUID | str, environment_id: UUID | str | None) -> str:
+Kind = Literal["progress", "lifecycle"]
+
+
+def _payload(booking_id: UUID | str, environment_id: UUID | str | None, kind: Kind) -> str:
+    # `kind` lets subscribers treat progress-only changes differently (#441); a payload without
+    # one must be read as "lifecycle".
     return json.dumps({
         "booking_id": str(booking_id),
         "environment_id": str(environment_id) if environment_id else None,
+        "kind": kind,
     })
 
 
+def _sync_publish(booking_id: UUID | str, environment_id: UUID | str | None, kind: Kind) -> None:
+    try:
+        _get_sync_redis().publish(ROW_CHANGED_CHANNEL, _payload(booking_id, environment_id, kind))
+    except Exception:
+        logger.exception("Failed to publish row-changed event for booking %s", booking_id)
+
+
+class Timer(Protocol):
+    def cancel(self) -> None: ...
+
+
+TimerFactory = Callable[[float, Callable[[], None]], Timer]
+
+
+def _start_daemon_timer(delay: float, callback: Callable[[], None]) -> Timer:
+    timer = threading.Timer(delay, callback)
+    timer.daemon = True  # never holds up worker shutdown; a lost trailing signal is covered by the poll
+    timer.start()
+    return timer
+
+
+class _Entry:
+    __slots__ = ("cancelled", "environment_id", "in_flight", "pending", "timer")
+
+    def __init__(self, environment_id: UUID | str | None) -> None:
+        self.environment_id = environment_id
+        self.pending = False
+        self.timer: Timer | None = None
+        self.in_flight = False  # a publish for this booking is running (never more than one)
+        self.cancelled = False  # a lifecycle cancel() arrived while that publish was in flight
+
+
+class ProgressCoalescer:
+    """Per-booking leading + trailing throttle for progress notifications (#440).
+
+    A booking has an entry exactly while its coalescing window is open. The first line of a burst
+    publishes immediately and opens a window; lines inside it only mark the entry pending. When
+    the window closes, a pending entry publishes once (the trailing edge) and opens the next
+    window; an idle one is forgotten. A burst of duration D therefore publishes at most
+    ``ceil(D / window) + 1`` times, the last no later than one window after its final line (or,
+    if Redis is slower than that, as soon as the previous publish returns).
+
+    **At most one publish per booking is in flight.** A window's timer is armed only once the
+    publish that opened it has returned, with the remaining ``window - publish duration`` as its
+    delay, so a slow Redis stretches the cadence instead of stacking concurrent publishes. This
+    holds across a lifecycle ``cancel()`` too: if a publish is in flight, the entry is kept as a
+    tombstone rather than forgotten, and a progress line recorded after the lifecycle event is
+    published as soon as that publish returns, not concurrently with it. So at most one *late*
+    progress signal (for lines recorded before the lifecycle event: the one already in flight)
+    can land after a lifecycle notification. Lines recorded after it are new progress and are
+    published normally.
+
+    State is per process, so the bound is per producer (one task execution). Two producers
+    overlapping for the same booking are each bounded independently.
+    """
+
+    def __init__(
+        self,
+        window_seconds: float,
+        publish: Callable[[UUID | str, UUID | str | None], None],
+        *,
+        timer_factory: TimerFactory = _start_daemon_timer,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self._window = window_seconds
+        self._publish = publish
+        self._timer_factory = timer_factory
+        self._clock = clock
+        self._lock = threading.Lock()
+        self._entries: dict[str, _Entry] = {}
+
+    def submit(self, booking_id: UUID | str, environment_id: UUID | str | None) -> None:
+        key = str(booking_id)
+        with self._lock:
+            entry = self._entries.get(key)
+            if entry is not None:
+                entry.pending = True
+                entry.environment_id = environment_id
+                return
+            entry = _Entry(environment_id)
+            entry.in_flight = True
+            self._entries[key] = entry
+        self._publish_then_open_window(key, entry, environment_id)
+
+    def cancel(self, booking_id: UUID | str) -> None:
+        """Forget the booking's window (called by a lifecycle publish).
+
+        Forgetting rather than restarting the window means the next progress line is a leading
+        edge again. If a publish is in flight, the entry stays as a tombstone until it returns,
+        so that next line waits for it instead of running concurrently. Best-effort: the
+        in-flight publish (for pre-lifecycle lines) still lands after the lifecycle one —
+        harmless, since the subscriber renders current DB state either way.
+        """
+        key = str(booking_id)
+        with self._lock:
+            entry = self._entries.get(key)
+            if entry is None:
+                return
+            timer, entry.timer = entry.timer, None
+            entry.pending = False
+            if entry.in_flight:
+                entry.cancelled = True
+            else:
+                del self._entries[key]
+        if timer is not None:
+            timer.cancel()
+
+    def _publish_then_open_window(
+        self, key: str, entry: _Entry, environment_id: UUID | str | None,
+    ) -> None:
+        """Run the entry's one in-flight publish, then decide what follows it. Loops only when a
+        line arrived after a lifecycle cancel: that publish goes out immediately, as a leading
+        edge, once the previous one has returned."""
+        while True:
+            # Outside the lock: a slow or unreachable Redis must not stall other bookings.
+            started = self._clock()
+            try:
+                self._publish(key, environment_id)
+            except Exception:
+                # Best-effort; must never leave the entry marked in flight.
+                logger.exception("Failed to publish progress event for booking %s", key)
+            with self._lock:
+                entry.in_flight = False
+                if self._entries.get(key) is not entry:
+                    return
+                if entry.cancelled:
+                    entry.cancelled = False
+                    if not entry.pending:
+                        del self._entries[key]
+                        return
+                    entry.pending = False
+                    environment_id = entry.environment_id
+                    entry.in_flight = True
+                    continue
+                try:
+                    entry.timer = self._timer_factory(
+                        max(0.0, self._window - (self._clock() - started)),
+                        lambda: self._on_window_closed(key, entry),
+                    )
+                except Exception:
+                    # Can't open the window: forget the booking so its next line is a leading
+                    # edge again, rather than leaving a timer-less entry that swallows it.
+                    del self._entries[key]
+                    logger.exception("Failed to arm progress coalescing timer for booking %s", key)
+                return
+
+    def _on_window_closed(self, key: str, entry: _Entry) -> None:
+        with self._lock:
+            if self._entries.get(key) is not entry or entry.timer is None:
+                return  # cancelled (or superseded) before this timer got the lock
+            entry.timer = None
+            if not entry.pending:
+                del self._entries[key]
+                return
+            entry.pending = False
+            entry.in_flight = True
+            environment_id = entry.environment_id
+        self._publish_then_open_window(key, entry, environment_id)
+
+
+_coalescer: ProgressCoalescer | None = None
+_coalescer_lock = threading.Lock()
+
+
+def _get_coalescer() -> ProgressCoalescer | None:
+    """Lazy per-process singleton; ``None`` when coalescing is disabled (window 0)."""
+    global _coalescer
+    if settings.SSE_PROGRESS_COALESCE_MS <= 0:
+        return None
+    with _coalescer_lock:
+        if _coalescer is None:
+            _coalescer = ProgressCoalescer(
+                settings.SSE_PROGRESS_COALESCE_MS / 1000,
+                lambda booking_id, environment_id: _sync_publish(booking_id, environment_id, "progress"),
+            )
+        return _coalescer
+
+
 def publish_row_changed(*, booking_id: UUID | str, environment_id: UUID | str | None = None) -> None:
-    """Sync publish — called by BookingRepository's sync_* methods (Celery worker path).
+    """Sync lifecycle publish — called by BookingRepository's sync_* methods (Celery worker path).
+
+    Always immediate. Also drops any open progress window for the booking: this notification
+    already causes a render of the latest state.
 
     Best-effort: a publish failure (e.g. Redis briefly unreachable) must never fail the caller's
     already-committed write, so any error is logged and swallowed. The 60s fallback poll covers
     a dropped notification either way.
     """
+    coalescer = _coalescer
+    if coalescer is not None:
+        coalescer.cancel(booking_id)
+    _sync_publish(booking_id, environment_id, "lifecycle")
+
+
+def publish_progress_changed(*, booking_id: UUID | str, environment_id: UUID | str | None = None) -> None:
+    """Sync progress publish — called by ``BookingRepository.sync_record_progress`` (#440).
+
+    Coalesced per booking; publishes immediately when coalescing is disabled. Best-effort like
+    ``publish_row_changed``, including the trailing publish fired from the coalescer's timer.
+    """
     try:
-        _get_sync_redis().publish(ROW_CHANGED_CHANNEL, _payload(booking_id, environment_id))
+        coalescer = _get_coalescer()
+        if coalescer is None:
+            _sync_publish(booking_id, environment_id, "progress")
+        else:
+            coalescer.submit(booking_id, environment_id)
     except Exception:
-        logger.exception("Failed to publish row-changed event for booking %s", booking_id)
+        # e.g. the timer thread couldn't be started — never fail the already-committed write.
+        logger.exception("Failed to publish progress event for booking %s", booking_id)
 
 
 async def apublish_row_changed(*, booking_id: UUID | str, environment_id: UUID | str | None = None) -> None:
-    """Async publish — called by BookingRepository's async methods (FastAPI route path)."""
+    """Async lifecycle publish — called by BookingRepository's async methods (FastAPI route path).
+
+    Nothing to cancel here: progress windows live in the worker process that produces them.
+    """
     try:
-        await get_async_redis().publish(ROW_CHANGED_CHANNEL, _payload(booking_id, environment_id))
+        await get_async_redis().publish(
+            ROW_CHANGED_CHANNEL, _payload(booking_id, environment_id, "lifecycle"),
+        )
     except Exception:
         logger.exception("Failed to publish row-changed event for booking %s", booking_id)

@@ -66,7 +66,7 @@ def test_sync_set_status_message_publishes(mock_row_changed_publish):
     sync_mock.assert_called_once_with(booking_id=model.id, environment_id=env_id)
 
 
-def test_sync_record_progress_publishes(mock_row_changed_publish):
+def test_sync_record_progress_publishes_coalesced_progress(mock_row_changed_publish):
     from app.infrastructure.repositories.booking_repo import BookingRepository
     sync_mock, _ = mock_row_changed_publish
     env_id = uuid4()
@@ -75,7 +75,10 @@ def test_sync_record_progress_publishes(mock_row_changed_publish):
 
     BookingRepository().sync_record_progress(session, model.id, "log line")
 
-    sync_mock.assert_called_once_with(booking_id=model.id, environment_id=env_id)
+    # Progress goes through the coalesced path (#440), never the immediate lifecycle one.
+    session.commit.assert_called_once()
+    sync_mock.progress.assert_called_once_with(booking_id=model.id, environment_id=env_id)
+    sync_mock.assert_not_called()
 
 
 # ── async update_status / extend / update_label ─────────────────────────────────

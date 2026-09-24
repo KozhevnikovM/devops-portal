@@ -37,8 +37,13 @@ def mock_row_changed_publish():
     """#388: BookingRepository publishes a Redis row-changed notification after every committed
     write. Autouse so the rest of the suite stays independent of a real Redis broker being
     reachable — tests exercising the publish behavior itself (tests/test_sse_row_changed.py) take
-    this fixture as a parameter and assert on the yielded mocks directly."""
+    this fixture as a parameter and assert on the yielded mocks directly.
+
+    Yields ``(sync_mock, async_mock)``; the progress-path mock (#440) is exposed as
+    ``sync_mock.progress`` so existing two-way unpacking keeps working."""
     with patch("app.infrastructure.repositories.booking_repo.publish_row_changed") as sync_mock, \
+         patch("app.infrastructure.repositories.booking_repo.publish_progress_changed") as progress_mock, \
          patch("app.infrastructure.repositories.booking_repo.apublish_row_changed",
                new=AsyncMock()) as async_mock:
+        sync_mock.progress = progress_mock
         yield sync_mock, async_mock
