@@ -33,6 +33,11 @@ Row-changed notifications caused by progress output (Ansible, startup-script, SS
 - **WHEN** a lifecycle notification for a booking is published (for example the status message is cleared at a step boundary) and the next progress line for that booking follows shortly after, within one coalescing window
 - **THEN** that progress line publishes a row-changed notification immediately, because a lifecycle notification does not start or extend a progress coalescing window
 
+#### Scenario: Progress line after a lifecycle notification while a progress publish is still in flight
+- **WHEN** a progress notification for a booking is still being published (Redis slower than the window), a lifecycle notification for that booking is published, and then a new progress line for that booking is recorded before the in-flight publish returns
+- **THEN** the new line's progress notification is not published concurrently with the in-flight one
+- **AND** it is published as soon as the in-flight publish returns, without waiting for a further coalescing window
+
 #### Scenario: Overlapping producers for one booking
 - **WHEN** two producers record bursts of progress lines for the same booking concurrently
 - **THEN** each producer publishes at most one progress notification per window for that booking, plus its own trailing notification

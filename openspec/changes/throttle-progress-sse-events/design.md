@@ -40,19 +40,25 @@ timer fires(entry):
   pending   -> pending = False; publish; then arm timer            (trailing edge, next window)
   idle      -> forget the entry                                    (window closes)
 cancel(id)  (called by a lifecycle publish for id):
-  forget the entry; cancel its timer if armed (best-effort)
+  cancel its timer if armed (best-effort); pending = False
+  no publish in flight -> forget the entry
+  publish in flight    -> keep it as a tombstone: cancelled = True
 
-"then arm timer" = after the publish returns, if the entry is still current:
-  arm timer(max(0, W - publish duration))
+after any publish returns ("then arm timer"):
+  cancelled, nothing new -> forget the entry
+  cancelled, pending     -> publish again now (leading edge of the next step), then decide again
+  otherwise              -> arm timer(max(0, W - publish duration))
 ```
 
-**At most one publish per booking is in flight.** A window's timer is armed only once the publish that opened it has returned. So a Redis publish slower than W can never let a second timer decide and publish concurrently for the same booking. The delay is the *remaining* window, `W - publish duration`, so the cadence stays at W when Redis is fast. When Redis is slower than W, the next publish starts as soon as the previous one returns: the cadence stretches instead of stacking publishes. This needs a monotonic clock (injectable, default `time.monotonic`) to measure the publish duration. (An earlier revision armed the next timer *before* publishing and needed no clock, but a slow publish could then overlap the next window's; see PR #447 review.)
+**At most one publish per booking is in flight.** A window's timer is armed only once the publish that opened it has returned. So a Redis publish slower than W can never let a second timer decide and publish concurrently for the same booking. The delay is the *remaining* window, `W - publish duration`, so the cadence stays at W when Redis is fast. When Redis is slower than W, the next publish starts as soon as the previous one returns: the cadence stretches instead of stacking publishes. This needs a monotonic clock (injectable, default `time.monotonic`) to measure the publish duration.
+
+The guarantee also holds **across a lifecycle boundary**. If `cancel` simply forgot an entry whose publish was still in flight, the next step's first progress line would find no entry and start a second, concurrent publish. So `cancel` keeps such an entry as a tombstone. A line recorded after the lifecycle event marks the tombstone pending, and when the in-flight publish returns, that line is published immediately, as a leading edge without waiting for a window. A normal window then opens. The "first line after a lifecycle event is immediate" rule therefore has one exception, spelled out in the spec: if a publish for that booking is still in flight, the line goes out as soon as that publish returns. (Second PR #447 review round. The alternative, narrowing the invariant to pre-lifecycle trailing publishes only, was rejected: it would let a slow Redis stack concurrent publishes at every step boundary.) (An earlier revision armed the next timer *before* publishing and needed no clock, but a slow publish could then overlap the next window's; see PR #447 review.)
 
 Idle entries clean themselves up one window after their last publish, so a leading-only entry can't linger.
 
 If arming a timer fails (e.g. a thread can't be started), the entry is not registered or is forgotten. A timer-less entry would otherwise swallow every later line for that booking.
 
-`cancel` **forgets** the entry rather than restarting its window. A lifecycle publish therefore does not open a new progress window. The first progress line after a step boundary (e.g. right after `sync_set_status_message(None)`) is a leading edge and publishes immediately, as the spec's "isolated progress line" scenario requires. Lifecycle notifications aren't rate-limited anyway, so letting them "reset" the window costs nothing.
+`cancel` **forgets** the entry (or, while a publish is in flight, tombstones it; see above) rather than restarting its window. A lifecycle publish therefore does not open a new progress window. The first progress line after a step boundary (e.g. right after `sync_set_status_message(None)`) is a leading edge and publishes immediately, as the spec's "isolated progress line" scenario requires. Lifecycle notifications aren't rate-limited anyway, so letting them "reset" the window costs nothing.
 
 A timer callback holds a reference to the entry it was armed for. When it fires, it re-checks under the lock that its entry is still the current one for that booking (`entries.get(id) is entry`) and still `pending`, and does nothing otherwise. This way a timer that `cancel()` couldn't stop (already started) but that hasn't yet decided to publish is still discarded.
 

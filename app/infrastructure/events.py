@@ -106,12 +106,14 @@ def _start_daemon_timer(delay: float, callback: Callable[[], None]) -> Timer:
 
 
 class _Entry:
-    __slots__ = ("environment_id", "pending", "timer")
+    __slots__ = ("cancelled", "environment_id", "in_flight", "pending", "timer")
 
     def __init__(self, environment_id: UUID | str | None) -> None:
         self.environment_id = environment_id
         self.pending = False
         self.timer: Timer | None = None
+        self.in_flight = False  # a publish for this booking is running (never more than one)
+        self.cancelled = False  # a lifecycle cancel() arrived while that publish was in flight
 
 
 class ProgressCoalescer:
@@ -126,9 +128,11 @@ class ProgressCoalescer:
 
     **At most one publish per booking is in flight.** A window's timer is armed only once the
     publish that opened it has returned, with the remaining ``window - publish duration`` as its
-    delay, so a slow Redis stretches the cadence instead of stacking concurrent publishes. That
-    is what bounds the late signals after a lifecycle ``cancel()`` to one: the single in-flight
-    publish, whose entry is gone by the time it returns, so nothing re-arms.
+    delay, so a slow Redis stretches the cadence instead of stacking concurrent publishes. This
+    holds across a lifecycle ``cancel()`` too: if a publish is in flight, the entry is kept as a
+    tombstone rather than forgotten, and a progress line recorded after the lifecycle event is
+    published as soon as that publish returns, not concurrently with it. The only progress
+    signal that can land after a lifecycle notification is therefore the one already in flight.
 
     State is per process, so the bound is per producer (one task execution). Two producers
     overlapping for the same booking are each bounded independently.
@@ -158,56 +162,84 @@ class ProgressCoalescer:
                 entry.environment_id = environment_id
                 return
             entry = _Entry(environment_id)
+            entry.in_flight = True
             self._entries[key] = entry
-        self._publish_and_open_window(key, entry, booking_id, environment_id)
+        self._publish_then_open_window(key, entry, environment_id)
 
     def cancel(self, booking_id: UUID | str) -> None:
         """Forget the booking's window (called by a lifecycle publish).
 
         Forgetting rather than restarting the window means the next progress line is a leading
-        edge again. Best-effort: a publish already in flight still lands, so at most one
-        redundant progress signal can follow the lifecycle one — harmless, since the subscriber
+        edge again. If a publish is in flight, the entry stays as a tombstone until it returns,
+        so that next line waits for it instead of running concurrently. Best-effort: the
+        in-flight publish still lands after the lifecycle one — harmless, since the subscriber
         renders current DB state either way.
         """
+        key = str(booking_id)
         with self._lock:
-            entry = self._entries.pop(str(booking_id), None)
-        if entry is not None and entry.timer is not None:
-            entry.timer.cancel()
+            entry = self._entries.get(key)
+            if entry is None:
+                return
+            timer, entry.timer = entry.timer, None
+            entry.pending = False
+            if entry.in_flight:
+                entry.cancelled = True
+            else:
+                del self._entries[key]
+        if timer is not None:
+            timer.cancel()
 
-    def _publish_and_open_window(
-        self, key: str, entry: _Entry, booking_id: UUID | str, environment_id: UUID | str | None,
+    def _publish_then_open_window(
+        self, key: str, entry: _Entry, environment_id: UUID | str | None,
     ) -> None:
-        # Outside the lock: a slow or unreachable Redis must not stall other bookings' producers.
-        started = self._clock()
-        try:
-            self._publish(booking_id, environment_id)
-        finally:
-            # Only now arm the window's timer, so no second publish for this booking can start
-            # while this one is still in flight.
+        """Run the entry's one in-flight publish, then decide what follows it. Loops only when a
+        line arrived after a lifecycle cancel: that publish goes out immediately, as a leading
+        edge, once the previous one has returned."""
+        while True:
+            # Outside the lock: a slow or unreachable Redis must not stall other bookings.
+            started = self._clock()
+            try:
+                self._publish(key, environment_id)
+            except Exception:
+                # Best-effort; must never leave the entry marked in flight.
+                logger.exception("Failed to publish progress event for booking %s", key)
             with self._lock:
-                if self._entries.get(key) is entry:  # not cancelled while publishing
-                    delay = max(0.0, self._window - (self._clock() - started))
-                    try:
-                        entry.timer = self._timer_factory(
-                            delay, lambda: self._on_window_closed(key, entry),
-                        )
-                    except Exception:
-                        # Can't open the window: forget the booking so its next line is a leading
-                        # edge again, rather than leaving a timer-less entry that swallows it.
+                entry.in_flight = False
+                if self._entries.get(key) is not entry:
+                    return
+                if entry.cancelled:
+                    entry.cancelled = False
+                    if not entry.pending:
                         del self._entries[key]
-                        logger.exception("Failed to arm progress coalescing timer for booking %s", key)
+                        return
+                    entry.pending = False
+                    environment_id = entry.environment_id
+                    entry.in_flight = True
+                    continue
+                try:
+                    entry.timer = self._timer_factory(
+                        max(0.0, self._window - (self._clock() - started)),
+                        lambda: self._on_window_closed(key, entry),
+                    )
+                except Exception:
+                    # Can't open the window: forget the booking so its next line is a leading
+                    # edge again, rather than leaving a timer-less entry that swallows it.
+                    del self._entries[key]
+                    logger.exception("Failed to arm progress coalescing timer for booking %s", key)
+                return
 
     def _on_window_closed(self, key: str, entry: _Entry) -> None:
         with self._lock:
-            if self._entries.get(key) is not entry:
+            if self._entries.get(key) is not entry or entry.timer is None:
                 return  # cancelled (or superseded) before this timer got the lock
             entry.timer = None
             if not entry.pending:
                 del self._entries[key]
                 return
             entry.pending = False
+            entry.in_flight = True
             environment_id = entry.environment_id
-        self._publish_and_open_window(key, entry, key, environment_id)
+        self._publish_then_open_window(key, entry, environment_id)
 
 
 _coalescer: ProgressCoalescer | None = None

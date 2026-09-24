@@ -52,7 +52,7 @@ class FakeScheduler:
             self.timers.remove(timer)
             self.now = timer.due
             timer.callback()
-        self.now = target
+        self.now = max(self.now, target)  # a callback may itself have advanced time (nested)
 
     def armed(self) -> list[_FakeTimer]:
         return [t for t in self.timers if not t.cancelled]
@@ -459,6 +459,70 @@ def test_slow_publish_stretches_the_cadence_instead_of_overlapping():
     scheduler.advance(0)                          # next window is already over: fire right away
 
     assert starts == [0.0, 2 * W]                 # back-to-back, never concurrent
+
+
+def test_line_after_lifecycle_waits_for_the_in_flight_publish(redis_mock):
+    """PR #447 review (2nd round): trailing publish A blocks > W; the task thread publishes a
+    lifecycle event (cancel) and then records the first progress line of the next step before A
+    returns. That line must not start publish B concurrently with A — it goes out as soon as A
+    returns (immediately, not after another window)."""
+    scheduler = FakeScheduler()
+    booking_id = uuid4()
+    state = {"blocking": False, "in_flight": 0, "max_in_flight": 0, "a_returned_at": None}
+
+    def slow_redis():
+        state["in_flight"] += 1
+        state["max_in_flight"] = max(state["max_in_flight"], state["in_flight"])
+        if state["blocking"]:
+            state["blocking"] = False
+            scheduler.advance(0.5)
+            events.publish_row_changed(booking_id=booking_id)       # step boundary (lifecycle)
+            scheduler.advance(0.1)
+            events.publish_progress_changed(booking_id=booking_id)  # next step's first line
+            scheduler.advance(W)                                    # A still blocked past W
+            state["a_returned_at"] = scheduler.now
+        state["in_flight"] -= 1
+
+    _install_fake_coalescer(scheduler, publish_hook=slow_redis)
+    events.publish_progress_changed(booking_id=booking_id)          # leading edge
+    events.publish_progress_changed(booking_id=booking_id)          # pending
+    state["blocking"] = True
+    starts = []
+    redis_mock.publish.side_effect = lambda *a: starts.append(scheduler.now)
+
+    scheduler.advance(W)                                            # A decides and blocks
+
+    kinds = [p["kind"] for p in _published(redis_mock)]
+    assert state["max_in_flight"] == 1
+    assert kinds == ["progress", "lifecycle", "progress", "progress"]   # leading, lifecycle, A, B
+    assert starts[-1] == state["a_returned_at"]                     # B right after A, no extra window
+    assert len(scheduler.armed()) == 1                              # B opened a normal window
+
+    events.publish_progress_changed(booking_id=booking_id)          # inside B's window: held
+    assert redis_mock.publish.call_count == 4
+    scheduler.advance(W)
+    assert redis_mock.publish.call_count == 5                       # ...and flushed as trailing
+    scheduler.advance(W)
+    assert events._coalescer._entries == {}
+
+
+def test_cancel_while_in_flight_with_no_new_line_forgets_the_booking():
+    scheduler = FakeScheduler()
+    calls = []
+    coalescer = None
+
+    def publish(booking_id, environment_id):
+        calls.append(scheduler.now)
+        if len(calls) == 1:
+            coalescer.cancel(booking_id)          # lifecycle lands during the leading publish
+
+    coalescer = ProgressCoalescer(W, publish, timer_factory=scheduler, clock=lambda: scheduler.now)
+    coalescer.submit("b1", None)
+
+    assert coalescer._entries == {}
+    assert scheduler.armed() == []
+    coalescer.submit("b1", None)                  # next line: plain leading edge
+    assert len(calls) == 2
 
 
 # ── 4.6 overlapping producers ─────────────────────────────────────────────────
