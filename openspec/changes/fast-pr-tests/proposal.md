@@ -10,8 +10,8 @@ Pull requests can currently merge without executing the repository's existing un
 - Add an application import smoke check only if importing the ASGI application is service-independent in the CI environment.
 - Use cancellation/concurrency controls so a newer run for the same pull request supersedes an obsolete run.
 - Make test failures visible through normal pytest output and fail the workflow.
-- Bound FastAPI to the currently compatible pre-0.116 API after a clean install exposed that
-  newer releases change included-router representation and break the existing OpenAPI filter.
+- Bound FastAPI to the verified-compatible 0.115.x API after a clean install exposed that newer
+  releases change included-router representation and break the existing OpenAPI filter.
 
 Repository branch-protection settings are operational GitHub configuration and are not changed by repository code. After this workflow lands, the repository administrator must add its stable job name as a required status check.
 

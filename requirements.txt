@@ -1,5 +1,5 @@
-# FastAPI 0.116+ changed included-router representation; the current OpenAPI filtering relies on
-# the pre-0.116 route model. Keep the compatible range until that migration is handled separately.
+# Newer FastAPI releases changed included-router representation; the current OpenAPI filtering
+# relies on the route model verified through 0.115.x. Keep that range until migration is handled.
 fastapi>=0.111.0,<0.116
 uvicorn[standard]>=0.30.0
 sqlalchemy[asyncio]>=2.0.0
