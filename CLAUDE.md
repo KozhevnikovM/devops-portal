@@ -123,26 +123,49 @@ Before writing code, think about the design first:
 
 ## Spec-Driven Development (OpenSpec)
 
-Every new feature **and** every bug fix follows spec-driven development (SDD) through OpenSpec, and ships as **two pull requests**: a spec PR first, then an implementation PR. This replaces the old "write a `docs/features/` or `docs/bugfix/` doc, then implement" process for new work — those directories stay as historical reference only (see **Feature/bugfix history as reference** above); do not add new docs there.
+Every new feature **and** every bug fix follows spec-driven development (SDD) through OpenSpec, and ships as **two pull requests**: a spec (docs) PR first, then a code PR. This replaces the old "write a `docs/features/` or `docs/bugfix/` doc, then implement" process for new work — those directories stay as historical reference only (see **Feature/bugfix history as reference** above); do not add new docs there.
 
-The two-PR flow, in order:
+The flow, in order — do not skip or reorder steps:
 
-### 1. Spec PR — the plan (no implementation code)
+```
+OpenSpec plan → docs PR → discuss & fix → implementation → code PR → discuss & fix → openspec sync & archive → merge code PR
+```
 
-1. Create the change with `/opsx:propose` (use `/opsx:explore` first if the problem needs thinking through). It scaffolds the planning artifacts under `openspec/changes/<change-name>/`: `proposal.md`, `specs/`, `design.md`, `tasks.md`. For a feature the proposal states the goal and scope; for a bug fix it states the root cause and expected behaviour after the fix.
-2. Validate with `openspec validate --change "<change-name>"` and revise with `/opsx:update` as needed.
-3. On a **spec branch** (see **Git Workflow**), open a PR that contains **only** the spec (`openspec/changes/<change-name>/`) — no application code.
-4. Wait for the spec to be reviewed and **approved**, then merge the spec PR into `main`. **Do not write any implementation code until the spec PR is merged.** If review asks for changes, amend the artifacts with `/opsx:update` on the same branch.
+### 1. OpenSpec plan
 
-### 2. Implementation PR — apply + archive
+Create the change with `/opsx:propose` (use `/opsx:explore` first if the problem needs thinking through). It scaffolds the planning artifacts under `openspec/changes/<change-name>/`: `proposal.md`, `specs/`, `design.md`, `tasks.md`. For a feature the proposal states the goal and scope; for a bug fix it states the root cause and expected behaviour after the fix. Validate with `openspec validate <change-name> --strict`.
 
-1. Start a fresh branch off `main` (which now carries the approved spec).
-2. `/opsx:apply --change "<change-name>"` — implement the tasks in `tasks.md`, checking each off as it lands. Write tests as you go (a feature: cover the new behaviour, see **Testing**; a bug: a regression test that fails before the fix and passes after) and verify at runtime, not just statically.
+### 2. Docs PR (spec only)
+
+On a **spec branch** (`spec/<issue>/<desc>`, see **Git Workflow**), open a PR that contains **only** `openspec/changes/<change-name>/` — no application code. Stage the change directory explicitly; don't sweep in other unrelated `openspec/changes/*` directories.
+
+### 3. Discuss & fix (spec)
+
+Address review comments by amending the artifacts with `/opsx:update` on the same branch, re-validate, and push. Repeat until the spec is **approved**, then merge the docs PR into `main`. **Do not write any implementation code until the docs PR is merged.**
+
+### 4. Implementation
+
+1. Start a fresh branch off `main` (`feature/…` or `bugfix/…`), which now carries the approved spec.
+2. `/opsx:apply` the change — implement the tasks in `tasks.md`, checking each off as it lands. Write tests as you go (a feature: cover the new behaviour, see **Testing**; a bug: a regression test that fails before the fix and passes after) and verify at runtime, not just statically.
 3. Update `docs/admin-guide.md` and `docs/api-reference.md` for any user-facing change (API endpoints, CLI commands, workflows), and run the `py-review` quality gate on changed Python.
-4. When every task is done and verified, archive the change with `/opsx:archive` — it moves the change into `openspec/changes/archive/` and folds its delta specs into the main specs.
-5. Open the implementation PR with the code, doc updates, **and** the archived spec.
 
-If implementation reveals the plan is wrong, update the artifacts (`/opsx:update`) rather than silently diverging — amend the spec PR if it hasn't merged yet, or raise a follow-up spec change if it has. The spec is the source of truth.
+If implementation reveals the plan is wrong, update the artifacts (`/opsx:update`) on the implementation branch rather than silently diverging — the spec is the source of truth.
+
+### 5. Code PR
+
+Open the code PR with the implementation, tests, doc updates, and the (still un-archived) change under `openspec/changes/<change-name>/` with its checked-off `tasks.md`.
+
+### 6. Discuss & fix (code)
+
+Address review comments with new commits on the same branch (no force-push). If a review changes behaviour, update the spec artifacts to match in the same PR.
+
+### 7. OpenSpec sync & archive
+
+Only once the code PR is approved: `/opsx:sync` to fold the change's delta specs into the main specs under `openspec/specs/`, then `/opsx:archive` to move the change into `openspec/changes/archive/`. Commit and push this onto the code PR branch.
+
+### 8. Merge the code PR
+
+Merge only after the sync & archive commit is on the branch — `main` must never carry an implemented-but-unarchived change.
 
 ## Git Workflow
 
@@ -151,7 +174,7 @@ If implementation reveals the plan is wrong, update the artifacts (`/opsx:update
 - Never force-push to the main branch.
 - Never force-push
 - Never add `Co-Authored-By: Claude` or any AI co-author line to commit messages.
-- Each change is two branches/PRs (see **Spec-Driven Development**): a spec branch, then — after the spec PR merges — a fresh implementation branch off `main`.
+- Each change is two branches/PRs (see **Spec-Driven Development**): a spec branch (docs PR), then — after the docs PR merges — a fresh implementation branch off `main` (code PR, archived before merge).
 - Branch naming conventions:
   - Spec PRs: `spec/<issue-number>/<short-description>` (e.g. `spec/14/product-group-and-purl`)
   - Feature implementation: `feature/<issue-number>/<short-description>` (e.g. `feature/14/product-group-and-purl`)
