@@ -14,4 +14,8 @@
 
 - [x] 3.1 Validate the workflow syntax and review the effective permissions, triggers, and concurrency key
 - [x] 3.2 Run `pytest tests/ -m "not integration"` locally and record the result in the implementation PR
-- [ ] 3.3 Open the implementation PR and confirm GitHub reports a `fast-tests` check for it; after merge, configure that check as required in branch protection for `main`
+- [x] 3.3 Open the implementation PR and confirm GitHub reports a successful `fast-tests` check for it
+
+Post-merge branch-protection activation is an acceptance action tracked by #448, not an
+implementation task: configure `fast-tests` as required for `main`, verify enforcement, and only
+then close the issue.
