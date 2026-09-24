@@ -44,7 +44,7 @@ Row-changed notifications caused by progress output (Ansible, startup-script, SS
 
 ### Requirement: The final progress state of a burst is always announced
 
-When progress lines are suppressed inside a coalescing window, the system SHALL publish one trailing row-changed notification for that booking no later than one window after the last suppressed line. Subscribers can then render the final progress state without waiting for another progress line, a lifecycle change, or the fallback poll.
+When progress lines are suppressed inside a coalescing window, the system SHALL publish one trailing row-changed notification for that booking no later than one window after the last suppressed line. If a publish for that booking is still in flight at that point (Redis slower than the window), the trailing notification SHALL be published as soon as that publish returns. A producer SHALL NOT have more than one progress notification for the same booking in flight at a time. Subscribers can then render the final progress state without waiting for another progress line, a lifecycle change, or the fallback poll.
 
 #### Scenario: Burst followed by silence
 - **WHEN** a booking records a burst of progress lines and then records nothing for several seconds
@@ -55,6 +55,11 @@ When progress lines are suppressed inside a coalescing window, the system SHALL 
 - **WHEN** a trailing progress notification is pending for a booking and a lifecycle change for that booking is published
 - **THEN** the pending trailing progress notification is discarded on a best-effort basis, because the lifecycle notification already causes a render of the latest state
 - **AND** at most one progress notification for that booking, one that was already being published when the lifecycle change happened, may be delivered after the lifecycle notification
+
+#### Scenario: Redis slower than the coalescing window
+- **WHEN** a progress notification for a booking takes longer than one coalescing window to publish, while more progress lines for that booking are recorded and then a lifecycle change is published
+- **THEN** no second progress notification for that booking starts until the first has returned
+- **AND** at most one progress notification for that booking is delivered after the lifecycle notification
 
 #### Scenario: A late progress notification never shows stale state
 - **WHEN** a progress notification for a booking is delivered after a lifecycle notification for the same booking

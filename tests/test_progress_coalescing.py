@@ -68,7 +68,7 @@ class Recorder:
 
 
 def _coalescer(scheduler: FakeScheduler, recorder: Recorder, window: float = W) -> ProgressCoalescer:
-    return ProgressCoalescer(window, recorder, timer_factory=scheduler)
+    return ProgressCoalescer(window, recorder, timer_factory=scheduler, clock=lambda: scheduler.now)
 
 
 def _burst(coalescer, scheduler, booking_id, *, lines: int, duration: float, env_id=None) -> None:
@@ -101,7 +101,7 @@ def _install_fake_coalescer(scheduler: FakeScheduler, publish_hook=None) -> Prog
         if publish_hook:
             publish_hook()
         events._sync_publish(booking_id, environment_id, "progress")
-    coalescer = ProgressCoalescer(W, publish, timer_factory=scheduler)
+    coalescer = ProgressCoalescer(W, publish, timer_factory=scheduler, clock=lambda: scheduler.now)
     events._coalescer = coalescer
     return coalescer
 
@@ -186,7 +186,9 @@ def test_idle_window_forgets_the_booking():
 def test_trailing_publish_uses_latest_environment_id():
     scheduler = FakeScheduler()
     seen = []
-    coalescer = ProgressCoalescer(W, lambda b, e: seen.append(e), timer_factory=scheduler)
+    coalescer = ProgressCoalescer(
+        W, lambda b, e: seen.append(e), timer_factory=scheduler, clock=lambda: scheduler.now,
+    )
 
     coalescer.submit("b1", "env-1")
     coalescer.submit("b1", "env-1")
@@ -258,7 +260,7 @@ def test_failed_rearm_forgets_the_booking():
             raise RuntimeError("can't start new thread")
         return scheduler(delay, callback)
 
-    coalescer = ProgressCoalescer(W, recorder, timer_factory=flaky_factory)
+    coalescer = ProgressCoalescer(W, recorder, timer_factory=flaky_factory, clock=lambda: scheduler.now)
     coalescer.submit("b1", None)
     coalescer.submit("b1", None)
     scheduler.advance(W)                          # trailing publish happens; re-arm fails
@@ -403,6 +405,60 @@ def test_lifecycle_racing_a_deciding_timer_allows_at_most_one_late_progress(redi
     assert scheduler.armed() == []                               # no further trailing armed
     scheduler.advance(5 * W)
     assert [p["kind"] for p in _published(redis_mock)] == kinds
+
+
+def test_publish_slower_than_window_never_has_two_in_flight_for_one_booking(redis_mock):
+    """PR #447 review: with the next window armed *before* a trailing publish returned, a Redis
+    publish blocking for > W let a second timer decide and publish concurrently, so a lifecycle
+    cancel could be followed by two late progress signals. Timeline from the review: trailing #1
+    decides at 0.75s and blocks for > 1.5s while more progress arrives; lifecycle at ~1.6s."""
+    scheduler = FakeScheduler()
+    booking_id = uuid4()
+    state = {"blocking": False, "in_flight": 0, "max_in_flight": 0}
+
+    def slow_redis():
+        state["in_flight"] += 1
+        state["max_in_flight"] = max(state["max_in_flight"], state["in_flight"])
+        if state["blocking"]:
+            state["blocking"] = False
+            for _ in range(10):                   # more progress arrives while Redis is stuck...
+                events.publish_progress_changed(booking_id=booking_id)
+                scheduler.advance(0.08)           # ...for 2 windows' worth of time (fires due timers)
+            events.publish_row_changed(booking_id=booking_id)   # lifecycle lands at ~1.55s
+            scheduler.advance(0.1)
+        state["in_flight"] -= 1
+
+    _install_fake_coalescer(scheduler, publish_hook=slow_redis)
+    events.publish_progress_changed(booking_id=booking_id)   # leading edge at 0.0
+    events.publish_progress_changed(booking_id=booking_id)   # pending
+    state["blocking"] = True
+    scheduler.advance(W)                                     # trailing #1 decides and blocks
+    scheduler.advance(10 * W)
+
+    kinds = [p["kind"] for p in _published(redis_mock)]
+    after_lifecycle = kinds[kinds.index("lifecycle") + 1:]
+    assert state["max_in_flight"] == 1
+    assert after_lifecycle.count("progress") <= 1
+    assert scheduler.armed() == []
+    assert events._coalescer._entries == {}
+
+
+def test_slow_publish_stretches_the_cadence_instead_of_overlapping():
+    scheduler = FakeScheduler()
+    starts = []
+
+    def slow_publish(booking_id, environment_id):
+        starts.append(scheduler.now)
+        scheduler.now += 2 * W                    # this publish takes two windows
+
+    coalescer = ProgressCoalescer(
+        W, slow_publish, timer_factory=scheduler, clock=lambda: scheduler.now,
+    )
+    coalescer.submit("b1", None)                  # returns at 2W
+    coalescer.submit("b1", None)                  # pending
+    scheduler.advance(0)                          # next window is already over: fire right away
+
+    assert starts == [0.0, 2 * W]                 # back-to-back, never concurrent
 
 
 # ── 4.6 overlapping producers ─────────────────────────────────────────────────

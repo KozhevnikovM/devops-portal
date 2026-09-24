@@ -29,21 +29,26 @@ A per-process `ProgressCoalescer` in `app/infrastructure/events.py` gates progre
 
 ### D2. Leading + trailing throttle, one timer per booking
 
-Per booking id, the coalescer keeps an entry **only while that booking's coalescing window is open**. Each entry has a `pending` flag and exactly one armed timer, due W after the window opened:
+Per booking id, the coalescer keeps an entry **only while that booking's coalescing window is open**. Each entry has a `pending` flag and at most one armed timer:
 
 ```
 publish_progress(id):
-  no entry  -> publish now; create entry; arm timer(W)            (leading edge)
-  entry     -> pending = True                                     (held)
+  no entry  -> create entry; publish now; then arm timer           (leading edge)
+  entry     -> pending = True                                      (held)
 timer fires(entry):
-  entry no longer current -> do nothing                           (cancelled / superseded)
-  pending   -> pending = False; arm timer(W); publish             (trailing edge, next window)
-  idle      -> forget the entry                                   (window closes)
+  entry no longer current -> do nothing                            (cancelled / superseded)
+  pending   -> pending = False; publish; then arm timer            (trailing edge, next window)
+  idle      -> forget the entry                                    (window closes)
 cancel(id)  (called by a lifecycle publish for id):
-  forget the entry; cancel its timer (best-effort)
+  forget the entry; cancel its timer if armed (best-effort)
+
+"then arm timer" = after the publish returns, if the entry is still current:
+  arm timer(max(0, W - publish duration))
 ```
 
-Windows are timer-driven, so no clock or `last_sent` is needed. Idle entries clean themselves up one window after their last publish. A leading-only entry can't linger either, which a `last_sent` model would need a separate sweep for. The publish count and trailing-edge latency are the same as with a clock-based throttle.
+**At most one publish per booking is in flight.** A window's timer is armed only once the publish that opened it has returned. So a Redis publish slower than W can never let a second timer decide and publish concurrently for the same booking. The delay is the *remaining* window, `W - publish duration`, so the cadence stays at W when Redis is fast. When Redis is slower than W, the next publish starts as soon as the previous one returns: the cadence stretches instead of stacking publishes. This needs a monotonic clock (injectable, default `time.monotonic`) to measure the publish duration. (An earlier revision armed the next timer *before* publishing and needed no clock, but a slow publish could then overlap the next window's; see PR #447 review.)
+
+Idle entries clean themselves up one window after their last publish, so a leading-only entry can't linger.
 
 If arming a timer fails (e.g. a thread can't be started), the entry is not registered or is forgotten. A timer-less entry would otherwise swallow every later line for that booking.
 
@@ -51,16 +56,16 @@ If arming a timer fails (e.g. a thread can't be started), the entry is not regis
 
 A timer callback holds a reference to the entry it was armed for. When it fires, it re-checks under the lock that its entry is still the current one for that booking (`entries.get(id) is entry`) and still `pending`, and does nothing otherwise. This way a timer that `cancel()` couldn't stop (already started) but that hasn't yet decided to publish is still discarded.
 
-For a single producer, this bounds a burst of any length to `ceil(duration / W) + 1` publishes. For 100 lines in 1 s at W = 750 ms that is at most 3, which matches the spec scenario. State is guarded by one `threading.Lock`. The Redis publish itself happens outside the lock.
+For a single producer and a Redis faster than W, this bounds a burst of any length to `ceil(duration / W) + 1` publishes. A slower Redis only lowers the rate. For 100 lines in 1 s at W = 750 ms that is at most 3, which matches the spec scenario. State is guarded by one `threading.Lock`. The Redis publish itself happens outside the lock.
 
 - *Alternative: leading-only throttle.* The last lines of a burst would only show up at the next line, the next lifecycle event, or the 60 s poll. That fails "final state is always announced". Rejected.
 - *Alternative: flush only when the task ends or a step ends.* It misses the important case: a burst followed by a long silent Ansible task. Rejected.
 
 ### D3. Trailing edge via a daemon `threading.Timer`
 
-The worker's `_on_progress` is synchronous and blocks inside `asyncio.run(terraform.apply(...))` or a blocking SSH read, so nothing else in the task can drive a flush. A daemon `threading.Timer` per booking with a pending trailing publish is the smallest mechanism that fires independently. There is at most one timer per actively bursting booking, and it lives for less than W. The sync Redis client (`redis.Redis` with a connection pool) is thread-safe. Daemon threads never block worker shutdown.
+The worker's `_on_progress` is synchronous and blocks inside `asyncio.run(terraform.apply(...))` or a blocking SSH read, so nothing else in the task can drive a flush. A daemon `threading.Timer` per booking with a pending trailing publish is the smallest mechanism that fires independently. There is at most one timer per actively bursting booking, it lives for at most W, and none is armed while that booking's publish is in flight. The sync Redis client (`redis.Redis` with a connection pool) is thread-safe. Daemon threads never block worker shutdown.
 
-The timer factory is injectable (a constructor argument whose default starts a daemon `threading.Timer`). Tests pass a virtual-time scheduler that fires due callbacks as the test advances its clock, so nothing sleeps.
+The timer factory and the clock are injectable (constructor arguments whose defaults start a daemon `threading.Timer` and read `time.monotonic`). Tests pass a virtual-time scheduler as both, which fires due callbacks as the test advances its clock, so nothing sleeps.
 
 ### D4. API shape: a separate progress publish function; `kind` in the payload
 
@@ -71,7 +76,7 @@ The timer factory is injectable (a constructor argument whose default starts a d
 
 A separate function, rather than a `kind=` flag on the existing one, keeps the repository's lifecycle call sites untouched. It also lets the suite-wide autouse `mock_row_changed_publish` fixture (`tests/conftest.py`) be extended with one more mock instead of changing every assertion.
 
-A lifecycle event cancelling a pending progress flush is an optimisation, not a correctness requirement, so cancellation is **best-effort**. `threading.Timer.cancel()` can't stop a callback that has already started, and the Redis publish happens outside the lock. So a timer can decide to flush, a lifecycle publish can then run, and the `kind="progress"` publish can land after it. At most one such late progress notification can follow a lifecycle notification, because the timer's entry is gone and nothing re-arms it.
+A lifecycle event cancelling a pending progress flush is an optimisation, not a correctness requirement, so cancellation is **best-effort**. `threading.Timer.cancel()` can't stop a callback that has already started, and the Redis publish happens outside the lock. So a timer can decide to flush, a lifecycle publish can then run, and the `kind="progress"` publish can land after it. At most one such late progress notification can follow a lifecycle notification. At most one publish per booking is ever in flight (D2), and when it returns its entry is gone, so nothing re-arms.
 
 That notification is redundant, not stale. Notifications are invalidation-only: the subscriber re-reads the booking and renders current DB state, which already reflects the lifecycle change. It also stays harmless under #441, where a `progress` event skips the environment re-render, because the preceding lifecycle event already refreshed the environment.
 
