@@ -88,7 +88,13 @@ def test_provisioning_lock_released_even_if_apply_raises():
         from app.tasks.provision import provision_vm_task
         provision_vm_task.apply(args=[booking_id, image_id, hw_config_id])
 
-    mock_lock.release.assert_called_once_with("fake-redis-client", booking_id)
+    # Celery's eager ``Task.apply`` executes the configured retries inline. Each attempt acquires
+    # and releases its own lock; the invariant is that no failed attempt leaks it.
+    assert mock_lock.release.call_count == provision_vm_task.max_retries + 1
+    assert all(
+        call.args == ("fake-redis-client", booking_id)
+        for call in mock_lock.release.call_args_list
+    )
 
 
 def test_provisioning_lock_skipped_under_stub_adapter():

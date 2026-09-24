@@ -1,6 +1,6 @@
 ## Context
 
-The repository already separates real-Postgres tests with the `integration` marker. `requirements-dev.txt` includes the runtime requirements plus pytest, pytest-asyncio, httpx, and aiosqlite, so the non-integration suite can run in an isolated Python job. The current developer guidance uses `pytest tests/`, while issue #448 explicitly requires `pytest -m "not integration"`; the command must be made explicit and identical in both places.
+The repository already separates real-Postgres tests with the `integration` marker. `requirements-dev.txt` includes the runtime requirements plus pytest, pytest-asyncio, httpx, and aiosqlite, so the non-integration suite can run in an isolated Python job. The current developer guidance uses `pytest tests/`, while issue #448 explicitly requires `pytest -m "not integration"`; the command must be made explicit and identical in both places. A clean install during implementation also exposed that FastAPI 0.116+ changes included-router representation and breaks the existing OpenAPI filtering invariant, so the compatible dependency range must be made explicit until that migration is handled separately.
 
 This change establishes only the fast baseline. PostgreSQL integration tests (#449), migration validation (#453), production-image smoke testing (#454), and browser smoke tests (#455) remain separate jobs and changes.
 
@@ -28,7 +28,7 @@ The workflow also supports `workflow_dispatch` for manual diagnosis. Direct push
 
 ### D2. Use the repository's development requirements without a second dependency definition
 
-CI installs `requirements-dev.txt`. It already includes `requirements.txt`, so this uses the same dependency graph as local development and avoids a CI-only requirements file.
+CI installs `requirements-dev.txt`. It already includes `requirements.txt`, so this uses the same dependency graph as local development and avoids a CI-only requirements file. `requirements.txt` constrains FastAPI to `>=0.111.0,<0.116`: 0.116 introduced the incompatible included-router representation, while 0.115.14 passes the existing OpenAPI contract tests. Supporting the new representation is a separate application compatibility change, not something CI should silently absorb.
 
 The initial Python version follows the production image's supported interpreter. The implementation must verify the Dockerfile before fixing the workflow version.
 
@@ -56,7 +56,7 @@ Set workflow permissions to read repository contents only. Tests do not need wri
 
 ## Risks / Trade-offs
 
-- [Unpinned transitive dependencies change] → The repository already manages dependencies through its requirements files. Locking is a separate dependency-management decision; CI intentionally mirrors current local installation behavior.
+- [Unpinned transitive dependencies change] → CI mirrors current local installation behavior. The one incompatibility found during clean verification is bounded explicitly (`fastapi<0.116`); full locking remains a separate dependency-management decision.
 - [Branch protection is not enabled] → The workflow produces the check, but an administrator must mark `fast-tests` required after the workflow exists on the default branch.
 - [A test unexpectedly reaches a service] → The job fails, exposing that the test is misclassified or not isolated; the fast job must not add the service to make it pass.
 - [Full suite duration grows] → Split or parallelize only after measuring; this initial workflow favors the simplest reproducible baseline.
