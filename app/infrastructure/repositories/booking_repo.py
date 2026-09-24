@@ -17,7 +17,11 @@ from app.domain.resource_details import (
 from app.infrastructure.database.models import (
     BookingAuditModel, BookingModel, NamespaceModel, StaticVMModel, UserModel,
 )
-from app.infrastructure.events import apublish_row_changed, publish_row_changed
+from app.infrastructure.events import (
+    apublish_row_changed,
+    publish_progress_changed,
+    publish_row_changed,
+)
 
 # Second alias of users to resolve created_by (the dispatcher) → username, distinct from the
 # owner join on user_id.
@@ -550,7 +554,10 @@ class BookingRepository:
 
     def sync_record_progress(self, session: Session, booking_id: UUID, message: str) -> None:
         """Set the compact status_message (unchanged) and append to the capped provisioning_log,
-        in one commit rather than two — this fires on every Ansible/script output line (#378)."""
+        in one commit rather than two — this fires on every Ansible/script output line (#378).
+
+        Every line is committed, but its row-changed notification is coalesced per booking (#440).
+        """
         model = session.get(BookingModel, booking_id)
         if model is None:
             raise BookingNotFoundError(booking_id)
@@ -558,7 +565,7 @@ class BookingRepository:
         combined = (model.provisioning_log or "") + message + "\n"
         model.provisioning_log = combined[-50_000:]
         session.commit()
-        publish_row_changed(
+        publish_progress_changed(
             booking_id=booking_id, environment_id=getattr(model, "environment_id", None),
         )
 

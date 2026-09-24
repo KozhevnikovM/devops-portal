@@ -29,20 +29,25 @@ A per-process `ProgressCoalescer` in `app/infrastructure/events.py` gates progre
 
 ### D2. Leading + trailing throttle, one timer per booking
 
-Per booking id, the coalescer keeps `last_sent` (monotonic), a `pending` flag, and at most one armed timer:
+Per booking id, the coalescer keeps an entry **only while that booking's coalescing window is open**. Each entry has a `pending` flag and exactly one armed timer, due W after the window opened:
 
 ```
 publish_progress(id):
-  now - last_sent >= W  -> publish now, last_sent = now          (leading edge)
-  else                  -> pending = True; if no timer: arm at last_sent + W
-timer fires(id):
-  if pending -> publish, last_sent = now, pending = False        (trailing edge)
-  drop the timer; forget the entry once idle
+  no entry  -> publish now; create entry; arm timer(W)            (leading edge)
+  entry     -> pending = True                                     (held)
+timer fires(entry):
+  entry no longer current -> do nothing                           (cancelled / superseded)
+  pending   -> pending = False; arm timer(W); publish             (trailing edge, next window)
+  idle      -> forget the entry                                   (window closes)
 cancel(id)  (called by a lifecycle publish for id):
-  cancel the timer (best-effort); forget the entry entirely
+  forget the entry; cancel its timer (best-effort)
 ```
 
-`cancel` **forgets** the entry rather than advancing `last_sent`. A lifecycle publish therefore does not open a new progress window. The first progress line after a step boundary (e.g. right after `sync_set_status_message(None)`) is a leading edge and publishes immediately, as the spec's "isolated progress line" scenario requires. Lifecycle notifications aren't rate-limited anyway, so letting them "reset" the window costs nothing.
+Windows are timer-driven, so no clock or `last_sent` is needed. Idle entries clean themselves up one window after their last publish. A leading-only entry can't linger either, which a `last_sent` model would need a separate sweep for. The publish count and trailing-edge latency are the same as with a clock-based throttle.
+
+If arming a timer fails (e.g. a thread can't be started), the entry is not registered or is forgotten. A timer-less entry would otherwise swallow every later line for that booking.
+
+`cancel` **forgets** the entry rather than restarting its window. A lifecycle publish therefore does not open a new progress window. The first progress line after a step boundary (e.g. right after `sync_set_status_message(None)`) is a leading edge and publishes immediately, as the spec's "isolated progress line" scenario requires. Lifecycle notifications aren't rate-limited anyway, so letting them "reset" the window costs nothing.
 
 A timer callback holds a reference to the entry it was armed for. When it fires, it re-checks under the lock that its entry is still the current one for that booking (`entries.get(id) is entry`) and still `pending`, and does nothing otherwise. This way a timer that `cancel()` couldn't stop (already started) but that hasn't yet decided to publish is still discarded.
 
@@ -55,7 +60,7 @@ For a single producer, this bounds a burst of any length to `ceil(duration / W) 
 
 The worker's `_on_progress` is synchronous and blocks inside `asyncio.run(terraform.apply(...))` or a blocking SSH read, so nothing else in the task can drive a flush. A daemon `threading.Timer` per booking with a pending trailing publish is the smallest mechanism that fires independently. There is at most one timer per actively bursting booking, and it lives for less than W. The sync Redis client (`redis.Redis` with a connection pool) is thread-safe. Daemon threads never block worker shutdown.
 
-The timer factory and the clock are injectable (constructor arguments with defaults `threading.Timer` / `time.monotonic`). Tests then drive time and fire timers deterministically without sleeping.
+The timer factory is injectable (a constructor argument whose default starts a daemon `threading.Timer`). Tests pass a virtual-time scheduler that fires due callbacks as the test advances its clock, so nothing sleeps.
 
 ### D4. API shape: a separate progress publish function; `kind` in the payload
 

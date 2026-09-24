@@ -47,6 +47,11 @@ class Settings(BaseSettings):
     ENFORCE_TTL_INTERVAL_SECONDS: int = 60       # how often to release expired bookings
     STALE_PROVISIONING_THRESHOLD_MINUTES: int = 60
 
+    # Live row updates (SSE): progress-only row-changed notifications (one per Ansible/script
+    # output line) are coalesced per booking to at most one per window, plus a trailing publish
+    # after a burst (#440). 0 disables coalescing. Read at worker start-up.
+    SSE_PROGRESS_COALESCE_MS: int = 750
+
     # Terraform / VCD — only required when USE_STUB_TERRAFORM=False
     TF_WORKSPACES_DIR: str = "/tmp/tf-workspaces"
     TF_PG_CONN_STR: str = "postgresql://portal:portal@postgres:5432/portal?sslmode=disable"

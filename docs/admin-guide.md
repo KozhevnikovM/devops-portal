@@ -83,6 +83,7 @@ inspected with `docker inspect <container-id>`.
 | `PROVISION_RATE_LIMIT` | No | Max provision tasks per worker per time window (`0.5/m` = 1 per 2 min). Default: `0.5/m` |
 | `TF_PG_CONN_STR` | No | PostgreSQL connection string for Terraform state backend. Must use the standard `postgresql://` driver (not `+asyncpg` / `+psycopg2`). Append `?sslmode=disable` for servers without SSL. Default matches the bundled Postgres service. |
 | `STALE_PROVISIONING_THRESHOLD_MINUTES` | No | Minutes after which a booking stuck in PENDING/PROVISIONING/RETRY is marked FAILED by the beat task. Default: `60` |
+| `SSE_PROGRESS_COALESCE_MS` | No | Live-update throttle for provisioning/teardown progress output. A booking's progress lines (Ansible, startup script, SSH wait) produce at most one live row update per this many milliseconds, plus one final update after a burst ends so the last line always shows. Status changes (READY, FAILED, RELEASED, …) are never throttled. Every line is still saved to the provisioning log. `0` disables throttling (one update per line). Read when the worker starts, so restart `worker` after changing it. Default: `750` |
 
 ---
 
@@ -321,6 +322,12 @@ session cookie is only sent over HTTPS, and forward `X-Forwarded-Proto`.
 > reopened every minute. Nothing breaks without it — the row templates keep a 60s fallback poll —
 > updates just arrive up to a minute late and the browser reconnects constantly. Both configs below
 > include the required `location` block already.
+>
+> Provisioning progress output (one line per Ansible/startup-script output line) is coalesced
+> before it reaches this stream: at most one row update per booking every
+> `SSE_PROGRESS_COALESCE_MS` (default 750 ms), plus a final one after each burst. A noisy
+> playbook therefore makes the booking's row refresh about once a second rather than once per
+> line, while status changes still appear immediately.
 
 ### Option A — subdomain (recommended)
 
