@@ -12,13 +12,13 @@
 - [x] 2.1 Add a dedicated PostgreSQL integration marker or equivalent explicit selection, keep Redis-only tests outside it, and verify the selected collection contains no Redis tests.
 - [x] 2.2 Run the PostgreSQL-only integration command in the new job and verify the existing PostgreSQL tests under `tests/integration/` are collected and executed rather than skipped.
 - [x] 2.3 Make an unavailable PostgreSQL dependency produce a non-zero CI result instead of a green skipped suite; verify this with a controlled unavailable-service test or CI guard.
-- [ ] 2.4 Verify the integration suite passes against the CI PostgreSQL service and that a failing integration assertion produces a failed check with identifiable pytest output.
+- [x] 2.4 Verify the integration suite passes against the CI PostgreSQL service and that a failing integration assertion produces a failed check with identifiable pytest output.
 - [x] 2.5 Verify concurrent workflow runs use isolated ephemeral databases and do not share persistent volumes or test data.
 
 ## 3. Local reproducibility and documentation
 
 - [x] 3.1 Document the required PostgreSQL service, `TEST_POSTGRES_URL`, matching `DATABASE_URL_SYNC`, migration command, and canonical PostgreSQL-only test invocation alongside the existing CI instructions; verify every documented command is executable as written.
-- [ ] 3.2 Run the documented local integration command against PostgreSQL and verify it exercises the same PostgreSQL-only test tier as CI and fails clearly when the database is unavailable.
+- [x] 3.2 Run the documented local integration command against PostgreSQL and verify it exercises the same PostgreSQL-only test tier as CI and fails clearly when the database is unavailable.
 
 ## 4. Gate verification
 
