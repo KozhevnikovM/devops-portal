@@ -29,7 +29,7 @@ from app.infrastructure.database.models import (
 from app.presentation import deps
 from tests.integration._environment_lease import cleanup, make_sessionmaker
 
-pytestmark = [pytest.mark.integration, pytest.mark.asyncio(loop_scope="session")]
+pytestmark = [pytest.mark.integration, pytest.mark.postgres_integration, pytest.mark.asyncio(loop_scope="session")]
 
 
 async def test_releasing_a_namespace_child_cannot_orphan_the_vm(async_engine: AsyncEngine, seed_user):
