@@ -1,7 +1,10 @@
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
+from app.domain.booking_status import CAN_BECOME_READY
 from app.domain.constants import PERMANENT_EXPIRES_AT
+from app.domain.enums import BookingStatus
 
 
 @dataclass(frozen=True)
@@ -37,3 +40,17 @@ class Lease:
         if minutes == 0:
             return Lease(0, PERMANENT_EXPIRES_AT)
         return Lease(self.ttl_minutes + minutes, self.expires_at + timedelta(minutes=minutes))
+
+
+def lease_can_start(statuses: Iterable[BookingStatus]) -> bool:
+    """Whether an environment's shared lease may start, given its children's statuses (#434).
+
+    True once every child has *settled* — none can still become READY (see ``CAN_BECOME_READY``)
+    — and at least one child is READY (something live for the lease to bound). A FAILED, RELEASED
+    or RELEASING child therefore never holds the lease back forever.
+    """
+    statuses = list(statuses)
+    return (
+        not any(s in CAN_BECOME_READY for s in statuses)
+        and any(s == BookingStatus.READY for s in statuses)
+    )

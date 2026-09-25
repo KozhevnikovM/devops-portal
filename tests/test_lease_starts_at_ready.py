@@ -52,10 +52,11 @@ def test_no_start_lease_leaves_expiry_untouched():
 # ── Environment: whole-stack lease starts when all children READY ────────────────
 def _env_session(children, ttl_minutes=240):
     """A MagicMock session where get() returns a booking then its env, and execute() the children."""
-    env = SimpleNamespace(id=uuid4(), ttl_minutes=ttl_minutes, expires_at=PERMANENT_EXPIRES_AT)
+    env = SimpleNamespace(id=uuid4(), ttl_minutes=ttl_minutes, expires_at=PERMANENT_EXPIRES_AT,
+                          construction_complete=True)
     booking = SimpleNamespace(id=uuid4(), environment_id=env.id)
     session = MagicMock()
-    session.get.side_effect = lambda model, id_: booking if id_ == booking.id else env
+    session.get.side_effect = lambda model, id_, **kw: booking if id_ == booking.id else env
     exec_result = MagicMock()
     exec_result.scalars.return_value.all.return_value = children
     session.execute.return_value = exec_result
@@ -108,7 +109,8 @@ async def test_order_calls_start_lease_after_children():
                          resource_type=ResourceType.NAMESPACE, ttl_minutes=240,
                          expires_at=PERMANENT_EXPIRES_AT, created_at=datetime.now(timezone.utc))
     env_repo = MagicMock(create=AsyncMock(return_value=env), get=AsyncMock(return_value=env),
-                         start_lease_if_ready=AsyncMock(return_value=True))
+                         start_lease_if_ready=AsyncMock(return_value=True),
+                         mark_construction_complete=AsyncMock())
     blueprint_repo = MagicMock(get_by_name=AsyncMock(return_value=bp))
     ns_uc = MagicMock(execute=AsyncMock(return_value=ns_booking))
     uc = OrderEnvironmentUseCase(

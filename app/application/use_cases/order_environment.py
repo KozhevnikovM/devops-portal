@@ -166,6 +166,9 @@ class OrderEnvironmentUseCase:
             )
             raise
 
+        # Every child now exists; until this point the lease can't start from any trigger, even if
+        # the children created so far had settled (#434).
+        await self._env_repo.mark_construction_complete(session, env.id)
         # An all-pooled environment is fully READY at once — start its lease immediately. One with
         # VMs is stamped later, when the last child reaches READY in the provision task.
         await self._env_repo.start_lease_if_ready(session, env.id)

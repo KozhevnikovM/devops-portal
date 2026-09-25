@@ -78,7 +78,7 @@ Every immediate lease trigger runs in a separate transaction *after* the settlin
 
 A crash in that gap leaves the environment on the placeholder expiry, and nothing else would ever stamp it. Rather than making each trigger atomic separately, one reconciliation path covers all of them. This mirrors the project's SSE design, a fast push with a slow polling fallback.
 
-- New repository query `EnvironmentRepository.sync_list_lease_pending(session)`. It returns environments with `expires_at = PERMANENT_EXPIRES_AT`, `ttl_minutes > 0`, at least one READY child and no child whose status is in `CAN_BECOME_READY`. The query only preselects candidates; the authoritative check is re-run under the row lock.
+- New repository query `EnvironmentRepository.sync_list_lease_pending(session)`. It returns environments with `construction_complete` (D6), `expires_at = PERMANENT_EXPIRES_AT`, `ttl_minutes > 0`, at least one READY child and no child whose status is in `CAN_BECOME_READY`. The query only preselects candidates; the authoritative check is re-run under the row lock.
 - New beat task `reconcile_environment_leases` in `app/tasks/beat_tasks.py`, scheduled every `ENFORCE_TTL_INTERVAL_SECONDS` next to `enforce_environment_ttl`. For each candidate it calls the same locked start-once path from D3, one short-lived session per environment, and logs and continues if one environment fails. Because that path locks, re-checks and is idempotent, a race between reconciliation and a live trigger still produces exactly one deadline.
 - **Retroactive repair (decided).** The query does not tell a lease missed after the deploy apart from an environment stuck before it. After the deploy, the first reconciliation run starts the lease for every existing environment that meets the rule, for example one that was already `READY + RELEASED` (the #434 orphan), `READY + FAILED` or `READY + RELEASING`. That lease is `now + ttl_minutes` measured from that run, not backdated, so the owner gets the full TTL from the deploy before `enforce_environment_ttl` tears down the remaining live children. Environments the rule does not cover are left exactly as before: no READY child (nothing live left to orphan), a child still in flight, or `ttl_minutes == 0` (permanent by choice). This is intended, because these environments are the leaked resources #434 is about.
   - *Alternative:* skip environments that were stuck before the deploy, using a cut-over timestamp or a marker column. Rejected: it adds a schema change or a special case, and it would leave the exact resources #434 describes leaking forever.
@@ -90,6 +90,17 @@ A crash in that gap leaves the environment on the placeholder expiry, and nothin
 ### D5. UI: replace Release with an environment hint
 
 In `booking_row.html`, wrap every action that calls `hx-delete="/bookings/{id}"` in `{% if not booking.environment_id %}`. That is Release (READY/FAILED), the admin Delete (in flight) and Cancel (QUEUED); each would always return 409 for an environment child. For an environment child, render a non-interactive "Managed by environment" line. Link it to the environment if the row can build that link, `/environments#environment-<id>` or the environments page filtered to that id, without an extra query. Admin **Force release** keeps its current condition (see Non-Goals).
+
+### D6. Construction-complete marker: nothing stamps a half-built environment
+
+`OrderEnvironmentUseCase` creates the environment row and then its children one at a time. Every child path commits on its own: `BookingRepository.create`, pooled reservation, namespace adoption (`set_environment`), and the quota row lock. So a partly built environment is visible to other sessions. Once its first READY pooled child (or an adopted READY namespace) is committed, the environment looks settled: it has one READY child and none in flight, because the later children don't exist yet. A reconciliation tick, or a queued-child promotion triggered by another session, could then start the lease early. Later children would get a different expiry, and the order's final `start_lease_if_ready` would refuse to move the lease that had already started.
+
+- New column `environments.construction_complete BOOLEAN NOT NULL`. Migration `0032` adds it with `server_default true`, so every existing row counts as constructed and the retroactive repair (D4) still applies to them. It then sets the server default to `false`, so any row inserted without an explicit value starts incomplete. The ORM default is also `False`.
+- `EnvironmentRepository.create` inserts with `construction_complete = False`. A new `EnvironmentRepositoryPort.mark_construction_complete(session, environment_id)` sets it to `True` and commits. `OrderEnvironmentUseCase` calls it after the last child has been created, including an adopted namespace, and before its `start_lease_if_ready`. The rollback path never calls it; the environment row is deleted anyway.
+- `_stamp_lease` refuses while `construction_complete` is false. That one guard, in the shared locked path, covers every trigger: reconciliation, promotion, provision READY or FAILED, and the reaper. `sync_list_lease_pending` also filters on the column, to keep the candidate set small.
+- *Alternative:* make the parent and all child creation atomic, with no intermediate commits. Rejected: the order reuses child use cases that each commit (booking create, pooled reserve, adoption, quota `FOR UPDATE`), and its best-effort rollback is built around those commits. Making the order atomic would change the quota-locking and rollback semantics across several use cases. That refactor is larger than, and separate from, #434.
+- *Alternative:* store an expected child count and compare it with the children that exist. Rejected: it duplicates what the flag says less directly, and an adopted namespace and a blueprint item are counted differently.
+- *Alternative:* a time-based grace period. Rejected: a slow order (quota locks, a DB stall) can exceed any grace period, so it is not a correctness guarantee.
 
 ## Risks / Trade-offs
 
@@ -104,8 +115,8 @@ In `booking_row.html`, wrap every action that calls `hx-delete="/bookings/{id}"`
 
 ## Migration Plan
 
-No schema change and no data migration.
+One additive schema migration, `0032`: `environments.construction_complete`, with existing rows backfilled to `true` (D6). There is no data migration beyond that backfill.
 
 1. Optional, before the deploy: list the environments that will be repaired, using the admin-guide query (placeholder expiry, `ttl_minutes > 0`, at least one READY child, no child that can still become READY), and warn their owners.
 2. Deploy. The first `reconcile_environment_leases` run, within one `ENFORCE_TTL_INTERVAL_SECONDS`, starts a lease of `now + ttl_minutes` for each of them. Those stacks are torn down one TTL after the deploy unless their owners act.
-3. Rollback: reverting the code restores the old behaviour for new events. Leases already started stay in place, which is correct because the stacks are still bounded by them.
+3. Rollback: reverting the code and downgrading `0032` (which drops the column) restores the old behaviour for new events. Leases already started stay in place, which is correct because the stacks are still bounded by them.

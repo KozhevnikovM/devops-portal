@@ -131,10 +131,32 @@ An environment's shared lease SHALL start once none of its children is still in 
 - **WHEN** an environment's lease has already started and a child later changes to a terminal status
 - **THEN** the environment's expiry does not change
 
+### Requirement: The lease never starts before the environment is fully constructed
+
+Ordering an environment creates its children one after another, and each child becomes visible to other workers as soon as it is created. An environment SHALL therefore record when its construction is complete, meaning every child the order intended to create (including an adopted standalone namespace) exists. That record SHALL be persisted. Until construction is complete, the environment's lease SHALL NOT start, whichever trigger evaluates it: reconciliation, a queued-child promotion, or any other settling event. This holds even if the children that exist so far satisfy the lease-start rule. An order that fails and is rolled back SHALL never be marked complete. Environments that already existed when this change was deployed SHALL count as fully constructed.
+
+#### Scenario: Reconciliation runs while a pooled child exists but the VM is not created yet
+- **WHEN** an order has created the environment and committed its READY namespace child but has not yet created its VM child, and reconciliation runs from another worker at that moment
+- **THEN** the environment keeps its placeholder expiry
+- **AND** once the order has created every child and the VM becomes READY, the lease starts exactly once, with one deadline shared by the environment and every child
+
+#### Scenario: Reconciliation runs right after a namespace is adopted
+- **WHEN** an order has adopted the user's existing READY standalone namespace into the new environment but has not yet created the remaining children, and reconciliation runs at that moment
+- **THEN** the environment keeps its placeholder expiry
+
+#### Scenario: A queued child is promoted during construction
+- **WHEN** an environment's QUEUED pooled child is promoted to READY while the order is still creating the remaining children
+- **THEN** the promotion does not start the environment's lease
+
+#### Scenario: Environment that existed before the deploy
+- **WHEN** an environment that existed before this change was deployed is stuck on the placeholder expiry with a READY child and no child in flight
+- **THEN** reconciliation treats it as fully constructed and starts its lease
+
 ### Requirement: Lease start is guaranteed by periodic reconciliation
 
 Starting the lease SHALL NOT depend only on the immediate trigger that runs after a settling event. A periodic reconciliation SHALL find every environment that meets all of the following, and start its lease through the same serialized, start-once path:
 
+- its construction is complete;
 - its TTL is greater than zero;
 - it still has the placeholder expiry;
 - its children satisfy the lease-start rule.

@@ -221,7 +221,7 @@ def provision_vm_task(
                     start_lease=True,  # #223 — the lease starts now that the VM is usable
                 ))
                 # If this VM is part of an environment, the lease for the whole stack starts once
-                # every child is READY — the last one to finish stamps the environment + children.
+                # every child has settled — the last one to settle stamps the environment + children.
                 _run(lambda s: env_repo.sync_start_lease_if_ready_for_booking(s, booking_uuid))
                 logger.info(
                     "Provisioning complete for booking %s — IP: %s (config_failed=%s)",
@@ -235,6 +235,8 @@ def provision_vm_task(
                 try:
                     _run(lambda s: repo.sync_set_status_message(s, booking_uuid, f"Secret decryption failed: {exc}"))
                     _run(lambda s: repo.sync_update_status(s, booking_uuid, BookingStatus.FAILED))
+                    # A failed child has settled — it must not hold its environment's lease back (#434).
+                    _run(lambda s: env_repo.sync_start_lease_if_ready_for_booking(s, booking_uuid))
                 except Exception:
                     pass
                 return
@@ -245,6 +247,9 @@ def provision_vm_task(
                 try:
                     _run(lambda s: repo.sync_set_status_message(s, booking_uuid, "Failed — see audit log"))
                     _run(lambda s: repo.sync_update_status(s, booking_uuid, new_status))
+                    if new_status == BookingStatus.FAILED:
+                        # Final failure: the child has settled — start the env lease if due (#434).
+                        _run(lambda s: env_repo.sync_start_lease_if_ready_for_booking(s, booking_uuid))
                 except Exception:
                     pass
                 raise self.retry(exc=exc)

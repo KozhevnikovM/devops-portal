@@ -73,3 +73,7 @@ class BookingPermissionError(Exception):
 
 class SecretDecryptionError(BookingError):
     """Fernet key mismatch or corrupted ciphertext — permanent, must not be retried."""
+
+
+class EnvironmentChildReleaseError(BookingError):
+    """A booking owned by an environment was released on its own (#434) — release the environment."""
