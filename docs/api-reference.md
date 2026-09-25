@@ -758,6 +758,12 @@ Transitions the booking to `RELEASING` and queues `teardown_vm_task` which runs
 `terraform destroy`. The booking reaches `RELEASED` once teardown completes. (Pooled
 namespace/static-VM bookings go straight to `RELEASED` and return to the pool.)
 
+A booking that belongs to an environment (non-null `environment_id`) **cannot be released on its
+own** — releasing one child would orphan its siblings (#434). The request is rejected with `409`
+and changes nothing, whatever the child's status and whoever the caller is (owner, dispatcher or
+admin); release the whole environment with [`DELETE /api/environments/{id}`](#delete-apienvironmentsid)
+instead. The same applies to the browser route `DELETE /bookings/{booking_id}`.
+
 **Auth:** booking owner or admin.
 
 **Path parameters:**
@@ -772,6 +778,8 @@ namespace/static-VM bookings go straight to `RELEASED` and return to the pool.)
 - `403 Forbidden` — caller is not the booking owner or admin.
 - `404 Not Found` — booking does not exist.
 - `409 Conflict` — booking is in-flight (`PENDING`, `PROVISIONING`, `RETRY`, or already `RELEASING`) or already `RELEASED`.
+- `409 Conflict` — booking belongs to an environment:
+  `{"detail": "Booking belongs to environment <environment_id>; release the environment instead."}`
 
 **Releasable statuses:** `READY`, `FAILED`
 
@@ -1340,9 +1348,19 @@ namespace).
 ```
 
 Each child's `label` is the blueprint item's label (e.g. `web`); it is `null` for an item with no
-label. The environment `status` is **derived** from its children: any `FAILED` child → `FAILED`; any
-in-flight child → `PROVISIONING`; all `READY` → `READY`; all `RELEASED` → `RELEASED`. Child bookings
-also appear in `GET /api/bookings`, carrying their `environment_id`.
+label. The environment `status` is **derived** from its children, first match wins: no children →
+`READY`; any `FAILED` child → `FAILED`; any in-flight child (`QUEUED`/`PENDING`/`PROVISIONING`/
+`CONFIGURING`/`RETRY`) → `PROVISIONING`; all `RELEASED` → `RELEASED`; all `READY` → `READY`; any other
+mix → `FAILED`. A partly released stack (e.g. one child `RELEASED` or `RELEASING` while another is
+still `READY`) is therefore reported `FAILED`, never `READY` — release the environment to clean it up.
+Child bookings also appear in `GET /api/bookings`, carrying their `environment_id`, but can only be
+released through their environment (see `DELETE /api/bookings/{booking_id}`).
+
+The environment's `expires_at` is a far-future placeholder (`9999-12-31T23:59:59+00:00`) until its
+lease starts: once no child can still become `READY` (none `QUEUED`/`PENDING`/`PROVISIONING`/
+`CONFIGURING`/`RETRY`) and at least one child is `READY`, the environment and every child get the
+same deadline, `now + ttl_minutes` (permanent when `ttl_minutes` is `0`). A child ending `FAILED`
+does not hold the lease back, so the remaining live children are still torn down at expiry.
 
 ### `GET /api/environments` and `GET /api/environments/{id}`
 

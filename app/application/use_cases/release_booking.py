@@ -6,7 +6,7 @@ from app.domain.entities import Booking, User
 from app.domain.enums import BookingStatus, ResourceType
 from app.application.ports import BookingRepositoryPort, TaskDispatcher
 from app.application.use_cases._permissions import can_manage
-from app.domain.exceptions import BookingError, BookingPermissionError
+from app.domain.exceptions import BookingError, BookingPermissionError, EnvironmentChildReleaseError
 
 # A booking the owner may release directly (it holds a live resource).
 _RELEASABLE_STATUSES = {BookingStatus.READY, BookingStatus.FAILED}
@@ -23,6 +23,7 @@ class ReleaseBookingUseCase:
     """Release (or cancel) a booking, enforcing ownership and the status machine.
 
     Shared by the browser (HTMX) and the JSON API so both honour exactly the same rules:
+    environment children are only released through their environment (`force`, #434),
     owners release their own READY/FAILED bookings, admins may force-delete in-flight ones,
     QUEUED slots are cancelled, pooled resources go back to the pool (promoting the next queued
     booking) and provisioned VMs are torn down asynchronously.
@@ -40,6 +41,14 @@ class ReleaseBookingUseCase:
 
         if not can_manage(owner_id=booking.user_id, created_by=booking.created_by, user=current_user):
             raise BookingPermissionError("Not the booking owner")
+
+        # An environment child's lifecycle belongs to its environment (#434): releasing it alone
+        # (even cancelling a QUEUED slot) would orphan its siblings. Only the environment release
+        # itself, which passes `force`, may tear children down.
+        if booking.environment_id is not None and not force:
+            raise EnvironmentChildReleaseError(
+                f"Booking belongs to environment {booking.environment_id}; release the environment instead."
+            )
 
         # `force` (used when releasing a whole environment) tears down any non-terminal child
         # regardless of status — the same effect as an admin force-delete.

@@ -310,6 +310,13 @@ def _assign_resource_and_ready(session, booking_model, resource_type: str, resou
     ))
 
 
+def _environment_repo():
+    """A promoted environment child may be the last to settle, so promotion also checks the
+    environment's lease. Imported lazily: environment_repo imports this module."""
+    from app.infrastructure.repositories.environment_repo import EnvironmentRepository
+    return EnvironmentRepository()
+
+
 class BookingRepository:
     async def create(self, session: AsyncSession, booking: Booking) -> Booking:
         model = BookingModel(
@@ -555,6 +562,9 @@ class BookingRepository:
         await session.commit()
         await session.refresh(booking)
         await _apublish_lifecycle(session, booking)
+        if booking.environment_id is not None:
+            # Only after the promotion commits, in its own transaction (lock order, #434 D3).
+            await _environment_repo().start_lease_if_ready(session, booking.environment_id)
         return _to_entity(booking)
 
     async def queue_position(self, session: AsyncSession, resource_type: str, created_at: datetime) -> int:
@@ -701,4 +711,7 @@ class BookingRepository:
         _assign_resource_and_ready(session, booking, resource_type, resource)
         session.commit()
         _publish_lifecycle(session, booking)
+        if booking.environment_id is not None:
+            # Only after the promotion commits, in its own transaction (lock order, #434 D3).
+            _environment_repo().sync_start_lease_if_ready(session, booking.environment_id)
         return _to_entity(booking)

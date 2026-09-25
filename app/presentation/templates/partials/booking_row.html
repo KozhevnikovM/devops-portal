@@ -1,3 +1,15 @@
+{#- An environment child's lifecycle belongs to its environment (#434): its row never offers the
+    ordinary release actions (Release / Cancel / admin Delete — all DELETE /bookings/{id} → 409),
+    only a pointer to the environment, which is released as a whole. -#}
+{% macro environment_managed_hint(booking) -%}
+<a
+    href="/environments#environment-{{ booking.environment_id }}"
+    class="block px-3 py-2 text-xs text-gray-500 hover:bg-gray-800 transition-colors"
+    data-environment-managed
+>
+    Managed by environment — release it there
+</a>
+{%- endmacro %}
 {% set is_terminal = booking.status.value in ('READY', 'FAILED', 'RELEASED') %}
 <tr
     id="booking-{{ booking.id }}"
@@ -168,6 +180,9 @@
                         </a>
                         <div class="border-t border-gray-800"></div>
                         {% endif %}
+                        {% if booking.environment_id %}
+                        {{ environment_managed_hint(booking) }}
+                        {% else %}
                         <button
                             class="w-full text-left px-3 py-2 text-sm text-red-400 hover:bg-gray-800 transition-colors"
                             hx-delete="/bookings/{{ booking.id }}"
@@ -177,6 +192,7 @@
                         >
                             Release
                         </button>
+                        {% endif %}
                         {% if current_user.role == 'admin' and booking.status.value == 'FAILED' and booking.resource_type.value == 'VM' %}
                         <div class="border-t border-gray-800"></div>
                         <button
@@ -198,6 +214,9 @@
             <details class="relative">
                 <summary class="list-none cursor-pointer w-7 h-7 flex items-center justify-center rounded text-gray-400 hover:text-gray-200 hover:bg-gray-700 transition-colors select-none text-lg leading-none">⋮</summary>
                 <div class="absolute right-0 {% if is_first_row is defined and is_first_row %}top-full mt-1{% else %}bottom-full mb-1{% endif %} w-48 bg-gray-900 border border-gray-700 rounded shadow-lg z-50 py-1">
+                    {% if booking.environment_id %}
+                    {{ environment_managed_hint(booking) }}
+                    {% else %}
                     <button
                         class="w-full text-left px-3 py-2 text-sm text-red-400 hover:bg-gray-800 transition-colors"
                         hx-delete="/bookings/{{ booking.id }}"
@@ -207,6 +226,7 @@
                     >
                         Delete
                     </button>
+                    {% endif %}
                 </div>
             </details>
         {% elif booking.status.value == 'QUEUED' %}
@@ -231,6 +251,9 @@
                             </button>
                         </form>
                         <div class="border-t border-gray-800"></div>
+                        {% if booking.environment_id %}
+                        {{ environment_managed_hint(booking) }}
+                        {% else %}
                         <button
                             class="w-full text-left px-3 py-2 text-sm text-red-400 hover:bg-gray-800 transition-colors"
                             hx-delete="/bookings/{{ booking.id }}"
@@ -240,6 +263,7 @@
                         >
                             Cancel
                         </button>
+                        {% endif %}
                     </div>
                 </details>
             {% else %}

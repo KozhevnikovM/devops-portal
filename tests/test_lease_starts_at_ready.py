@@ -55,7 +55,7 @@ def _env_session(children, ttl_minutes=240):
     env = SimpleNamespace(id=uuid4(), ttl_minutes=ttl_minutes, expires_at=PERMANENT_EXPIRES_AT)
     booking = SimpleNamespace(id=uuid4(), environment_id=env.id)
     session = MagicMock()
-    session.get.side_effect = lambda model, id_: booking if id_ == booking.id else env
+    session.get.side_effect = lambda model, id_, **kw: booking if id_ == booking.id else env
     exec_result = MagicMock()
     exec_result.scalars.return_value.all.return_value = children
     session.execute.return_value = exec_result

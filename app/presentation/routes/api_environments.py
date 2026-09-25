@@ -7,7 +7,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.presentation.routes._dispatch import resolve_owner
 from app.domain.entities import Environment, User
-from app.domain.enums import BookingStatus, ResourceType
+from app.domain.enums import ResourceType
+from app.domain.environment_status import derive_environment_status
 from app.domain.exceptions import (
     BlueprintNotFoundError, BookingPermissionError, EnvironmentError, EnvironmentItemError,
     EnvironmentNotFoundError, NamespaceUnavailableError, NotFoundError, QuotaExceededError,
@@ -37,12 +38,6 @@ _order_use_case = deps.order_environment_uc
 _release_use_case = deps.release_environment_uc
 _update_name_use_case = deps.update_environment_name_uc
 
-# A child is "in flight" until it settles; an environment is FAILED if any child failed.
-_IN_FLIGHT = {
-    BookingStatus.QUEUED, BookingStatus.PENDING, BookingStatus.PROVISIONING,
-    BookingStatus.CONFIGURING, BookingStatus.RETRY,
-}
-
 
 class UpdateEnvironmentRequest(BaseModel):
     name: str
@@ -63,17 +58,8 @@ class OrderEnvironmentRequest(BaseModel):
 
 
 def _derived_status(env: Environment) -> str:
-    """Aggregate the environment's status from its children."""
-    statuses = [b.status for b in env.bookings]
-    if not statuses:
-        return BookingStatus.READY.value
-    if any(s == BookingStatus.FAILED for s in statuses):
-        return BookingStatus.FAILED.value
-    if any(s in _IN_FLIGHT for s in statuses):
-        return BookingStatus.PROVISIONING.value
-    if all(s == BookingStatus.RELEASED for s in statuses):
-        return BookingStatus.RELEASED.value
-    return BookingStatus.READY.value
+    """Aggregate the environment's status from its children (rules live in the domain, #434)."""
+    return derive_environment_status(b.status for b in env.bookings).value
 
 
 def _serialize(env: Environment) -> dict:

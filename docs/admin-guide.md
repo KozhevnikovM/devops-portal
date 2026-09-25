@@ -1702,7 +1702,7 @@ only from these starting states:
 
 ## TTL & Auto-Release
 
-Two Celery Beat tasks run on a schedule to enforce booking lifecycle rules
+Celery Beat tasks run on a schedule to enforce booking lifecycle rules
 automatically. They require the `beat` service to be running (included in
 `docker-compose.yml`).
 
@@ -1710,8 +1710,21 @@ automatically. They require the `beat` service to be running (included in
 > provisioning and configuration time is never deducted from a VM's lease. A booking shows
 > *"starts when ready"* in place of a countdown while it is `PENDING`/`PROVISIONING`/`CONFIGURING`,
 > then `expires_at` is set to `now + ttl_minutes` at the `READY` transition. For an **environment**,
-> the whole stack shares one lease that starts when **all** its resources are READY (a permanent
-> lease, `ttl_minutes = 0`, never expires).
+> the whole stack shares one lease that starts once **every child has settled** — none is still
+> `QUEUED`/`PENDING`/`PROVISIONING`/`CONFIGURING`/`RETRY` — and at least one child is `READY`. A
+> child that ends `FAILED` (or `RELEASED`/`RELEASING`) does not hold the lease back, so the stack's
+> remaining live resources are still torn down when it expires. A permanent lease
+> (`ttl_minutes = 0`) never expires.
+
+> **Environment children are released only through their environment** (#434). The children of an
+> environment share its lifecycle: releasing one on its own would leave its siblings running under a
+> half-released stack. So `DELETE /api/bookings/{id}` (and the browser's `DELETE /bookings/{id}`)
+> returns `409` for any booking with an `environment_id` — for owners, dispatchers and admins alike —
+> and the bookings page shows *"Managed by environment — release it there"* instead of the
+> **Release** / **Cancel** / admin **Delete** actions on those rows. Release the whole environment
+> (Environments page, or `DELETE /api/environments/{id}`). Admin **Force release** of a `FAILED` or
+> stuck-`RELEASING` VM child is still available as a recovery tool. An environment whose children
+> are partly released (e.g. one `RELEASED`, another still `READY`) reports status `FAILED`.
 
 ### `enforce_ttl` — every `ENFORCE_TTL_INTERVAL_SECONDS` (default 60s)
 
@@ -1726,12 +1739,50 @@ Bookings in `RELEASING`, `RELEASED`, `FAILED`, or `QUEUED` are ignored — a
 `QUEUED` booking holds no resource and its `expires_at` is just a placeholder
 until it's promoted.
 
+### `enforce_environment_ttl` — every `ENFORCE_TTL_INTERVAL_SECONDS` (default 60s)
+
+Finds environments whose `expires_at` is in the past and that still have a live child, and releases
+all their live children together (provisioned VMs → `RELEASING` + teardown, pooled → back to the
+pool, queued → cancelled). `enforce_ttl` skips environment children, so a stack is only ever torn
+down as a unit.
+
+### `reconcile_environment_leases` — every `ENFORCE_TTL_INTERVAL_SECONDS` (default 60s)
+
+The safety net for environment leases (#434). A lease is normally started the moment the last child
+settles, but that check runs just *after* the settling commit (a VM reaching `READY` or `FAILED`, a
+stale booking being reaped, a queued child being promoted); if the process dies in between, the
+environment would otherwise keep its far-future placeholder expiry forever. This task finds every
+environment still on the placeholder with `ttl_minutes > 0`, at least one `READY` child and no child
+that can still become `READY`, and starts its lease — `now + ttl_minutes`, the same deadline for the
+environment and every child. It is idempotent: an already-started lease is never moved.
+
+> **Upgrade note — this is retroactive.** On the first run after deploying #434, the task also
+> starts a lease for environments that were **already stuck** before the upgrade — typically a stack
+> where one child was released on its own and the rest are still `READY`. Each gets a full
+> `ttl_minutes` measured from that first run (not backdated), after which `enforce_environment_ttl`
+> tears the remaining resources down. Environments with no `READY` child, with a child still in
+> flight, or with `ttl_minutes = 0` are left alone. To see which environments will be affected (and
+> warn their owners) before deploying:
+>
+> ```sql
+> SELECT e.id, e.name, e.user_id, e.ttl_minutes
+> FROM environments e
+> WHERE e.expires_at = '9999-12-31 23:59:59+00'
+>   AND e.ttl_minutes > 0
+>   AND EXISTS (SELECT 1 FROM bookings b WHERE b.environment_id = e.id AND b.status = 'READY')
+>   AND NOT EXISTS (SELECT 1 FROM bookings b WHERE b.environment_id = e.id
+>                   AND b.status IN ('QUEUED', 'PENDING', 'PROVISIONING', 'CONFIGURING', 'RETRY'));
+> ```
+>
+> An owner who still needs such a stack can order it again; one who doesn't can release it right away.
+
 ### `reap_stale_provisioning` — every 15 minutes
 
 Finds `PENDING`, `PROVISIONING`, or `RETRY` bookings whose `created_at` is older
 than `STALE_PROVISIONING_THRESHOLD_MINUTES` (default: 60 minutes) and marks each
 one `FAILED` directly. No Terraform action is taken because provisioning never
-completed, so there is no workspace to destroy.
+completed, so there is no workspace to destroy. If the reaped booking was the last unsettled child of
+an environment, the environment's lease starts then.
 
 ### Starting the beat service
 

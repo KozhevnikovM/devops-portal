@@ -49,6 +49,26 @@ ALLOWED_TRANSITIONS: dict[BookingStatus, set[BookingStatus]] = {
 }
 
 
+def _statuses_reaching(target: BookingStatus) -> frozenset[BookingStatus]:
+    """Every status from which `target` is reachable through ALLOWED_TRANSITIONS (transitive)."""
+    reaching: set[BookingStatus] = set()
+    frontier = {target}
+    while frontier:
+        frontier = {
+            src for src, dests in ALLOWED_TRANSITIONS.items()
+            if dests & frontier and src not in reaching and src != target
+        }
+        reaching |= frontier
+    return frozenset(reaching)
+
+
+# Statuses that can still lead to READY — a child in one of these is "in flight" and holds back its
+# environment's lease (#434). Computed from the graph so it can't drift from it; evaluates to
+# QUEUED/PENDING/PROVISIONING/CONFIGURING/RETRY. RELEASING only leads to RELEASED/FAILED, so a
+# child stuck in teardown never blocks the lease.
+CAN_BECOME_READY: frozenset[BookingStatus] = _statuses_reaching(BookingStatus.READY)
+
+
 def can_transition(old: BookingStatus, new: BookingStatus) -> bool:
     """True if a booking may move from `old` to `new`. A no-op (`old == new`) is **not** a transition
     and returns False; callers that want to permit idempotent re-writes check that separately."""

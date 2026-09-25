@@ -345,7 +345,9 @@ async def test_promote_next_queued_publishes(mock_row_changed_publish, env_looku
     session.execute = AsyncMock(side_effect=[r1, r2])
     session.refresh = AsyncMock()
 
-    with patch.object(mod, "_to_entity", lambda m: m):
+    env_repo = MagicMock(start_lease_if_ready=AsyncMock(return_value=False))  # #434 lease check
+    with patch.object(mod, "_to_entity", lambda m: m), \
+         patch.object(mod, "_environment_repo", return_value=env_repo):
         await mod.BookingRepository().promote_next_queued(session, ResourceType.STATIC_VM.value)
 
     async_mock.assert_awaited_once_with(**_lifecycle(queued.id, env_id, ENV_ROUTING))
@@ -367,7 +369,9 @@ def test_sync_promote_next_queued_publishes(mock_row_changed_publish, env_lookup
     r2 = MagicMock(); r2.scalar_one_or_none = lambda: free_vm
     session.execute = MagicMock(side_effect=[r1, r2])
 
-    with patch.object(mod, "_to_entity", lambda m: m):
+    env_repo = MagicMock()  # #434 lease check
+    with patch.object(mod, "_to_entity", lambda m: m), \
+         patch.object(mod, "_environment_repo", return_value=env_repo):
         mod.BookingRepository().sync_promote_next_queued(session, ResourceType.STATIC_VM.value)
 
     sync_mock.assert_called_once_with(**_lifecycle(queued.id, env_id, ENV_ROUTING))

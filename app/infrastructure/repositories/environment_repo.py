@@ -5,11 +5,12 @@ from sqlalchemy import String, cast, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session, aliased
 
-from app.domain.booking_status import LIVE_CHILD_STATUSES
+from app.domain.booking_status import CAN_BECOME_READY, LIVE_CHILD_STATUSES
+from app.domain.constants import PERMANENT_EXPIRES_AT
 from app.domain.entities import Environment
 from app.domain.enums import BookingStatus, ResourceType
 from app.domain.exceptions import EnvironmentNotFoundError
-from app.domain.lease import Lease
+from app.domain.lease import Lease, lease_can_start
 from app.infrastructure.database.models import (
     BookingModel, EnvironmentModel, NamespaceModel, StaticVMModel, UserModel,
 )
@@ -24,13 +25,15 @@ def _lease_until(ttl_minutes: int) -> datetime:
     return Lease.starting_now(ttl_minutes).expires_at
 
 
-def _stamp_lease_if_all_ready(session: Session, env: EnvironmentModel) -> bool:
-    """If every child of `env` is READY, start the whole stack's lease now (env + each child share
-    one deadline). No-op (returns False) if there are no children or any child isn't READY yet."""
-    children = list(session.execute(
-        select(BookingModel).where(BookingModel.environment_id == env.id)
-    ).scalars().all())
-    if not children or any(c.status != BookingStatus.READY.value for c in children):
+def _lease_already_started(env: EnvironmentModel) -> bool:
+    """A timed environment whose expiry is no longer the placeholder has had its lease started."""
+    return env.ttl_minutes > 0 and env.expires_at != PERMANENT_EXPIRES_AT
+
+
+def _stamp_lease(env: EnvironmentModel, children) -> bool:
+    """Start the whole stack's lease (env + every child share one deadline) if its children have
+    settled and it hasn't started yet (#223, #434). Caller must hold the env row lock and commit."""
+    if not lease_can_start(BookingStatus(c.status) for c in children) or _lease_already_started(env):
         return False
     deadline = _lease_until(env.ttl_minutes)
     env.expires_at = deadline
@@ -38,6 +41,17 @@ def _stamp_lease_if_all_ready(session: Session, env: EnvironmentModel) -> bool:
         c.expires_at = deadline
     return True
 
+
+def _children_stmt(environment_id: UUID):
+    # populate_existing: re-read statuses committed by other workers since this session loaded them.
+    return (
+        select(BookingModel).where(BookingModel.environment_id == environment_id)
+        .execution_options(populate_existing=True)
+    )
+
+
+# Child statuses that can still become READY — an environment with one isn't lease-eligible (#434).
+_IN_FLIGHT_VALUES = [s.value for s in CAN_BECOME_READY]
 _LIVE_CHILD_STATUSES = [s.value for s in LIVE_CHILD_STATUSES]
 
 
@@ -226,34 +240,65 @@ class EnvironmentRepository:
         )
         return [_booking_to_entity(m) for m in result.scalars().all()]
 
-    # ── Lease start: whole-stack TTL begins once every child is READY (#223) ────
+    # ── Lease start: whole-stack TTL begins once every child has settled (#223, #434) ────
+    # Every path locks the environment row first (SELECT … FOR UPDATE) and only then reads the
+    # children and the expiry, so concurrent settling events start the lease exactly once. Each path
+    # commits, which releases the lock, even when it stamps nothing.
     async def start_lease_if_ready(self, session: AsyncSession, environment_id: UUID) -> bool:
-        """Async path (ordering): stamp the lease if the environment is already fully READY."""
-        env = await session.get(EnvironmentModel, environment_id)
+        """Async path (ordering, promotion): start the lease if the children have settled."""
+        env = await session.get(
+            EnvironmentModel, environment_id, with_for_update=True, populate_existing=True,
+        )
         if env is None:
             return False
-        children = (await session.execute(
-            select(BookingModel).where(BookingModel.environment_id == environment_id)
-        )).scalars().all()
-        if not children or any(c.status != BookingStatus.READY.value for c in children):
-            return False
-        deadline = _lease_until(env.ttl_minutes)
-        env.expires_at = deadline
-        for c in children:
-            c.expires_at = deadline
+        children = (await session.execute(_children_stmt(environment_id))).scalars().all()
+        stamped = _stamp_lease(env, children)
         await session.commit()
-        return True
+        return stamped
+
+    async def start_lease_if_ready_for_booking(self, session: AsyncSession, booking_id: UUID) -> bool:
+        """Async twin of sync_start_lease_if_ready_for_booking. No-op for a standalone booking."""
+        booking = await session.get(BookingModel, booking_id)
+        if booking is None or booking.environment_id is None:
+            return False
+        return await self.start_lease_if_ready(session, booking.environment_id)
+
+    def sync_start_lease_if_ready(self, session: Session, environment_id: UUID) -> bool:
+        """Sync path (Celery): start the lease if the children have settled."""
+        env = session.get(EnvironmentModel, environment_id, with_for_update=True, populate_existing=True)
+        if env is None:
+            return False
+        children = session.execute(_children_stmt(environment_id)).scalars().all()
+        stamped = _stamp_lease(env, children)
+        session.commit()
+        return stamped
 
     def sync_start_lease_if_ready_for_booking(self, session: Session, booking_id: UUID) -> bool:
-        """Sync path (provision task): if this booking belongs to an environment whose children are
-        now all READY, start the whole stack's lease. No-op for a standalone booking."""
+        """Sync path (provision task, reaper, promotion): if this booking belongs to an environment
+        whose children have now settled, start the whole stack's lease. No-op for a standalone booking."""
         booking = session.get(BookingModel, booking_id)
         if booking is None or booking.environment_id is None:
             return False
-        env = session.get(EnvironmentModel, booking.environment_id)
-        if env is None:
-            return False
-        stamped = _stamp_lease_if_all_ready(session, env)
-        if stamped:
-            session.commit()
-        return stamped
+        return self.sync_start_lease_if_ready(session, booking.environment_id)
+
+    def sync_list_lease_pending(self, session: Session) -> list[UUID]:
+        """Ids of timed environments still on the placeholder expiry whose children have settled
+        (at least one READY, none that can still become READY) — for lease reconciliation (#434).
+        Only a preselection: sync_start_lease_if_ready re-checks under the row lock."""
+        ready_child = select(BookingModel.environment_id).where(
+            BookingModel.status == BookingStatus.READY.value,
+            BookingModel.environment_id.is_not(None),
+        )
+        in_flight_child = select(BookingModel.environment_id).where(
+            BookingModel.status.in_(_IN_FLIGHT_VALUES),
+            BookingModel.environment_id.is_not(None),
+        )
+        result = session.execute(
+            select(EnvironmentModel.id).where(
+                EnvironmentModel.expires_at == PERMANENT_EXPIRES_AT,
+                EnvironmentModel.ttl_minutes > 0,
+                EnvironmentModel.id.in_(ready_child),
+                EnvironmentModel.id.not_in(in_flight_child),
+            )
+        )
+        return list(result.scalars().all())
