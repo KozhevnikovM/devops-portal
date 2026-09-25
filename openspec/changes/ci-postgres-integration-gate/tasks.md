@@ -18,8 +18,8 @@
 ## 3. Local reproducibility and documentation
 
 - [x] 3.1 Document the required PostgreSQL service, `TEST_POSTGRES_URL`, matching `DATABASE_URL_SYNC`, migration command, and canonical PostgreSQL-only test invocation alongside the existing CI instructions; verify every documented command is executable as written.
-- [x] 3.2 Run the documented local integration command against PostgreSQL and verify it exercises the same PostgreSQL-only test tier as CI and fails clearly when the database is unavailable.
+- [ ] 3.2 Run the documented local integration command against PostgreSQL and verify it exercises the same PostgreSQL-only test tier as CI and fails clearly when the database is unavailable. **Blocked locally:** this environment has no Docker/PostgreSQL; the equivalent CI run passed.
 
 ## 4. Gate verification
 
-- [x] 4.1 Validate the OpenSpec change and inspect the final workflow/check names against the acceptance scenarios; verify `openspec validate ci-postgres-integration-gate --strict` passes and the CI check is suitable for required branch protection.
+- [ ] 4.1 Validate the OpenSpec change and inspect the final workflow/check names against the acceptance scenarios; verify `openspec validate ci-postgres-integration-gate --strict` passes and the CI check is suitable for required branch protection. **Blocked:** repository branch protection currently has no required status checks; `postgres-integration` must be added as a required check.
