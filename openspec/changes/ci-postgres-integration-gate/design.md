@@ -2,7 +2,7 @@
 
 ## Context
 
-The repository already has a `fast-tests` pull-request workflow that installs `requirements-dev.txt` and runs the non-integration suite without external services. PostgreSQL integration tests live under `tests/integration/`; their fixtures accept `TEST_POSTGRES_URL` and default to a dedicated local port. The existing Compose configuration provides PostgreSQL health checks, while the project uses Alembic for schema migrations.
+The repository already has a `fast-tests` pull-request workflow that installs `requirements-dev.txt` and runs the non-integration suite without external services. PostgreSQL integration tests live under `tests/integration/`; their fixtures accept `TEST_POSTGRES_URL` and default to a dedicated local port. Redis-backed tests currently share the broad `integration` marker, so the PostgreSQL gate needs an explicit PostgreSQL-only marker or selection. Alembic reads `DATABASE_URL_SYNC`, while the tests use an async URL and convert it to the sync driver for migrations.
 
 ## Goals / Non-Goals
 
@@ -30,13 +30,17 @@ Use a separate workflow/job so fast tests remain quick and service-free. A GitHu
 
 ### Use the repository's existing test and migration commands
 
-The job will wait for PostgreSQL readiness, set `TEST_POSTGRES_URL` to the service endpoint, run `alembic upgrade head`, then execute `pytest tests/ -m integration`. This preserves the current fixture contract and makes migration failures fail before the test step can pass.
+The job will wait for PostgreSQL readiness, set `TEST_POSTGRES_URL` to the service endpoint, derive the equivalent `DATABASE_URL_SYNC` URL for the same database, run `alembic upgrade head`, then execute the explicit PostgreSQL-only test selection. This preserves the current fixture contract and makes migration failures fail before the test step can pass.
 
-**Alternative considered:** add a new test runner or custom wrapper. Rejected because it would create a second test contract that can drift from local development.
+**Alternative considered:** keep using the broad `integration` marker. Rejected because it includes Redis-backed tests that are intentionally outside this gate. A dedicated PostgreSQL marker makes the CI/local contract explicit and prevents accidental service coupling.
 
 ### Isolate jobs with an ephemeral database
 
 Each job gets its own PostgreSQL service and database. No persistent volume or shared external database is used. This prevents cross-run data leakage and makes retries deterministic.
+
+### Fail on unavailable PostgreSQL instead of accepting a skip
+
+The existing fixture can skip when PostgreSQL is unreachable. The CI workflow must guard against that behavior by verifying that the selected PostgreSQL test count is non-zero and that no selected test is skipped for the service-unavailable condition, or by changing the fixture/CI invocation so the condition exits non-zero. The implementation must preserve normal test diagnostics while preventing a green false positive.
 
 ### Reuse fast-test workflow conventions
 
