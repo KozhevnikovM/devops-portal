@@ -8,8 +8,9 @@ unit `_event_stream` calls for each pub/sub message, so testing them directly co
 authorization logic — mirrors tests/test_booking_row_ownership.py's IDOR regression coverage,
 applied to the new push path instead of the polling one.
 """
+import json
 from datetime import datetime, timedelta, timezone
-from unittest.mock import AsyncMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
@@ -237,6 +238,88 @@ async def test_render_environment_event_opens_and_closes_its_own_short_lived_ses
     mock_sessionmaker.assert_called_once_with()
     mock_repo.get.assert_awaited_once_with(fake_session, env.id)
     fake_session_cm.__aexit__.assert_awaited_once()
+
+
+# ── #441: progress-only notifications don't re-render the environment row ─────────
+@pytest.mark.parametrize(
+    ("kind", "with_env", "expected_rows"),
+    [
+        ("progress", True, ["booking"]),
+        ("progress", False, ["booking"]),
+        ("lifecycle", True, ["booking", "environment"]),
+        ("lifecycle", False, ["booking"]),
+        (None, True, ["booking", "environment"]),  # legacy payload: no kind at all
+        ("something-new", True, ["booking", "environment"]),
+    ],
+)
+def test_rows_to_refresh(kind, with_env, expected_rows):
+    from app.presentation.routes import events as mod
+
+    booking_id, env_id = str(uuid4()), str(uuid4())
+    payload = {"booking_id": booking_id, "environment_id": env_id if with_env else None}
+    if kind is not None:
+        payload["kind"] = kind
+
+    rows = mod._rows_to_refresh(payload)
+
+    ids = {"booking": booking_id, "environment": env_id}
+    assert rows == [(row, ids[row]) for row in expected_rows]
+
+
+class _FakePubSub:
+    def __init__(self, messages):
+        self._messages = list(messages)
+
+    async def subscribe(self, channel):
+        pass
+
+    async def get_message(self, ignore_subscribe_messages, timeout):
+        return self._messages.pop(0) if self._messages else None
+
+    async def unsubscribe(self, channel):
+        pass
+
+    async def aclose(self):
+        pass
+
+
+async def _drain_one_message(mod, payload):
+    """Run _event_stream over a single pub/sub message, then stop at the next keepalive."""
+    redis_client = MagicMock()
+    redis_client.pubsub.return_value = _FakePubSub([{"data": json.dumps(payload)}])
+    request = AsyncMock()
+    request.is_disconnected.return_value = False
+    chunks = []
+    with patch.object(mod, "get_async_redis", return_value=redis_client):
+        stream = mod._event_stream(request, _user("user"))
+        async for chunk in stream:
+            if chunk.startswith(": keepalive"):
+                break
+            chunks.append(chunk)
+        await stream.aclose()
+    return chunks
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("kind", "env_rendered"), [("progress", False), ("lifecycle", True)],
+)
+async def test_event_stream_renders_environment_row_only_for_lifecycle(kind, env_rendered):
+    from app.presentation.routes import events as mod
+
+    booking_id, env_id = str(uuid4()), str(uuid4())
+    payload = {"booking_id": booking_id, "environment_id": env_id, "kind": kind}
+    with patch.object(mod, "_render_booking_event", AsyncMock(return_value="B")) as render_booking, \
+            patch.object(mod, "_render_environment_event", AsyncMock(return_value="E")) as render_env:
+        chunks = await _drain_one_message(mod, payload)
+
+    render_booking.assert_awaited_once_with(ANY, booking_id)
+    if env_rendered:
+        render_env.assert_awaited_once_with(ANY, env_id)
+        assert chunks == ["B", "E"]
+    else:
+        render_env.assert_not_awaited()
+        assert chunks == ["B"]
 
 
 # ── row templates: sse-swap replaces the 3s poll, gated the same as the old trigger ─

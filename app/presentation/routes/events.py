@@ -13,6 +13,7 @@ surface beyond what `GET /bookings/{id}/row` and `GET /environments/{id}/row` al
 import asyncio
 import json
 import logging
+from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Request
@@ -84,6 +85,24 @@ async def _render_environment_event(current_user: User, environment_id: str) -> 
     return _sse_event(f"environment-{environment_id}", html)
 
 
+def _rows_to_refresh(payload: dict) -> list[tuple[Literal["booking", "environment"], str]]:
+    """Which rows a row-changed notification should re-render, booking first (#441).
+
+    A ``progress`` notification only changes the booking's status message and provisioning log,
+    which the environment row doesn't show, so it refreshes the booking row alone. Anything else
+    (``lifecycle``, a missing kind from a legacy payload, or a kind this code doesn't know) also
+    refreshes the parent environment row: an extra render beats a stale aggregate status.
+    """
+    rows: list[tuple[Literal["booking", "environment"], str]] = []
+    booking_id = payload.get("booking_id")
+    if booking_id:
+        rows.append(("booking", booking_id))
+    environment_id = payload.get("environment_id")
+    if environment_id and payload.get("kind") != "progress":
+        rows.append(("environment", environment_id))
+    return rows
+
+
 async def _event_stream(request: Request, current_user: User):
     redis_client = get_async_redis()
     pubsub = redis_client.pubsub()
@@ -109,15 +128,9 @@ async def _event_stream(request: Request, current_user: User):
             except (TypeError, ValueError):
                 continue
 
-            booking_id = payload.get("booking_id")
-            if booking_id:
-                chunk = await _render_booking_event(current_user, booking_id)
-                if chunk:
-                    yield chunk
-
-            environment_id = payload.get("environment_id")
-            if environment_id:
-                chunk = await _render_environment_event(current_user, environment_id)
+            for row, row_id in _rows_to_refresh(payload):
+                render = _render_booking_event if row == "booking" else _render_environment_event
+                chunk = await render(current_user, row_id)
                 if chunk:
                     yield chunk
     finally:
