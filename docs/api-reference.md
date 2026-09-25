@@ -1365,7 +1365,8 @@ does not hold the lease back, so the remaining live children are still torn down
 ### `GET /api/environments` and `GET /api/environments/{id}`
 
 List environments (owner-scoped; admins see all) / fetch one (any authenticated user; `404` if not found),
-each with the derived status + child summaries.
+each with the derived status + child summaries. The list always includes fully released environments
+(`status: "RELEASED"`); only the browser page hides them by default.
 
 `GET /api/environments` accepts an optional `label` query parameter — a case-insensitive
 substring match against `name` (e.g. `?label=dev` matches `dev-stack`). An environment's
@@ -1456,7 +1457,9 @@ DELETE /api/environments/{id}?on_behalf_of=alice
 > **Browser UI:** the **Environments** page (`GET /environments`, in the top nav) lets users order a
 > blueprint, watch the stack come up (HTMX polling), and release it — the same operations as the JSON
 > API above. It accepts the same `filter`/`show_released`/`label` query params as the bookings page
-> (see `GET /` above). The order form has an optional **Namespace** dropdown (default *"Blueprint default"*)
+> (see `GET /` above). Without `show_released`, an environment is hidden only when it is fully released —
+> it has at least one child and every child is `RELEASED`. Environments with no children, or with any
+> non-`RELEASED` child, stay listed (#466). The order form has an optional **Namespace** dropdown (default *"Blueprint default"*)
 > listing the available namespaces by `name (cluster)`; picking one overrides the blueprint's
 > namespace item (same single-namespace rule as the API — a bad choice renders the `400` inline).
 > Those `/environments*` routes return HTML fragments and are intentionally absent from the schema.
