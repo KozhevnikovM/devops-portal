@@ -1,6 +1,6 @@
 """Shared test helpers — available to all test modules."""
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
@@ -47,3 +47,17 @@ def mock_row_changed_publish():
                new=AsyncMock()) as async_mock:
         sync_mock.progress = progress_mock
         yield sync_mock, async_mock
+
+
+@pytest.fixture(autouse=True)
+def mock_provisioning_lock_client():
+    """Keep unit tests that exercise real-adapter branches independent of Redis.
+
+    Tests for the provisioning-lock behavior patch the whole ``provisioning_lock`` module with
+    their own mock, so this default only covers tests whose subject is unrelated to Redis.
+    """
+    with patch(
+        "app.infrastructure.provisioning_lock.get_client",
+        return_value=MagicMock(),
+    ):
+        yield

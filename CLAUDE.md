@@ -21,8 +21,8 @@ DATABASE_URL_SYNC=postgresql+psycopg2://portal:portal@localhost:5432/portal alem
 # Install deps for local development
 pip install -r requirements-dev.txt
 
-# Run all tests (unit/integration-marked tests are skipped by default — no real Postgres needed)
-pytest tests/
+# Run the fast unit/API suite (same command as CI; no real Postgres needed)
+pytest tests/ -m "not integration"
 
 # Run a single test file
 pytest tests/test_create_booking.py
