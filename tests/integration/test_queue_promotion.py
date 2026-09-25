@@ -17,7 +17,7 @@ from app.domain.enums import BookingStatus, ResourceType
 from app.infrastructure.database.models import BookingAuditModel, BookingModel
 from app.infrastructure.repositories.booking_repo import BookingRepository
 
-pytestmark = [pytest.mark.integration, pytest.mark.asyncio(loop_scope="session")]
+pytestmark = [pytest.mark.integration, pytest.mark.postgres_integration, pytest.mark.asyncio(loop_scope="session")]
 
 
 def _queued_ns_booking() -> BookingModel:

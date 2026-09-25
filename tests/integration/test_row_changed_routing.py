@@ -29,7 +29,7 @@ from app.infrastructure.repositories import booking_repo as mod
 from app.infrastructure.repositories.booking_repo import BookingRepository
 from tests.integration.conftest import _SYNC_URL
 
-pytestmark = [pytest.mark.integration, pytest.mark.asyncio(loop_scope="session")]
+pytestmark = [pytest.mark.integration, pytest.mark.postgres_integration, pytest.mark.asyncio(loop_scope="session")]
 
 
 async def _seed(engine: AsyncEngine, catalog: dict) -> tuple:

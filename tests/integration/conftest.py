@@ -1,7 +1,9 @@
 """Fixtures for Postgres integration tests.
 
 Run with:
-    TEST_POSTGRES_URL=postgresql+asyncpg://portal:portal@host:5433/portal_test pytest -m integration
+    TEST_POSTGRES_URL=postgresql+asyncpg://portal:portal@host:5433/portal_test \
+    DATABASE_URL_SYNC=postgresql+psycopg2://portal:portal@host:5433/portal_test \
+    pytest -m postgres_integration
 
 The default URL assumes a local test container on port 5433 (see docs/development.md).
 """
@@ -29,7 +31,10 @@ from app.infrastructure.database.models import (
 
 _DEFAULT_URL = "postgresql+asyncpg://portal:portal@localhost:5433/portal_test"
 _ASYNC_URL = os.environ.get("TEST_POSTGRES_URL", _DEFAULT_URL)
-_SYNC_URL = _ASYNC_URL.replace("postgresql+asyncpg", "postgresql+psycopg2")
+_SYNC_URL = os.environ.get(
+    "DATABASE_URL_SYNC",
+    _ASYNC_URL.replace("postgresql+asyncpg", "postgresql+psycopg2"),
+)
 _REPO_ROOT = Path(__file__).parent.parent.parent
 
 
@@ -43,7 +48,7 @@ async def async_engine() -> AsyncGenerator[AsyncEngine, None]:
             await conn.execute(text("SELECT 1"))
     except Exception as exc:
         await engine.dispose()
-        pytest.skip(f"Postgres not available at {_ASYNC_URL}: {exc}")
+        raise RuntimeError(f"Postgres not available at {_ASYNC_URL}: {exc}") from exc
 
     old_url = os.environ.get("DATABASE_URL_SYNC")
     os.environ["DATABASE_URL_SYNC"] = _SYNC_URL
@@ -127,7 +132,9 @@ async def async_session(async_engine: AsyncEngine) -> AsyncGenerator[AsyncSessio
     """
     async with async_engine.connect() as conn:
         await conn.begin()
-        session = AsyncSession(bind=conn, join_transaction_mode="create_savepoint")
+        # Keep the outer transaction open so repository commits cannot leak data.
+        # rollback_only avoids SQLAlchemy's sync savepoint path on AsyncConnection.
+        session = AsyncSession(bind=conn, expire_on_commit=False, join_transaction_mode="rollback_only")
         yield session
         await session.close()
         await conn.rollback()

@@ -15,7 +15,7 @@ from app.domain.enums import BookingStatus
 from app.domain.exceptions import IllegalStatusTransitionError
 from app.infrastructure.repositories.booking_repo import BookingRepository
 
-pytestmark = [pytest.mark.integration, pytest.mark.asyncio(loop_scope="session")]
+pytestmark = [pytest.mark.integration, pytest.mark.postgres_integration, pytest.mark.asyncio(loop_scope="session")]
 
 
 def _booking(image_id, hw_id, status=BookingStatus.PENDING) -> Booking:

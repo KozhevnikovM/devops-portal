@@ -217,6 +217,31 @@ both; the Ansible playbook (next section) is what normally chooses which one(s) 
 
 ---
 
+## Running tests
+
+The fast pull-request gate runs without external services:
+
+```bash
+pytest tests/ -m "not integration"
+```
+
+The PostgreSQL integration gate uses a separate database and an explicit marker, so it does not
+run the Redis-backed integration test. Start a PostgreSQL 15 instance, then configure both the
+async test URL and the sync URL used by Alembic:
+
+```bash
+export TEST_POSTGRES_URL=postgresql+asyncpg://portal:portal@localhost:5433/portal_test
+export DATABASE_URL_SYNC=postgresql+psycopg2://portal:portal@localhost:5433/portal_test
+alembic upgrade head
+pytest tests/ -m postgres_integration --maxfail=1
+```
+
+The two URLs must target the same database. The command fails when PostgreSQL is unavailable;
+integration tests must not pass by being skipped. GitHub Actions starts an ephemeral PostgreSQL
+service and runs the same migration and test commands in `.github/workflows/postgres-integration.yml`.
+
+---
+
 ## Blue-green deployment
 
 By default, `ansible/deploy.yml` deploys a single app-tier slot (`app_blue`) and recreates it
