@@ -139,8 +139,6 @@ Create the change with `/opsx:propose` (use `/opsx:explore` first if the problem
 
 On a **spec branch** (`spec/<issue>/<desc>`, see **Git Workflow**), open a PR that contains **only** `openspec/changes/<change-name>/` — no application code. Stage the change directory explicitly; don't sweep in other unrelated `openspec/changes/*` directories.
 
-Do this immediately after `/opsx:propose` finishes and `openspec validate --strict` passes. Create the spec branch off a fresh `main`, commit the change directory, push, and open the docs PR **without waiting for user approval**. Review happens on the PR.
-
 ### 3. Discuss & fix (spec)
 
 Address review comments by amending the artifacts with `/opsx:update` on the same branch, re-validate, and push. Repeat until the spec is **approved**, then merge the docs PR into `main`. **Do not write any implementation code until the docs PR is merged.**
