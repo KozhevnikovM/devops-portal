@@ -141,6 +141,8 @@ Starting the lease SHALL NOT depend only on the immediate trigger that runs afte
 
 As a result, an environment whose children have settled SHALL have its lease started within one reconciliation interval, even when the process that committed the final settling event (a queued-child promotion, a VM child reaching READY, or a child reaching FAILED) crashed before its immediate lease check ran or committed. Reconciliation SHALL leave alone environments that are still in flight, environments whose lease has already started, and environments with a zero TTL.
 
+Reconciliation SHALL apply retroactively. An environment that was already stuck on the placeholder expiry before this change was deployed, and that meets the criteria above, SHALL have its lease started by the first reconciliation run after the deploy. That lease SHALL run for the environment's full TTL from that run, not backdated to when its children settled.
+
 #### Scenario: Crash after a queued child is promoted
 - **WHEN** an environment's last in-flight child is a QUEUED namespace, it is promoted to READY and the promotion commits, but the process dies before the environment lease check runs
 - **THEN** the next reconciliation run starts the environment's lease, and the environment and every child get the same deadline, which is not the placeholder
@@ -148,6 +150,15 @@ As a result, an environment whose children have settled SHALL have its lease sta
 #### Scenario: Crash after a VM child reaches READY
 - **WHEN** an environment's last in-flight VM child commits READY, but the provisioning worker dies before the environment lease check runs
 - **THEN** the next reconciliation run starts the environment's lease
+
+#### Scenario: Environment already orphaned before the deploy
+- **WHEN** an environment existing at deploy time has a RELEASED namespace child and a READY VM child, a TTL of 60 minutes and the placeholder expiry, and the first reconciliation run after the deploy happens at time T
+- **THEN** the environment and its children get the deadline T + 60 minutes
+- **AND** after that deadline, TTL enforcement releases the READY VM child
+
+#### Scenario: Environment already stuck with nothing live
+- **WHEN** an environment existing at deploy time has only RELEASED and FAILED children and the placeholder expiry
+- **THEN** reconciliation leaves its expiry unchanged
 
 #### Scenario: Environment still in flight
 - **WHEN** reconciliation runs while an environment still has a PROVISIONING child
