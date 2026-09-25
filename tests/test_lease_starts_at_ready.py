@@ -15,6 +15,7 @@ def _fake_model(status="PROVISIONING", ttl_minutes=240):
     return SimpleNamespace(
         status=status, ttl_minutes=ttl_minutes, expires_at=PERMANENT_EXPIRES_AT,
         vm_ip=None, vm_password=None, config_failed=False, id=uuid4(),
+        user_id="owner-1", created_by=None,
     )
 
 

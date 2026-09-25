@@ -871,6 +871,14 @@ startup-script, SSH-wait lines). Progress output refreshes only the booking row,
 environment row doesn't show progress messages. Status changes (READY, FAILED, …) always refresh
 the environment row as well.
 
+Rows a connected user can't manage are filtered out server-side, per row, **before** any
+database lookup. Each Redis notification carries only ids: the booking id, environment id, kind,
+the booking's owner and creating-dispatcher ids and, for a status change of an environment's
+child booking, the environment's own owner and creator ids. The stream checks those against the
+connection's user and skips a row it could never show without touching the database. The
+authorization check against the database before rendering still runs for every row that passes,
+and a notification without these ids (from a server running older code) simply takes that path.
+
 Delivery is via Redis pub/sub, which has no replay guarantee — a message published while
 disconnected (a dropped connection, a Redis restart) is lost. Each row keeps a much slower 60s
 fallback poll (`GET /bookings/{id}/row` / `GET /environments/{id}/row`) as the safety net, so a

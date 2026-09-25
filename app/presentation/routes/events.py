@@ -9,6 +9,11 @@ if authorized — emits the same HTML the polling endpoints already return, as a
 
 A row a user isn't authorized to see is never rendered onto their connection — no new IDOR
 surface beyond what `GET /bookings/{id}/row` and `GET /environments/{id}/row` already enforce.
+
+Before any of that DB work, each row is pre-filtered on the routing metadata the notification
+carries (#442): a row this connection's user could never manage is skipped without opening a
+session. That check only ever skips work; the DB-backed `can_manage()` in the renderers stays
+authoritative.
 """
 import asyncio
 import json
@@ -85,6 +90,27 @@ async def _render_environment_event(current_user: User, environment_id: str) -> 
     return _sse_event(f"environment-{environment_id}", html)
 
 
+# Where each row's routing lives in a row-changed payload (#442). The environment row has its own:
+# an adopted namespace booking keeps its created_by, while the environment records who ordered it.
+_ROUTING_KEYS: dict[str, tuple[str, str]] = {
+    "booking": ("owner_id", "created_by"),
+    "environment": ("environment_owner_id", "environment_created_by"),
+}
+
+
+def _may_concern(payload: dict, row: Literal["booking", "environment"], user: User) -> bool:
+    """False only if the payload proves ``user`` cannot manage ``row`` — then no lookup is needed.
+
+    A payload without that row's owner key (a publisher predating #442, or an environment whose
+    routing couldn't be read) is "unknown", never "owned by nobody": it falls through to the
+    DB-backed check like before.
+    """
+    owner_key, creator_key = _ROUTING_KEYS[row]
+    if owner_key not in payload:
+        return True
+    return can_manage(owner_id=payload[owner_key], created_by=payload.get(creator_key), user=user)
+
+
 def _rows_to_refresh(payload: dict) -> list[tuple[Literal["booking", "environment"], str]]:
     """Which rows a row-changed notification should re-render, booking first (#441).
 
@@ -129,6 +155,8 @@ async def _event_stream(request: Request, current_user: User):
                 continue
 
             for row, row_id in _rows_to_refresh(payload):
+                if not _may_concern(payload, row, current_user):
+                    continue
                 render = _render_booking_event if row == "booking" else _render_environment_event
                 chunk = await render(current_user, row_id)
                 if chunk:

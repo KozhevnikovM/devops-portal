@@ -15,9 +15,10 @@ from app.domain.resource_details import (
     NamespaceDetails, ResourceFootprint, StaticVMDetails, VMDetails,
 )
 from app.infrastructure.database.models import (
-    BookingAuditModel, BookingModel, NamespaceModel, StaticVMModel, UserModel,
+    BookingAuditModel, BookingModel, EnvironmentModel, NamespaceModel, StaticVMModel, UserModel,
 )
 from app.infrastructure.events import (
+    Routing,
     apublish_row_changed,
     publish_progress_changed,
     publish_row_changed,
@@ -45,6 +46,75 @@ def _check_transition(old_value: str, new: BookingStatus, booking_id: UUID) -> N
         raise IllegalStatusTransitionError(
             f"Cannot move booking {booking_id} from {old.value} to {new.value}"
         )
+
+
+def _routing(model: BookingModel) -> Routing:
+    return Routing(owner_id=model.user_id, created_by=model.created_by)
+
+
+def _environment_routing_stmt(environment_id: UUID):
+    return select(EnvironmentModel.user_id, EnvironmentModel.created_by).where(
+        EnvironmentModel.id == environment_id
+    )
+
+
+async def environment_routing(session: AsyncSession, environment_id: UUID) -> Routing | None:
+    """The environment's own owner/creator (#442), or None if it no longer exists.
+
+    Not derivable from a child booking: an adopted namespace booking keeps its own ``created_by``
+    while the environment records whoever ordered it.
+    """
+    row = (await session.execute(_environment_routing_stmt(environment_id))).one_or_none()
+    return Routing(owner_id=row.user_id, created_by=row.created_by) if row is not None else None
+
+
+def sync_environment_routing(session: Session, environment_id: UUID) -> Routing | None:
+    """Sync twin of ``environment_routing`` — Celery worker path."""
+    row = session.execute(_environment_routing_stmt(environment_id)).one_or_none()
+    return Routing(owner_id=row.user_id, created_by=row.created_by) if row is not None else None
+
+
+async def _apublish_lifecycle(session: AsyncSession, model: BookingModel) -> None:
+    """Publish a lifecycle row-changed notification for ``model`` right after its commit.
+
+    For an environment child, also looks up the environment's routing. Best-effort like the
+    publish itself: a failed lookup is logged and the notification goes out without environment
+    routing (subscribers then authorize that row from the DB) — never failing the committed write.
+    """
+    environment_id = getattr(model, "environment_id", None)
+    environment_routing_ = None
+    if environment_id is not None:
+        try:
+            environment_routing_ = await environment_routing(session, environment_id)
+        except Exception:
+            logger.exception("Failed to read routing for environment %s", environment_id)
+            try:
+                await session.rollback()  # leave the caller's session usable
+            except Exception:
+                logger.exception("Rollback after failed environment routing read failed")
+    await apublish_row_changed(
+        booking_id=model.id, booking_routing=_routing(model),
+        environment_id=environment_id, environment_routing=environment_routing_,
+    )
+
+
+def _publish_lifecycle(session: Session, model: BookingModel) -> None:
+    """Sync twin of ``_apublish_lifecycle`` — Celery worker path."""
+    environment_id = getattr(model, "environment_id", None)
+    environment_routing_ = None
+    if environment_id is not None:
+        try:
+            environment_routing_ = sync_environment_routing(session, environment_id)
+        except Exception:
+            logger.exception("Failed to read routing for environment %s", environment_id)
+            try:
+                session.rollback()  # leave the caller's session usable
+            except Exception:
+                logger.exception("Rollback after failed environment routing read failed")
+    publish_row_changed(
+        booking_id=model.id, booking_routing=_routing(model),
+        environment_id=environment_id, environment_routing=environment_routing_,
+    )
 
 
 def _to_audit_entity(m: BookingAuditModel) -> BookingAuditEntry:
@@ -318,9 +388,7 @@ class BookingRepository:
             extra={"vm_ip": vm_ip} if vm_ip is not None else None,
         ))
         await session.commit()
-        await apublish_row_changed(
-            booking_id=booking_id, environment_id=getattr(model, "environment_id", None),
-        )
+        await _apublish_lifecycle(session, model)
 
     async def list_all(
         self,
@@ -402,9 +470,7 @@ class BookingRepository:
             extra={"extend_minutes": extend_minutes},
         ))
         await session.commit()
-        await apublish_row_changed(
-            booking_id=booking_id, environment_id=getattr(model, "environment_id", None),
-        )
+        await _apublish_lifecycle(session, model)
 
     async def update_label(
         self, session: AsyncSession, booking_id: UUID, label: str | None, actor_id: str,
@@ -422,9 +488,7 @@ class BookingRepository:
             extra={"old_label": old_label, "new_label": label},
         ))
         await session.commit()
-        await apublish_row_changed(
-            booking_id=booking_id, environment_id=getattr(model, "environment_id", None),
-        )
+        await _apublish_lifecycle(session, model)
 
     async def get_live_standalone_namespace_booking(
         self, session: AsyncSession, user_id: str, namespace_id: UUID
@@ -484,9 +548,7 @@ class BookingRepository:
         _assign_resource_and_ready(session, booking, resource_type, resource)
         await session.commit()
         await session.refresh(booking)
-        await apublish_row_changed(
-            booking_id=booking.id, environment_id=getattr(booking, "environment_id", None),
-        )
+        await _apublish_lifecycle(session, booking)
         return _to_entity(booking)
 
     async def queue_position(self, session: AsyncSession, resource_type: str, created_at: datetime) -> int:
@@ -536,9 +598,7 @@ class BookingRepository:
             extra={"vm_ip": vm_ip} if vm_ip is not None else None,
         ))
         session.commit()
-        publish_row_changed(
-            booking_id=booking_id, environment_id=getattr(model, "environment_id", None),
-        )
+        _publish_lifecycle(session, model)
 
     def sync_set_status_message(
         self, session: Session, booking_id: UUID, message: str | None
@@ -548,9 +608,7 @@ class BookingRepository:
             raise BookingNotFoundError(booking_id)
         model.status_message = message
         session.commit()
-        publish_row_changed(
-            booking_id=booking_id, environment_id=getattr(model, "environment_id", None),
-        )
+        _publish_lifecycle(session, model)
 
     def sync_record_progress(self, session: Session, booking_id: UUID, message: str) -> None:
         """Set the compact status_message (unchanged) and append to the capped provisioning_log,
@@ -565,8 +623,10 @@ class BookingRepository:
         combined = (model.provisioning_log or "") + message + "\n"
         model.provisioning_log = combined[-50_000:]
         session.commit()
+        # No environment routing: a progress notification never refreshes the environment row.
         publish_progress_changed(
-            booking_id=booking_id, environment_id=getattr(model, "environment_id", None),
+            booking_id=booking_id, booking_routing=_routing(model),
+            environment_id=getattr(model, "environment_id", None),
         )
 
     def sync_list_expired(self, session: Session) -> list[Booking]:
@@ -634,7 +694,5 @@ class BookingRepository:
             return None
         _assign_resource_and_ready(session, booking, resource_type, resource)
         session.commit()
-        publish_row_changed(
-            booking_id=booking.id, environment_id=getattr(booking, "environment_id", None),
-        )
+        _publish_lifecycle(session, booking)
         return _to_entity(booking)
