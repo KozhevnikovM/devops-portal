@@ -22,7 +22,7 @@ from app.infrastructure.repositories.hw_config_repo import HWConfigRepository
 from app.infrastructure.repositories.image_repo import ImageRepository
 from app.infrastructure.repositories.quota_repo import QuotaRepository
 
-pytestmark = [pytest.mark.integration, pytest.mark.asyncio(loop_scope="session")]
+pytestmark = [pytest.mark.integration, pytest.mark.postgres_integration, pytest.mark.asyncio(loop_scope="session")]
 
 _HW_CPUS = 3  # > half of the tight quota below so two together exceed the limit
 _QUOTA_MAX_CPUS = 4
