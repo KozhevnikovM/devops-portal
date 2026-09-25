@@ -1,11 +1,13 @@
 """Browser (HTMX) pages for environments. The JSON API lives in api_environments.py; these
 return HTML fragments and reuse the same use cases, so the two never drift."""
+from urllib.parse import urlencode
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.domain.entities import User
 from app.domain.exceptions import (
     BlueprintNotFoundError, BookingPermissionError, EnvironmentError, EnvironmentItemError,
@@ -15,6 +17,7 @@ from app.domain.exceptions import (
 from app.infrastructure.auth import require_user
 from app.infrastructure.database.session import get_async_session
 from app.presentation.middleware.correlation_id import get_request_id
+from app.presentation.pagination import InvalidCursorError, decode_cursor, encode_cursor
 from app.presentation.routes.api_environments import (
     _blueprint_repo, _derived_status, _env_repo, _namespace_repo, _order_use_case, _release_use_case,
     _update_name_use_case,
@@ -33,15 +36,42 @@ def _annotate(env):
 
 async def _list_for(
     session, current_user, *, filter: str = "mine", show_released: bool = False, label=None,
+    after=None,
 ):
-    # Fully released environments are excluded in SQL, before their children load (#466).
-    if filter == "all":
-        envs = await _env_repo.list_all(session, label=label, include_released=show_released)
-    else:
-        envs = await _env_repo.list_by_user(
-            session, str(current_user.id), label=label, include_released=show_released,
-        )
-    return [_annotate(e) for e in envs]
+    """One keyset page of the environments list (#467) → (annotated envs, encoded next cursor).
+
+    Fully released environments are excluded in SQL, before their children load (#466), and
+    children are loaded only for the page's environments.
+    """
+    page = await _env_repo.list_page(
+        session,
+        user_id=None if filter == "all" else str(current_user.id),
+        label=label, include_released=show_released,
+        limit=settings.ENVIRONMENTS_PAGE_SIZE, after=after,
+    )
+    next_cursor = encode_cursor(page.next_cursor) if page.next_cursor else None
+    return [_annotate(e) for e in page.items], next_cursor
+
+
+def _list_context(filter: str, show_released: bool, label: str | None, next_cursor: str | None):
+    """Template context shared by the page and the Load more fragment.
+
+    The Load more URL echoes the filters in effect, so every page matches the first one (#467).
+    """
+    load_more_url = None
+    if next_cursor:
+        query = {"cursor": next_cursor, "filter": filter}
+        if show_released:
+            query["show_released"] = "1"
+        if label:
+            query["label"] = label
+        load_more_url = f"/environments/rows?{urlencode(query)}"
+    return {
+        "active_filter": filter,
+        "show_released": show_released,
+        "label_filter": label,
+        "load_more_url": load_more_url,
+    }
 
 
 @router.get("/environments", response_class=HTMLResponse)
@@ -53,7 +83,8 @@ async def environments_page(
     session: AsyncSession = Depends(get_async_session),
     current_user: User = Depends(require_user),
 ):
-    environments = await _list_for(
+    # Always the first page — a bookmarked or pushed URL opens at the top (#467).
+    environments, next_cursor = await _list_for(
         session, current_user, filter=filter, show_released=show_released, label=label,
     )
     blueprints = await _blueprint_repo.list_active(session)
@@ -68,9 +99,35 @@ async def environments_page(
             "held_namespaces": held_namespaces,
             "current_user": current_user,
             "active_nav": "environment",
-            "active_filter": filter,
-            "show_released": show_released,
-            "label_filter": label,
+            **_list_context(filter, show_released, label, next_cursor),
+        },
+    )
+
+
+@router.get("/environments/rows", response_class=HTMLResponse, include_in_schema=False)
+async def environment_rows_page(
+    request: Request,
+    cursor: str | None = None,
+    filter: str = "mine",
+    show_released: bool = False,
+    label: str | None = None,
+    session: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(require_user),
+):
+    """The next page of rows for "Load more" (#467): rows + the next control, appended in place."""
+    try:
+        after = decode_cursor(cursor)
+    except InvalidCursorError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    environments, next_cursor = await _list_for(
+        session, current_user, filter=filter, show_released=show_released, label=label, after=after,
+    )
+    return templates.TemplateResponse(
+        request, "partials/environment_rows_page.html",
+        {
+            "environments": environments,
+            "current_user": current_user,
+            **_list_context(filter, show_released, label, next_cursor),
         },
     )
 

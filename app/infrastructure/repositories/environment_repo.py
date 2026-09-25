@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
-from sqlalchemy import String, cast, exists, or_, select
+from sqlalchemy import String, cast, exists, literal, or_, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session, aliased
 
@@ -11,6 +11,7 @@ from app.domain.entities import Environment
 from app.domain.enums import BookingStatus, ResourceType
 from app.domain.exceptions import EnvironmentNotFoundError
 from app.domain.lease import Lease, lease_can_start
+from app.domain.pagination import EnvironmentPage, KeysetCursor
 from app.infrastructure.database.models import (
     BookingModel, EnvironmentModel, NamespaceModel, StaticVMModel, UserModel,
 )
@@ -77,7 +78,8 @@ def _list_stmt(user_id: str | None, *, label: str | None, include_released: bool
         select(EnvironmentModel, UserModel.username, _CreatorUser.username)
         .join(UserModel, cast(UserModel.id, String) == EnvironmentModel.user_id, isouter=True)
         .outerjoin(_CreatorUser, cast(_CreatorUser.id, String) == EnvironmentModel.created_by)
-        .order_by(EnvironmentModel.created_at.desc())
+        # id breaks created_at ties so the order is total — keyset pagination relies on it (#467).
+        .order_by(EnvironmentModel.created_at.desc(), EnvironmentModel.id.desc())
     )
     if user_id is not None:
         # Visible to user: owned, plus any dispatched on someone's behalf (created_by).
@@ -91,6 +93,27 @@ def _list_stmt(user_id: str | None, *, label: str | None, include_released: bool
         # Decided in SQL so fully released environments' children are never loaded (#466).
         stmt = stmt.where(_not_fully_released())
     return stmt
+
+
+def _page_stmt(
+    user_id: str | None, *, label: str | None, include_released: bool, limit: int,
+    after: KeysetCursor | None,
+):
+    """One keyset page of `_list_stmt` plus a lookahead row (#467)."""
+    stmt = _list_stmt(user_id, label=label, include_released=include_released)
+    if after is not None:
+        # A row comparison is a single index condition on (created_at, id), so the backward
+        # scan starts at the cursor instead of reading the rows before it.
+        # Typed binds: the cursor always compares as (timestamptz, uuid), whatever Python subclass
+        # carried the values (asyncpg returns its own UUID type).
+        stmt = stmt.where(
+            tuple_(EnvironmentModel.created_at, EnvironmentModel.id)
+            < tuple_(
+                literal(after.created_at, EnvironmentModel.created_at.type),
+                literal(after.id, EnvironmentModel.id.type),
+            )
+        )
+    return stmt.limit(limit + 1)
 
 
 def _to_entity(m: EnvironmentModel, bookings=None, owner_username=None, created_by_username=None) -> Environment:
@@ -237,6 +260,34 @@ class EnvironmentRepository:
         include_released: bool = True,
     ) -> list[Environment]:
         return await self._list(session, user_id, label=label, include_released=include_released)
+
+    async def list_page(
+        self, session: AsyncSession, *, user_id: str | None, label: str | None,
+        include_released: bool, limit: int, after: KeysetCursor | None,
+    ) -> EnvironmentPage:
+        """One keyset page of the environments list, newest first (#467).
+
+        `user_id=None` lists everyone's environments. The page starts strictly after `after`, and
+        one extra row is fetched only to tell whether another page exists. Children are loaded
+        for the kept rows alone, never for the lookahead row.
+        """
+        stmt = _page_stmt(
+            user_id, label=label, include_released=include_released, limit=limit, after=after,
+        )
+        rows = (await session.execute(stmt)).all()
+        has_more = len(rows) > limit
+        rows = rows[:limit]
+        children_by_env = await self._children_batch(session, [model.id for model, _, _ in rows])
+        items = [
+            _to_entity(model, bookings=children_by_env.get(model.id, []),
+                       owner_username=owner, created_by_username=creator)
+            for model, owner, creator in rows
+        ]
+        next_cursor = None
+        if has_more:
+            last = rows[-1][0]
+            next_cursor = KeysetCursor(created_at=last.created_at, id=last.id)
+        return EnvironmentPage(items=items, next_cursor=next_cursor)
 
     async def _list(
         self, session: AsyncSession, user_id: str | None, label: str | None = None,

@@ -1459,7 +1459,14 @@ DELETE /api/environments/{id}?on_behalf_of=alice
 > API above. It accepts the same `filter`/`show_released`/`label` query params as the bookings page
 > (see `GET /` above). Without `show_released`, an environment is hidden only when it is fully released —
 > it has at least one child and every child is `RELEASED`. Environments with no children, or with any
-> non-`RELEASED` child, stay listed (#466). The order form has an optional **Namespace** dropdown (default *"Blueprint default"*)
+> non-`RELEASED` child, stay listed (#466). The list is paginated (#467): it shows the newest
+> `ENVIRONMENTS_PAGE_SIZE` environments (default 50), ordered by creation time and then id, newest
+> first. When more exist, a **Load more** row fetches `GET /environments/rows?cursor=…` with the same
+> `filter`/`show_released`/`label`, and appends the next page below the rows already shown. That
+> response is an HTML fragment: the rows, plus a new **Load more** row if there is a further page.
+> The `cursor` is an opaque token the server issues. A missing or malformed one returns `400`.
+> Changing a filter starts again from the first page. The JSON list (`GET /api/environments`) is not
+> paginated. The order form has an optional **Namespace** dropdown (default *"Blueprint default"*)
 > listing the available namespaces by `name (cluster)`; picking one overrides the blueprint's
 > namespace item (same single-namespace rule as the API — a bad choice renders the `400` inline).
 > Those `/environments*` routes return HTML fragments and are intentionally absent from the schema.

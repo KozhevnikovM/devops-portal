@@ -1,3 +1,4 @@
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -46,6 +47,10 @@ class Settings(BaseSettings):
     # Celery beat tasks
     ENFORCE_TTL_INTERVAL_SECONDS: int = 60       # how often to release expired bookings
     STALE_PROVISIONING_THRESHOLD_MINUTES: int = 60
+
+    # Environments page: environments per page / per "Load more" (keyset pagination, #467).
+    # Server-side only — never a query parameter, so a request can't ask for an unbounded page.
+    ENVIRONMENTS_PAGE_SIZE: int = Field(50, gt=0)
 
     # Live row updates (SSE): progress-only row-changed notifications (one per Ansible/script
     # output line) are coalesced per booking to at most one per window, plus a trailing publish

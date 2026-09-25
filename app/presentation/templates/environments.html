@@ -68,6 +68,7 @@
                     {% set is_first_row = loop.first %}
                     {% include "partials/environment_row.html" %}
                     {% endfor %}
+                    {% include "partials/environment_load_more.html" %}
                 </tbody>
             </table>
             {% else %}
