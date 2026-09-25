@@ -1,6 +1,6 @@
 ## Purpose
 
-Defines which environments the environments list returns when released environments are hidden or shown. It also requires that hiding released environments stays cheap as released history grows. The rule must agree with the aggregate environment status derived from the child bookings.
+Defines which environments the environments list returns when released environments are hidden or shown. It also bounds what released history costs the default list: the children of fully released environments are never loaded or aggregated. The scan of environment rows itself stays unbounded until pagination (#467). The rule must agree with the aggregate environment status derived from the child bookings.
 
 ## ADDED Requirements
 
@@ -42,14 +42,17 @@ Hiding released environments is the default for the browser environments page (`
 - **WHEN** a user views the environments page with `filter=all` and a `label` and without `show_released`
 - **THEN** the result is exactly the label-matching environments that are not fully released
 
-### Requirement: Released history does not add to the default environments list's cost
+### Requirement: Fully released environments' children are not loaded when released environments are hidden
 
-When released environments are hidden, fully released environments SHALL be excluded before any child bookings are loaded. Child bookings SHALL be loaded only for the environments that are returned. The database SHALL be able to find the child bookings of an environment, and whether it has any non-`RELEASED` child, through an index rather than a full scan of all bookings.
+When released environments are hidden, fully released environments SHALL be excluded before any child bookings are loaded. Child bookings SHALL be loaded, and aggregate statuses derived, only for the environments that are returned. The children of a fully released environment SHALL NOT be loaded or aggregated in the application. The database SHALL be able to find the child bookings of an environment, and whether it has any non-`RELEASED` child, through an index rather than a full scan of all bookings.
+
+This requirement does not bound the total cost of the list. The query still considers every environment that matches the owner and label filters, and it checks each one's children through the index, so that work still grows with released history. Bounding it is out of scope and deferred to pagination (#467).
 
 #### Scenario: Large released history with a small active set
 - **WHEN** a user has many fully released environments and a few active ones, and views the environments page without `show_released`
 - **THEN** only the active environments are returned
-- **AND** child bookings are loaded only for those active environments, not for any released one
+- **AND** child bookings are loaded only for those active environments
+- **AND** no child booking of any fully released environment is loaded or aggregated
 
 #### Scenario: Child lookups use an index
 - **WHEN** the query plan of the hidden-released environments list is inspected on PostgreSQL with enough booking rows that a sequential scan is not the cheapest option

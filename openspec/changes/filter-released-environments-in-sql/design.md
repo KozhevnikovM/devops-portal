@@ -64,7 +64,7 @@ An integration test (real Postgres) seeds one environment per combination of chi
 ## Risks / Trade-offs
 
 - [The SQL predicate and `derive_environment_status` encode the same rule in two places] → The equivalence test (Decision 5) fails if either one changes, and a comment in both places points to the other.
-- [The environments table itself is still scanned in full. Filtering removes child loading and Python aggregation, not the scan of environment rows] → Environment rows are narrow and the probes are index lookups. Bounding the scan needs pagination, which is out of scope (#466).
+- [The environments table itself is still scanned in full. Filtering removes child loading and Python aggregation, not the scan of environment rows] → Environment rows are narrow and the probes are index lookups. Bounding the scan needs pagination, which is deferred to #467. The spec deliberately guarantees only bounded child loading, not bounded total cost.
 - [The planner may prefer a seq scan on small tables, which makes `EXPLAIN` evidence flaky in tests] → The `EXPLAIN` test seeds enough rows and runs `ANALYZE`. It asserts only that an index on `bookings.environment_id` appears in the plan, not a specific plan shape.
 - [A non-concurrent index build briefly blocks writes to `bookings` during deploy] → The table is small, so the build takes milliseconds. This is acceptable in a normal deploy window.
 

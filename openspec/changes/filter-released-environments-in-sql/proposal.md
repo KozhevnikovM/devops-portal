@@ -1,6 +1,6 @@
 ## Why
 
-The environments page (`GET /environments`) loads every matching environment, loads the child bookings of all of them, derives each aggregate status in Python, and only then drops the fully released ones (#466, parent #436). The page is hidden-released by default, so its cost grows with released history the user never sees. `bookings.environment_id` also has no index, so each child lookup scans `bookings`.
+The environments page (`GET /environments`) loads every matching environment, loads the child bookings of all of them, derives each aggregate status in Python, and only then drops the fully released ones (#466, parent #436). The page is hidden-released by default, so it loads and aggregates the children of released history the user never sees. `bookings.environment_id` also has no index, so each child lookup scans `bookings`.
 
 ## What Changes
 
@@ -15,7 +15,7 @@ The environments page (`GET /environments`) loads every matching environment, lo
 ## Capabilities
 
 ### New Capabilities
-- `environment-listing`: which environments the environments list returns when released environments are hidden or shown, and how that list's cost scales with released history.
+- `environment-listing`: which environments the environments list returns when released environments are hidden or shown, and that the children of fully released environments are not loaded when released environments are hidden. The total list cost is not bounded; that is left to pagination (#467).
 
 ### Modified Capabilities
 <!-- None. The derived-status rules in environment-lifecycle are unchanged; this change only guarantees the SQL filter agrees with them. -->
