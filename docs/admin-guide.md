@@ -83,6 +83,7 @@ inspected with `docker inspect <container-id>`.
 | `PROVISION_RATE_LIMIT` | No | Max provision tasks per worker per time window (`0.5/m` = 1 per 2 min). Default: `0.5/m` |
 | `TF_PG_CONN_STR` | No | PostgreSQL connection string for Terraform state backend. Must use the standard `postgresql://` driver (not `+asyncpg` / `+psycopg2`). Append `?sslmode=disable` for servers without SSL. Default matches the bundled Postgres service. |
 | `STALE_PROVISIONING_THRESHOLD_MINUTES` | No | Minutes after which a booking stuck in PENDING/PROVISIONING/RETRY is marked FAILED by the beat task. Default: `60` |
+| `ENVIRONMENTS_PAGE_SIZE` | No | Environments shown per page on the browser **Environments** page, and appended per **Load more** click (keyset pagination, #467). Must be > 0. Server-side only — it isn't a query parameter. The JSON environments list isn't paginated. Default: `50` |
 | `SSE_PROGRESS_COALESCE_MS` | No | Live-update throttle for provisioning/teardown progress output. A booking's progress lines (Ansible, startup script, SSH wait) produce at most one live row update per this many milliseconds, plus one final update after a burst ends so the last line always shows. Status changes (READY, FAILED, RELEASED, …) are never throttled. Every line is still saved to the provisioning log. `0` disables throttling (one update per line). Read when the worker starts, so restart `worker` after changing it. Default: `750` |
 
 ---

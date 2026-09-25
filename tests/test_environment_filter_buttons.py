@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 
 from app.domain.entities import Environment, User
 from app.domain.enums import BookingStatus
+from app.domain.pagination import EnvironmentPage
 
 
 def _user(role="user"):
@@ -52,7 +53,7 @@ def test_environments_page_has_filter_buttons():
             patch("app.presentation.routes.environments._blueprint_repo") as bp,
             patch("app.presentation.routes.environments._namespace_repo") as ns,
         ):
-            repo.list_by_user = AsyncMock(return_value=[env])
+            repo.list_page = AsyncMock(return_value=EnvironmentPage(items=[env]))
             bp.list_active = AsyncMock(return_value=[])
             ns.list_available = AsyncMock(return_value=[])
             ns.list_held_standalone_by_user = AsyncMock(return_value=[])
@@ -75,7 +76,7 @@ def test_filter_mine_is_default_and_active():
             patch("app.presentation.routes.environments._blueprint_repo") as bp,
             patch("app.presentation.routes.environments._namespace_repo") as ns,
         ):
-            repo.list_by_user = AsyncMock(return_value=[])
+            repo.list_page = AsyncMock(return_value=EnvironmentPage(items=[]))
             bp.list_active = AsyncMock(return_value=[])
             ns.list_available = AsyncMock(return_value=[])
             ns.list_held_standalone_by_user = AsyncMock(return_value=[])
@@ -83,11 +84,12 @@ def test_filter_mine_is_default_and_active():
     finally:
         app.dependency_overrides.clear()
     assert resp.status_code == 200
-    repo.list_by_user.assert_awaited_once()
+    repo.list_page.assert_awaited_once()
+    assert repo.list_page.await_args.kwargs["user_id"] == str(user.id)
 
 
-def test_filter_all_calls_list_all():
-    """?filter=all must call list_all, not list_by_user."""
+def test_filter_all_lists_every_owner():
+    """?filter=all must list everyone's environments (list_page with user_id=None)."""
     user = _user()
     cl, app = _client(user)
     try:
@@ -96,8 +98,7 @@ def test_filter_all_calls_list_all():
             patch("app.presentation.routes.environments._blueprint_repo") as bp,
             patch("app.presentation.routes.environments._namespace_repo") as ns,
         ):
-            repo.list_all = AsyncMock(return_value=[])
-            repo.list_by_user = AsyncMock(return_value=[])
+            repo.list_page = AsyncMock(return_value=EnvironmentPage(items=[]))
             bp.list_active = AsyncMock(return_value=[])
             ns.list_available = AsyncMock(return_value=[])
             ns.list_held_standalone_by_user = AsyncMock(return_value=[])
@@ -105,8 +106,8 @@ def test_filter_all_calls_list_all():
     finally:
         app.dependency_overrides.clear()
     assert resp.status_code == 200
-    repo.list_all.assert_awaited_once()
-    repo.list_by_user.assert_not_called()
+    repo.list_page.assert_awaited_once()
+    assert repo.list_page.await_args.kwargs["user_id"] is None
 
 
 def test_released_envs_hidden_by_default():
@@ -119,7 +120,7 @@ def test_released_envs_hidden_by_default():
             patch("app.presentation.routes.environments._blueprint_repo") as bp,
             patch("app.presentation.routes.environments._namespace_repo") as ns,
         ):
-            repo.list_by_user = AsyncMock(return_value=[])
+            repo.list_page = AsyncMock(return_value=EnvironmentPage(items=[]))
             bp.list_active = AsyncMock(return_value=[])
             ns.list_available = AsyncMock(return_value=[])
             ns.list_held_standalone_by_user = AsyncMock(return_value=[])
@@ -127,7 +128,7 @@ def test_released_envs_hidden_by_default():
     finally:
         app.dependency_overrides.clear()
     assert resp.status_code == 200
-    assert repo.list_by_user.await_args.kwargs["include_released"] is False
+    assert repo.list_page.await_args.kwargs["include_released"] is False
 
 
 def test_route_renders_whatever_the_repo_returns():
@@ -141,7 +142,7 @@ def test_route_renders_whatever_the_repo_returns():
             patch("app.presentation.routes.environments._blueprint_repo") as bp,
             patch("app.presentation.routes.environments._namespace_repo") as ns,
         ):
-            repo.list_by_user = AsyncMock(return_value=[released_env])
+            repo.list_page = AsyncMock(return_value=EnvironmentPage(items=[released_env]))
             bp.list_active = AsyncMock(return_value=[])
             ns.list_available = AsyncMock(return_value=[])
             ns.list_held_standalone_by_user = AsyncMock(return_value=[])
@@ -157,7 +158,7 @@ def test_route_renders_whatever_the_repo_returns():
     ("?filter=all&show_released=1", True),
 ])
 def test_filter_all_passes_include_released(query, expected):
-    """filter=all forwards show_released to list_all as include_released (#466)."""
+    """filter=all forwards show_released to the repo as include_released (#466)."""
     user = _user()
     cl, app = _client(user)
     try:
@@ -166,7 +167,7 @@ def test_filter_all_passes_include_released(query, expected):
             patch("app.presentation.routes.environments._blueprint_repo") as bp,
             patch("app.presentation.routes.environments._namespace_repo") as ns,
         ):
-            repo.list_all = AsyncMock(return_value=[])
+            repo.list_page = AsyncMock(return_value=EnvironmentPage(items=[]))
             bp.list_active = AsyncMock(return_value=[])
             ns.list_available = AsyncMock(return_value=[])
             ns.list_held_standalone_by_user = AsyncMock(return_value=[])
@@ -174,7 +175,7 @@ def test_filter_all_passes_include_released(query, expected):
     finally:
         app.dependency_overrides.clear()
     assert resp.status_code == 200
-    assert repo.list_all.await_args.kwargs["include_released"] is expected
+    assert repo.list_page.await_args.kwargs["include_released"] is expected
 
 
 def test_released_envs_shown_with_flag():
@@ -188,7 +189,7 @@ def test_released_envs_shown_with_flag():
             patch("app.presentation.routes.environments._blueprint_repo") as bp,
             patch("app.presentation.routes.environments._namespace_repo") as ns,
         ):
-            repo.list_by_user = AsyncMock(return_value=[released_env])
+            repo.list_page = AsyncMock(return_value=EnvironmentPage(items=[released_env]))
             bp.list_active = AsyncMock(return_value=[])
             ns.list_available = AsyncMock(return_value=[])
             ns.list_held_standalone_by_user = AsyncMock(return_value=[])
@@ -197,4 +198,4 @@ def test_released_envs_shown_with_flag():
         app.dependency_overrides.clear()
     assert resp.status_code == 200
     assert str(released_env.id) in resp.text
-    assert repo.list_by_user.await_args.kwargs["include_released"] is True
+    assert repo.list_page.await_args.kwargs["include_released"] is True

@@ -1,0 +1,5 @@
+{# The next page of the environments list (#467): its rows, then the next "Load more" row, if any. #}
+{% for environment in environments %}
+{% include "partials/environment_row.html" %}
+{% endfor %}
+{% include "partials/environment_load_more.html" %}

@@ -24,6 +24,7 @@ from uuid import uuid4
 
 from app.domain.entities import Booking, Environment
 from app.domain.enums import BookingStatus, ResourceType
+from app.domain.pagination import EnvironmentPage
 
 # w-48: booking_row's/environment_row's own menu width, distinct from base.html's header
 # dropdown (w-44).
@@ -138,7 +139,7 @@ def test_first_environment_row_opens_downward_others_upward():
     with patch("app.presentation.routes.environments._env_repo") as mock_er, \
          patch("app.presentation.routes.environments._blueprint_repo") as mock_br, \
          patch("app.presentation.routes.environments._namespace_repo") as mock_ns:
-        mock_er.list_by_user = AsyncMock(return_value=[e1, e2])
+        mock_er.list_page = AsyncMock(return_value=EnvironmentPage(items=[e1, e2]))
         mock_br.list_active = AsyncMock(return_value=[])
         mock_ns.list_available = AsyncMock(return_value=[])
         mock_ns.list_held_standalone_by_user = AsyncMock(return_value=[])

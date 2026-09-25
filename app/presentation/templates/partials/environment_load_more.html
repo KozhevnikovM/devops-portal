@@ -1,0 +1,15 @@
+{# "Load more" for the environments list (#467). Replaces itself (outerHTML) with the next page's
+   rows plus, when there is a further page, a new copy of this row — rows already shown are never
+   re-rendered. load_more_url echoes the filters in effect (built in routes/environments.py). #}
+{% if load_more_url %}
+<tr id="environments-load-more">
+    <td colspan="6" class="px-4 py-3 text-center">
+        <button
+            hx-get="{{ load_more_url }}"
+            hx-target="closest tr"
+            hx-swap="outerHTML"
+            class="text-xs px-3 py-1 rounded border bg-gray-800 text-gray-400 border-gray-700 hover:text-gray-200 transition-colors"
+        >Load more</button>
+    </td>
+</tr>
+{% endif %}

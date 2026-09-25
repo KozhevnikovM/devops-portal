@@ -4,6 +4,8 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
+from app.domain.pagination import EnvironmentPage
+
 
 @pytest.fixture
 def booking_client():
@@ -135,7 +137,7 @@ def test_environments_page_forwards_label(booking_client):
         patch("app.presentation.routes.environments._blueprint_repo") as mock_bp,
         patch("app.presentation.routes.environments._namespace_repo") as mock_ns,
     ):
-        mock_env.list_by_user = AsyncMock(return_value=[])
+        mock_env.list_page = AsyncMock(return_value=EnvironmentPage(items=[]))
         mock_bp.list_active = AsyncMock(return_value=[])
         mock_ns.list_available = AsyncMock(return_value=[])
         mock_ns.list_held_standalone_by_user = AsyncMock(return_value=[])
@@ -143,7 +145,7 @@ def test_environments_page_forwards_label(booking_client):
         resp = client.get("/environments?label=dev-stack")
 
     assert resp.status_code == 200
-    assert mock_env.list_by_user.call_args.kwargs["label"] == "dev-stack"
+    assert mock_env.list_page.call_args.kwargs["label"] == "dev-stack"
 
 
 def test_environments_page_toggle_preserves_label_filter(booking_client):
@@ -153,7 +155,7 @@ def test_environments_page_toggle_preserves_label_filter(booking_client):
         patch("app.presentation.routes.environments._blueprint_repo") as mock_bp,
         patch("app.presentation.routes.environments._namespace_repo") as mock_ns,
     ):
-        mock_env.list_by_user = AsyncMock(return_value=[])
+        mock_env.list_page = AsyncMock(return_value=EnvironmentPage(items=[]))
         mock_bp.list_active = AsyncMock(return_value=[])
         mock_ns.list_available = AsyncMock(return_value=[])
         mock_ns.list_held_standalone_by_user = AsyncMock(return_value=[])

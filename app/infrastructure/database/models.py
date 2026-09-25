@@ -93,6 +93,10 @@ class EnvironmentBlueprintItemModel(Base):
 
 class EnvironmentModel(Base):
     __tablename__ = "environments"
+    __table_args__ = (
+        # Keyset pagination of the environments page walks this backward (#467).
+        Index("ix_environments_created_at_id", "created_at", "id"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(String(128), nullable=False)

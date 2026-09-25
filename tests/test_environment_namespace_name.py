@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 
 from app.domain.entities import Booking, Environment, User
 from app.domain.enums import BookingStatus, ResourceType
+from app.domain.pagination import EnvironmentPage
 
 _OWNER_UUID = uuid4()
 _OWNER_ID = str(_OWNER_UUID)
@@ -66,7 +67,7 @@ def test_environment_page_shows_namespace_name(client):
     with patch("app.presentation.routes.environments._env_repo") as er, \
          patch("app.presentation.routes.environments._blueprint_repo") as br, \
          patch("app.presentation.routes.environments._namespace_repo") as nr:
-        er.list_by_user = AsyncMock(return_value=[env])
+        er.list_page = AsyncMock(return_value=EnvironmentPage(items=[env]))
         br.list_active = AsyncMock(return_value=[])
         nr.list_available = AsyncMock(return_value=[])
         nr.list_held_standalone_by_user = AsyncMock(return_value=[])
