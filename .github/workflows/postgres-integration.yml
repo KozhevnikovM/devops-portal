@@ -35,7 +35,7 @@ jobs:
           --health-retries 12
 
     env:
-      PYTHONPATH: src
+      PYTHONPATH: .
       TEST_POSTGRES_URL: postgresql+asyncpg://portal:portal@127.0.0.1:5432/portal_test
       DATABASE_URL_SYNC: postgresql+psycopg2://portal:portal@127.0.0.1:5432/portal_test
 
