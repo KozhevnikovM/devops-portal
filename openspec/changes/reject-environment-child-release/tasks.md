@@ -2,7 +2,8 @@
 
 - [ ] 1.1 Add `EnvironmentChildReleaseError(BookingError)` to `app/domain/exceptions.py`, and verify it is a `BookingError` subclass (unit test).
 - [ ] 1.2 Add `derive_environment_status(statuses)` in `app/domain/environment_status.py` using the ordered rules from the spec. Verify with parametrised unit tests: empty → READY; any FAILED → FAILED; in flight → PROVISIONING; all RELEASED → RELEASED; all READY → READY; RELEASED+READY → FAILED; RELEASING+READY → FAILED.
-- [ ] 1.3 Add `lease_can_start(statuses)` to `app/domain/lease.py`. Verify with unit tests: all READY → true; READY+FAILED → true; READY+RELEASED → true; any in flight (including QUEUED) → false; all FAILED → false; empty → false.
+- [ ] 1.3 Add `CAN_BECOME_READY` to `app/domain/booking_status.py`, computed as the transitive closure of `ALLOWED_TRANSITIONS`. Verify with a unit test that it equals {QUEUED, PENDING, PROVISIONING, CONFIGURING, RETRY} and excludes RELEASING.
+- [ ] 1.4 Add `lease_can_start(statuses)` to `app/domain/lease.py`, using `CAN_BECOME_READY`. Verify with a parametrised unit-test matrix: all READY → true; READY+FAILED → true; READY+RELEASED → true; READY+RELEASING → true; any in flight (including QUEUED) → false; PROVISIONING+RELEASING → false; RELEASING alone → false; RELEASING+FAILED → false; all FAILED → false; empty → false.
 
 ## 2. Reject independent child release
 
@@ -16,11 +17,13 @@
 
 ## 4. Lease start
 
-- [ ] 4.1 Make `EnvironmentRepository.start_lease_if_ready` and `_stamp_lease_if_all_ready` use `lease_can_start`, and skip the stamp when the lease has already started (`expires_at != PERMANENT_EXPIRES_AT` and `ttl_minutes > 0`). Verify with repo tests: READY+FAILED stamps; in flight does not; a second call does not move the deadline; `ttl_minutes == 0` stays permanent.
+- [ ] 4.1 Make `EnvironmentRepository.start_lease_if_ready` and `_stamp_lease_if_all_ready` lock the environment row with `SELECT … FOR UPDATE` first. Then, under the lock, read the children, use `lease_can_start`, skip the stamp when the lease has already started (`expires_at != PERMANENT_EXPIRES_AT` and `ttl_minutes > 0`), stamp, and commit. Verify with repo tests: READY+FAILED stamps; in flight does not; a second call does not move the deadline; `ttl_minutes == 0` stays permanent.
 - [ ] 4.2 Add an async `start_lease_if_ready_for_booking(session, booking_id)`, the counterpart of the sync method, to the repo and to `EnvironmentRepositoryPort`. Verify that a standalone booking is a no-op and an environment child stamps when settled (repo test).
 - [ ] 4.3 In `app/tasks/provision.py`, call `env_repo.sync_start_lease_if_ready_for_booking` after the final FAILED transition (last attempt and `SecretDecryptionError`). Verify with a provision-task test: an environment with a READY sibling gets a real expiry once its VM child fails for good.
 - [ ] 4.4 In `reap_stale_provisioning` (`app/tasks/beat_tasks.py`), call the same check after each child is marked FAILED. Verify with a beat-task test.
-- [ ] 4.5 In `booking_repo.promote_next_queued` / `sync_promote_next_queued`, after promoting a booking with an `environment_id`, run the environment lease check in the same transaction. Verify with a test: an environment whose queued namespace child is promoted last gets its lease stamped, and a standalone promotion is unchanged.
+- [ ] 4.5 In `booking_repo.promote_next_queued` / `sync_promote_next_queued`, after the promotion has committed, run the environment lease check in a separate transaction when the promoted booking has an `environment_id`. It must not run inside the promotion transaction (design D3, lock order). Verify with a test: an environment whose queued namespace child is promoted last gets its lease stamped, and a standalone promotion is unchanged.
+
+- [ ] 4.6 Add the concurrency regression test `tests/integration/test_environment_lease_concurrent_stamp.py` (real Postgres, `-m integration`, same pattern as `test_quota_concurrent_writes.py`). Set up an environment whose children have all settled while it still has the placeholder expiry, then fire the lease check concurrently from two separate sessions for two different children, using both the sync and the async paths. Verify that the environment and every child share exactly one deadline, that it is not the placeholder, and that neither call raises. Also verify that the test fails if the `FOR UPDATE` is removed, for example by making the second session observe the stale placeholder with an injected delay before the stamp.
 
 ## 5. UI
 

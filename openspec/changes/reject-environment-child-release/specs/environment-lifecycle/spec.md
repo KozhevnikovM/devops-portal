@@ -80,7 +80,7 @@ An environment whose children are partly released SHALL therefore never be repor
 
 ### Requirement: The environment lease starts once every child has settled
 
-An environment's shared lease SHALL start once none of its children is still in flight (QUEUED, PENDING, PROVISIONING, CONFIGURING or RETRY) and at least one child is READY. When it starts, the environment's expiry and the expiry of every child SHALL be set to the same deadline: now plus the environment's TTL, or permanent when the TTL is zero. A child ending in FAILED, or any other terminal status, SHALL NOT stop the lease from starting. Once the lease has started, a later settling event SHALL NOT move the deadline. When the environment expires, TTL enforcement SHALL tear down its remaining live children.
+An environment's shared lease SHALL start once none of its children is still in flight and at least one child is READY. A child is in flight when its status can still lead to READY: QUEUED, PENDING, PROVISIONING, CONFIGURING or RETRY. RELEASING, FAILED and RELEASED are not in flight, because none of them can lead back to READY. A child that is RELEASING therefore SHALL NOT stop the lease from starting. When it starts, the environment's expiry and the expiry of every child SHALL be set to the same deadline: now plus the environment's TTL, or permanent when the TTL is zero. A child ending in FAILED, or any other terminal status, SHALL NOT stop the lease from starting. Starting the lease SHALL be serialized per environment. When several settling events happen at the same time, for example two workers finishing or failing children at almost the same moment, the lease SHALL be started exactly once, with one deadline shared by the environment and all its children. Once the lease has started, a later settling event SHALL NOT move the deadline. When the environment expires, TTL enforcement SHALL tear down its remaining live children.
 
 #### Scenario: Every child becomes READY
 - **WHEN** the last in-flight child of an environment becomes READY
@@ -94,6 +94,22 @@ An environment's shared lease SHALL start once none of its children is still in 
 #### Scenario: Queued pooled child promoted last
 - **WHEN** an environment's VM child is READY and its QUEUED namespace child is later promoted to READY because a namespace was freed
 - **THEN** the environment's lease starts when the promotion happens
+
+#### Scenario: A RELEASING child does not block the lease
+- **WHEN** an environment has a READY child and another child that is RELEASING, and no child is in flight
+- **THEN** the lease starts
+
+#### Scenario: Only RELEASING or terminal children
+- **WHEN** no child of an environment is in flight, none is READY, and at least one is RELEASING
+- **THEN** the lease does not start
+
+#### Scenario: A RELEASING child alongside an in-flight child
+- **WHEN** an environment has a PROVISIONING child and a RELEASING child
+- **THEN** the lease does not start
+
+#### Scenario: Two children settle concurrently
+- **WHEN** the last two in-flight children of an environment settle at the same time in separate workers, so both trigger the lease check concurrently
+- **THEN** the lease is started exactly once, and the environment and every child end up with the same single deadline
 
 #### Scenario: Child still provisioning
 - **WHEN** an environment has a READY namespace child and a VM child that is still PROVISIONING
