@@ -21,8 +21,9 @@ def _child(status: BookingStatus):
     return SimpleNamespace(status=status.value, expires_at=PERMANENT_EXPIRES_AT)
 
 
-def _sync_session(children, ttl_minutes=240, expires_at=PERMANENT_EXPIRES_AT):
-    env = SimpleNamespace(id=uuid4(), ttl_minutes=ttl_minutes, expires_at=expires_at)
+def _sync_session(children, ttl_minutes=240, expires_at=PERMANENT_EXPIRES_AT, construction_complete=True):
+    env = SimpleNamespace(id=uuid4(), ttl_minutes=ttl_minutes, expires_at=expires_at,
+                          construction_complete=construction_complete)
     session = MagicMock()
     session.get.return_value = env
     session.execute.return_value.scalars.return_value.all.return_value = children
@@ -78,7 +79,7 @@ def test_missing_environment_is_a_no_op():
 @pytest.mark.asyncio
 async def test_async_path_locks_and_stamps():
     children = [_child(BookingStatus.READY), _child(BookingStatus.RELEASING)]
-    env = SimpleNamespace(id=uuid4(), ttl_minutes=60, expires_at=PERMANENT_EXPIRES_AT)
+    env = SimpleNamespace(id=uuid4(), ttl_minutes=60, expires_at=PERMANENT_EXPIRES_AT, construction_complete=True)
     session = AsyncMock()
     session.get = AsyncMock(return_value=env)
     result = MagicMock()
@@ -251,3 +252,84 @@ def test_reconcile_is_on_the_beat_schedule():
     entry = celery_app.conf.beat_schedule["reconcile-environment-leases"]
     assert entry["task"] == "app.tasks.beat_tasks.reconcile_environment_leases"
     assert entry["schedule"] == settings.ENFORCE_TTL_INTERVAL_SECONDS
+
+
+# ── 4.10 / 4.11 construction-complete marker: nothing stamps a half-built environment ─────────
+def test_incomplete_environment_never_stamps_even_when_settled():
+    children = [_child(BookingStatus.READY)]
+    session, env = _sync_session(children, construction_complete=False)
+    assert EnvironmentRepository().sync_start_lease_if_ready(session, env.id) is False
+    assert env.expires_at == PERMANENT_EXPIRES_AT
+    session.commit.assert_called_once()  # lock still released
+
+
+@pytest.mark.asyncio
+async def test_incomplete_environment_never_stamps_async():
+    env = SimpleNamespace(id=uuid4(), ttl_minutes=60, expires_at=PERMANENT_EXPIRES_AT,
+                          construction_complete=False)
+    session = AsyncMock()
+    session.get = AsyncMock(return_value=env)
+    result = MagicMock()
+    result.scalars.return_value.all.return_value = [_child(BookingStatus.READY)]
+    session.execute = AsyncMock(return_value=result)
+    assert await EnvironmentRepository().start_lease_if_ready(session, env.id) is False
+    assert env.expires_at == PERMANENT_EXPIRES_AT
+
+
+def _order_use_case(items, child_results):
+    from app.application.use_cases.order_environment import OrderEnvironmentUseCase
+    from app.domain.entities import (
+        Environment,
+        EnvironmentBlueprint,
+        EnvironmentBlueprintItem,
+    )
+    now = datetime.now(timezone.utc)
+    bp = EnvironmentBlueprint(
+        id=uuid4(), name="bp", description=None, is_active=True, created_at=now,
+        items=[EnvironmentBlueprintItem(id=uuid4(), resource_type="NAMESPACE", position=i,
+                                        label=f"ns{i}", spec={}) for i in range(items)],
+    )
+    env = Environment(id=uuid4(), name="bp", blueprint_name="bp", user_id="u", ttl_minutes=60,
+                      expires_at=PERMANENT_EXPIRES_AT, created_at=now)
+    env_repo = MagicMock(create=AsyncMock(return_value=env), get=AsyncMock(return_value=env),
+                         delete=AsyncMock(), start_lease_if_ready=AsyncMock(return_value=True),
+                         mark_construction_complete=AsyncMock())
+    ns_uc = MagicMock(execute=AsyncMock(side_effect=child_results))
+    booking_repo = MagicMock(update_status=AsyncMock(), promote_next_queued=AsyncMock())
+    uc = OrderEnvironmentUseCase(
+        env_repo, MagicMock(get_by_name=AsyncMock(return_value=bp)), booking_repo, MagicMock(),
+        MagicMock(), ns_uc, MagicMock(), MagicMock(), MagicMock(), MagicMock(), MagicMock(),
+    )
+    manager = MagicMock()
+    manager.attach_mock(ns_uc.execute, "create_child")
+    manager.attach_mock(env_repo.mark_construction_complete, "mark")
+    manager.attach_mock(env_repo.start_lease_if_ready, "lease")
+    return uc, env, env_repo, manager
+
+
+def _ns_booking():
+    from app.domain.entities import Booking
+    now = datetime.now(timezone.utc)
+    return Booking(id=uuid4(), user_id="u", status=BookingStatus.READY,
+                   resource_type=ResourceType.NAMESPACE, ttl_minutes=60,
+                   expires_at=PERMANENT_EXPIRES_AT, created_at=now)
+
+
+@pytest.mark.asyncio
+async def test_order_marks_construction_complete_after_every_child_before_the_lease():
+    uc, env, env_repo, manager = _order_use_case(2, [_ns_booking(), _ns_booking()])
+    await uc.execute(MagicMock(), "bp", 60, user_id="u")
+    names = [c[0] for c in manager.mock_calls]
+    assert names == ["create_child", "create_child", "mark", "lease"]
+    env_repo.mark_construction_complete.assert_awaited_once()
+    assert env_repo.mark_construction_complete.await_args.args[1] == env.id
+
+
+@pytest.mark.asyncio
+async def test_failed_order_is_never_marked_complete():
+    uc, _, env_repo, _ = _order_use_case(2, [_ns_booking(), RuntimeError("second child failed")])
+    with pytest.raises(RuntimeError):
+        await uc.execute(MagicMock(), "bp", 60, user_id="u")
+    env_repo.mark_construction_complete.assert_not_awaited()
+    env_repo.start_lease_if_ready.assert_not_awaited()
+    env_repo.delete.assert_awaited_once()  # rolled back

@@ -31,9 +31,14 @@ def _lease_already_started(env: EnvironmentModel) -> bool:
 
 
 def _stamp_lease(env: EnvironmentModel, children) -> bool:
-    """Start the whole stack's lease (env + every child share one deadline) if its children have
-    settled and it hasn't started yet (#223, #434). Caller must hold the env row lock and commit."""
-    if not lease_can_start(BookingStatus(c.status) for c in children) or _lease_already_started(env):
+    """Start the whole stack's lease (env + every child share one deadline) if the order has created
+    every child, they have settled and the lease hasn't started yet (#223, #434). Caller must hold
+    the env row lock and commit."""
+    if (
+        not lease_can_start(BookingStatus(c.status) for c in children)
+        or not env.construction_complete
+        or _lease_already_started(env)
+    ):
         return False
     deadline = _lease_until(env.ttl_minutes)
     env.expires_at = deadline
@@ -72,6 +77,7 @@ class EnvironmentRepository:
         model = EnvironmentModel(
             id=uuid4(), name=name, blueprint_name=blueprint_name, user_id=user_id,
             ttl_minutes=ttl_minutes, expires_at=expires_at, created_by=created_by,
+            construction_complete=False,  # the order marks it once every child exists (#434)
         )
         session.add(model)
         await session.flush()  # need the id for child bookings before commit
@@ -82,6 +88,14 @@ class EnvironmentRepository:
         if model is not None:
             await session.delete(model)
             await session.commit()
+
+    async def mark_construction_complete(self, session: AsyncSession, environment_id: UUID) -> None:
+        """Every child the order intended now exists — from here on the lease may start (#434)."""
+        model = await session.get(EnvironmentModel, environment_id)
+        if model is None:
+            raise EnvironmentNotFoundError(f"Environment {environment_id} not found")
+        model.construction_complete = True
+        await session.commit()
 
     async def update_name(self, session: AsyncSession, environment_id: UUID, name: str) -> None:
         model = await session.get(EnvironmentModel, environment_id)
@@ -282,7 +296,7 @@ class EnvironmentRepository:
         return self.sync_start_lease_if_ready(session, booking.environment_id)
 
     def sync_list_lease_pending(self, session: Session) -> list[UUID]:
-        """Ids of timed environments still on the placeholder expiry whose children have settled
+        """Ids of fully constructed, timed environments still on the placeholder expiry whose children have settled
         (at least one READY, none that can still become READY) — for lease reconciliation (#434).
         Only a preselection: sync_start_lease_if_ready re-checks under the row lock."""
         ready_child = select(BookingModel.environment_id).where(
@@ -295,6 +309,7 @@ class EnvironmentRepository:
         )
         result = session.execute(
             select(EnvironmentModel.id).where(
+                EnvironmentModel.construction_complete.is_(True),
                 EnvironmentModel.expires_at == PERMANENT_EXPIRES_AT,
                 EnvironmentModel.ttl_minutes > 0,
                 EnvironmentModel.id.in_(ready_child),

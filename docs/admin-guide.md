@@ -1752,11 +1752,20 @@ The safety net for environment leases (#434). A lease is normally started the mo
 settles, but that check runs just *after* the settling commit (a VM reaching `READY` or `FAILED`, a
 stale booking being reaped, a queued child being promoted); if the process dies in between, the
 environment would otherwise keep its far-future placeholder expiry forever. This task finds every
-environment still on the placeholder with `ttl_minutes > 0`, at least one `READY` child and no child
-that can still become `READY`, and starts its lease — `now + ttl_minutes`, the same deadline for the
+**fully constructed** environment still on the placeholder with `ttl_minutes > 0`, at least one
+`READY` child and no child that can still become `READY`, and starts its lease — `now + ttl_minutes`, the same deadline for the
 environment and every child. It is idempotent: an already-started lease is never moved.
 
-> **Upgrade note — this is retroactive.** On the first run after deploying #434, the task also
+*Fully constructed* means the order has finished creating every child. Ordering creates the children
+one at a time, so for a moment a partly built environment can look settled (e.g. its namespace is
+`READY` and its VM doesn't exist yet). The `environments.construction_complete` column (migration
+`0032`) is `false` until the order has created the last child, and no lease trigger — this task,
+queue promotion, provisioning — starts the lease before it is `true`. Environments that existed
+before the migration are backfilled as constructed.
+
+> **Upgrade note — this is retroactive.** Deploying #434 runs migration `0032` (adds
+> `environments.construction_complete`; existing rows are backfilled `true`). On the first run after
+> deploying, the task also
 > starts a lease for environments that were **already stuck** before the upgrade — typically a stack
 > where one child was released on its own and the rest are still `READY`. Each gets a full
 > `ttl_minutes` measured from that first run (not backdated), after which `enforce_environment_ttl`

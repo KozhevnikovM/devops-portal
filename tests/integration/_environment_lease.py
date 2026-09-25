@@ -22,6 +22,7 @@ def make_sessionmaker() -> sessionmaker:
 def insert_environment(
     Session, child_statuses: list[str], *, ttl_minutes: int = 60,
     expires_at: datetime = PERMANENT_EXPIRES_AT, resource_types: list[str] | None = None,
+    construction_complete: bool = True,
 ) -> tuple[UUID, list[UUID]]:
     """Insert an environment and one child per status; return (env_id, child_ids)."""
     env_id = uuid4()
@@ -30,7 +31,7 @@ def insert_environment(
     with Session() as s:
         s.add(EnvironmentModel(
             id=env_id, name=f"inttest-env-{env_id}", blueprint_name=None, user_id="inttest-owner",
-            ttl_minutes=ttl_minutes, expires_at=expires_at,
+            ttl_minutes=ttl_minutes, expires_at=expires_at, construction_complete=construction_complete,
         ))
         s.flush()
         for child_id, status, rt in zip(child_ids, child_statuses, resource_types):

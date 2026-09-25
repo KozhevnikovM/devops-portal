@@ -1357,8 +1357,8 @@ Child bookings also appear in `GET /api/bookings`, carrying their `environment_i
 released through their environment (see `DELETE /api/bookings/{booking_id}`).
 
 The environment's `expires_at` is a far-future placeholder (`9999-12-31T23:59:59+00:00`) until its
-lease starts: once no child can still become `READY` (none `QUEUED`/`PENDING`/`PROVISIONING`/
-`CONFIGURING`/`RETRY`) and at least one child is `READY`, the environment and every child get the
+lease starts: once the order has created every child, no child can still become `READY` (none
+`QUEUED`/`PENDING`/`PROVISIONING`/`CONFIGURING`/`RETRY`) and at least one child is `READY`, the environment and every child get the
 same deadline, `now + ttl_minutes` (permanent when `ttl_minutes` is `0`). A child ending `FAILED`
 does not hold the lease back, so the remaining live children are still torn down at expiry.
 

@@ -62,6 +62,7 @@ def test_list_lease_pending_filters(Session):
         "ready_failed": insert_environment(Session, ["READY", "FAILED"]),
         "ready_releasing": insert_environment(Session, ["READY", "RELEASING"]),
         "ready_released": insert_environment(Session, ["READY", "RELEASED"]),
+        "under_construction": insert_environment(Session, ["READY"], construction_complete=False),
     }
     try:
         with Session() as s:
