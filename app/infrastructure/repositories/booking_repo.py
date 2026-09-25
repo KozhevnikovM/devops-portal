@@ -2,8 +2,8 @@ import logging
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
-from sqlalchemy import cast, func, or_, select, String
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import cast, Connection, Engine, func, or_, select, String
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, AsyncSession
 from sqlalchemy.orm import Session, aliased
 
 from app.domain.booking_status import LIVE_STATUSES, can_transition
@@ -58,61 +58,67 @@ def _environment_routing_stmt(environment_id: UUID):
     )
 
 
-async def environment_routing(session: AsyncSession, environment_id: UUID) -> Routing | None:
+async def environment_routing(
+    bind: AsyncEngine | AsyncConnection, environment_id: UUID,
+) -> Routing | None:
     """The environment's own owner/creator (#442), or None if it no longer exists.
 
     Not derivable from a child booking: an adopted namespace booking keeps its own ``created_by``
     while the environment records whoever ordered it.
+
+    Read in its own short-lived session (PR #463 review), never the caller's: a failure there can
+    never force a rollback that expires the caller's instances, and a success never leaves the
+    caller's session in an open transaction holding a pool connection while the publish then
+    waits on Redis. The session is closed — connection back in the pool — before this returns.
     """
-    row = (await session.execute(_environment_routing_stmt(environment_id))).one_or_none()
+    async with AsyncSession(bind) as session:
+        row = (await session.execute(_environment_routing_stmt(environment_id))).one_or_none()
     return Routing(owner_id=row.user_id, created_by=row.created_by) if row is not None else None
 
 
-def sync_environment_routing(session: Session, environment_id: UUID) -> Routing | None:
+def sync_environment_routing(bind: Engine | Connection, environment_id: UUID) -> Routing | None:
     """Sync twin of ``environment_routing`` — Celery worker path."""
-    row = session.execute(_environment_routing_stmt(environment_id)).one_or_none()
+    with Session(bind) as session:
+        row = session.execute(_environment_routing_stmt(environment_id)).one_or_none()
     return Routing(owner_id=row.user_id, created_by=row.created_by) if row is not None else None
 
 
 async def _apublish_lifecycle(session: AsyncSession, model: BookingModel) -> None:
     """Publish a lifecycle row-changed notification for ``model`` right after its commit.
 
-    For an environment child, also looks up the environment's routing. Best-effort like the
-    publish itself: a failed lookup is logged and the notification goes out without environment
-    routing (subscribers then authorize that row from the DB) — never failing the committed write.
+    Everything the notification needs from the booking is captured *before* the environment
+    lookup, so nothing afterwards can touch ``model`` (or the caller's session) again. For an
+    environment child, the environment's routing is read in a separate short-lived session.
+    Best-effort like the publish itself: a failed lookup is logged and the notification goes out
+    without environment routing (subscribers then authorize that row from the DB) — never failing
+    the committed write.
     """
+    booking_id, booking_routing = model.id, _routing(model)
     environment_id = getattr(model, "environment_id", None)
     environment_routing_ = None
     if environment_id is not None:
         try:
-            environment_routing_ = await environment_routing(session, environment_id)
+            environment_routing_ = await environment_routing(session.bind, environment_id)
         except Exception:
             logger.exception("Failed to read routing for environment %s", environment_id)
-            try:
-                await session.rollback()  # leave the caller's session usable
-            except Exception:
-                logger.exception("Rollback after failed environment routing read failed")
     await apublish_row_changed(
-        booking_id=model.id, booking_routing=_routing(model),
+        booking_id=booking_id, booking_routing=booking_routing,
         environment_id=environment_id, environment_routing=environment_routing_,
     )
 
 
 def _publish_lifecycle(session: Session, model: BookingModel) -> None:
     """Sync twin of ``_apublish_lifecycle`` — Celery worker path."""
+    booking_id, booking_routing = model.id, _routing(model)
     environment_id = getattr(model, "environment_id", None)
     environment_routing_ = None
     if environment_id is not None:
         try:
-            environment_routing_ = sync_environment_routing(session, environment_id)
+            environment_routing_ = sync_environment_routing(session.get_bind(), environment_id)
         except Exception:
             logger.exception("Failed to read routing for environment %s", environment_id)
-            try:
-                session.rollback()  # leave the caller's session usable
-            except Exception:
-                logger.exception("Rollback after failed environment routing read failed")
     publish_row_changed(
-        booking_id=model.id, booking_routing=_routing(model),
+        booking_id=booking_id, booking_routing=booking_routing,
         environment_id=environment_id, environment_routing=environment_routing_,
     )
 
