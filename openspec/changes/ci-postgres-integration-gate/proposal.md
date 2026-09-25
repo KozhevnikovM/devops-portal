@@ -8,7 +8,8 @@ The repository has PostgreSQL-backed integration tests, but pull requests curren
 
 - Add a pull-request CI job that starts an isolated PostgreSQL service.
 - Apply the repository migrations before running integration tests.
-- Configure the integration suite through `TEST_POSTGRES_URL` and run `pytest tests/ -m integration`.
+- Mark and run the PostgreSQL integration tier explicitly, separate from Redis-backed integration tests.
+- Configure both `TEST_POSTGRES_URL` and the Alembic `DATABASE_URL_SYNC` connection for the same ephemeral database.
 - Make service startup, migration, and test failures fail the job instead of being silently skipped.
 - Keep test data isolated between jobs and document the equivalent local command.
 - Reuse the existing workflow concurrency and least-privilege conventions from the fast-test gate.
