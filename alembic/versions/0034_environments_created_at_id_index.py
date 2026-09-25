@@ -1,8 +1,10 @@
 """index environments (created_at, id) for keyset pagination
 
 The browser environments page is paginated with a (created_at, id) keyset cursor ordered
-created_at DESC, id DESC (#467). A backward scan of this index serves that order and starts at
-the cursor, so a page never sorts the full matching set. environments is small, so a plain
+created_at DESC, id DESC (#467). A backward scan of this index serves that order from the cursor
+with no sort; the unfiltered list uses it and reads at most limit + 1 rows. For selective filters
+(Mine / label / hidden released) the planner may still prefer a seq scan with a top-N sort when
+that is cheaper (see the change's design.md, Decision 8). environments is small, so a plain
 (non-concurrent) build is fine.
 
 Revision ID: 0034

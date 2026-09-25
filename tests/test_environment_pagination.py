@@ -126,6 +126,51 @@ def test_malformed_cursor_is_rejected(token):
         decode_cursor(token)
 
 
+def _non_canonical(token: str) -> str:
+    """Same bytes, different spelling: flip the unused low bits of the last character."""
+    alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+    return token[:-1] + alphabet[alphabet.index(token[-1]) ^ 1]
+
+
+_VALID = encode_cursor(_CURSOR)
+
+
+@pytest.mark.parametrize("token", [
+    pytest.param(_VALID + "!!!", id="trailing-junk"),
+    pytest.param(_VALID[:10] + "!@#" + _VALID[10:], id="embedded-junk"),
+    pytest.param(_VALID[:10] + " " + _VALID[10:], id="embedded-space"),
+    pytest.param(_VALID + "\n", id="trailing-newline"),
+    pytest.param(_VALID + "==", id="padding"),
+    pytest.param(_VALID[:5] + "+" + _VALID[6:], id="standard-alphabet-plus"),
+    pytest.param(_VALID[:5] + "/" + _VALID[6:], id="standard-alphabet-slash"),
+    pytest.param(_VALID + "A", id="impossible-length"),
+])
+def test_valid_token_with_junk_is_rejected(token):
+    """Regression (#475 review): a lenient decoder dropped junk and accepted these."""
+    with pytest.raises(InvalidCursorError):
+        decode_cursor(token)
+
+
+def test_non_canonical_spelling_is_rejected():
+    # No microseconds → a 62-byte payload, so the last character carries 2 unused bits.
+    cursor = KeysetCursor(created_at=datetime(2026, 9, 25, 12, 30, 45, tzinfo=timezone.utc), id=uuid4())
+    token = encode_cursor(cursor)
+    assert len(token) % 4 != 0, "needs spare low bits in the last character"
+    variant = _non_canonical(token)
+    # The same bytes: a lenient decoder would accept it as this very cursor.
+    padded = variant + "=" * (-len(variant) % 4)
+    assert base64.urlsafe_b64decode(padded) == base64.urlsafe_b64decode(token + "=" * (-len(token) % 4))
+    assert decode_cursor(token) == cursor
+    with pytest.raises(InvalidCursorError):
+        decode_cursor(variant)
+
+
+def test_rows_rejects_valid_token_with_trailing_junk(client, repos):
+    resp = client.get(f"/environments/rows?cursor={_VALID}!!!")
+    assert resp.status_code == 400
+    repos.list_page.assert_not_called()
+
+
 # ── GET /environments (first page) ───────────────────────────────────────────
 
 def test_page_requests_first_page_with_configured_limit(client, repos, user):

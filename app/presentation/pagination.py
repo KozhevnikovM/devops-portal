@@ -6,12 +6,15 @@ cursor can't show anything the user couldn't already see.
 """
 import base64
 import binascii
+import re
 from datetime import datetime
 from uuid import UUID
 
 from app.domain.pagination import KeysetCursor
 
 _SEP = "|"
+# Unpadded base64url alphabet only — anything else (junk, whitespace, "=", "+", "/") is malformed.
+_TOKEN_RE = re.compile(r"[A-Za-z0-9_-]+")
 
 
 class InvalidCursorError(ValueError):
@@ -26,8 +29,17 @@ def encode_cursor(cursor: KeysetCursor) -> str:
 def decode_cursor(token: str | None) -> KeysetCursor:
     if not token:
         raise InvalidCursorError("missing cursor")
+    # Strict: urlsafe_b64decode would silently drop non-alphabet characters, so a valid token
+    # with junk appended would still decode (#475 review).
+    if not _TOKEN_RE.fullmatch(token):
+        raise InvalidCursorError("malformed cursor")
     try:
-        raw = base64.urlsafe_b64decode(token + "=" * (-len(token) % 4)).decode()
+        raw_bytes = base64.b64decode(token + "=" * (-len(token) % 4), altchars=b"-_", validate=True)
+        # Canonical form only: rejects encodings with non-zero trailing bits, so one cursor has
+        # exactly one valid spelling.
+        if base64.urlsafe_b64encode(raw_bytes).decode().rstrip("=") != token:
+            raise ValueError("non-canonical encoding")
+        raw = raw_bytes.decode()
         created_at_s, id_s = raw.split(_SEP)
         created_at = datetime.fromisoformat(created_at_s)
         env_id = UUID(id_s)
