@@ -32,6 +32,7 @@
   - show released
   - verify that each traversal equals the filtered unpaginated list
 - [ ] 4.3 Assert that child bookings are loaded only for the current page's ids (spy on `_children_batch`), and that the probe row's children are not loaded. With `enable_seqscan = off`, assert that the page query plan, for each filter combination with and without a cursor, uses `ix_environments_created_at_id`, has the cursor row comparison as an index condition, and has no `Sort` node. On a dataset larger than two pages, run `EXPLAIN (ANALYZE, FORMAT JSON)` for `filter=all`, `show_released=1`, no label, and assert that the environments index scan node's actual rows are at most `limit + 1`, on the first page and after a cursor. For the Mine list where the user's environments are older than many others, assert only that the page is correct and that children are loaded per page. No row-count bound is asserted there (design.md, Decision 8). Verify with `pytest -m integration`.
+- [ ] 4.4 (Added during implementation, design.md Decision 8.) Assert that the planner's choice doesn't change the page. Traverse Mine with Show released, with released hidden, and with a label, over skewed data, once unforced (it takes a seq scan with a top-N sort) and once with `enable_seqscan = off`. Both traversals must give identical pages and cursors that equal the unpaginated list. Verify with `pytest -m integration`.
 
 ## 5. Runtime verification and docs
 
