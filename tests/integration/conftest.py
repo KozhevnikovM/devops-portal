@@ -132,7 +132,9 @@ async def async_session(async_engine: AsyncEngine) -> AsyncGenerator[AsyncSessio
     """
     async with async_engine.connect() as conn:
         await conn.begin()
-        session = AsyncSession(bind=conn, join_transaction_mode="create_savepoint")
+        # Keep the outer transaction open so repository commits cannot leak data.
+        # rollback_only avoids SQLAlchemy's sync savepoint path on AsyncConnection.
+        session = AsyncSession(bind=conn, join_transaction_mode="rollback_only")
         yield session
         await session.close()
         await conn.rollback()
