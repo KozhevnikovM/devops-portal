@@ -22,4 +22,4 @@
 
 ## 4. Gate verification
 
-- [ ] 4.1 Validate the OpenSpec change and inspect the final workflow/check names against the acceptance scenarios; verify `openspec validate ci-postgres-integration-gate --strict` passes and the CI check is suitable for required branch protection. **Blocked:** repository branch protection currently has no required status checks; `postgres-integration` must be added as a required check.
+- [x] 4.1 Validate the OpenSpec change and inspect the final workflow/check names against the acceptance scenarios; verify `openspec validate ci-postgres-integration-gate --strict` passes and the `postgres-integration` CI check is enforced by required branch protection on `main`.
