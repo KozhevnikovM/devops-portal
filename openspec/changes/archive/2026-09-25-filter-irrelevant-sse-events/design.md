@@ -32,7 +32,13 @@ User ids are opaque UUID strings that any page for the row already exposes to it
 
 ### D2: Environment routing only on lifecycle notifications for environment children, via one PK lookup at publish time
 
-Only a `lifecycle` notification refreshes the environment row (#441), so only those need environment routing. When a lifecycle publish site's booking has an `environment_id`, the repository reads `(user_id, created_by)` of that environment with a primary-key select in the same session, after the commit, and passes it to the publisher. There is an async twin for the route path and a sync twin for the worker path. Standalone bookings and all progress publishes skip the lookup, so the hot `sync_record_progress` path does no extra DB work. If the environment is already gone, the routing is omitted and the subscriber falls back (D4). That's harmless, because there is no row left to render.
+Only a `lifecycle` notification refreshes the environment row (#441), so only those need environment routing. When a lifecycle publish site's booking has an `environment_id`, the repository reads `(user_id, created_by)` of that environment with a primary-key select after the commit and passes it to the publisher. There is an async twin for the route path and a sync twin for the worker path.
+
+The lookup runs in **its own short-lived session** on the caller's engine (the session's bind), and that session is closed before the publish. Everything the notification needs from the booking (its id, environment id, owner and creator) is captured *before* the lookup starts (PR #463 review). Running it on the caller's session was rejected for two reasons:
+- On success it leaves the caller's session in an open transaction, holding a pool connection while the publish waits on Redis. With Redis slow or unreachable, that pins a DB connection for up to the Redis socket timeout, which is the opposite of what this change is for.
+- On failure it needs a `rollback()`, which expires every ORM instance regardless of `expire_on_commit=False`. Any later read of the booking then becomes another query, which is implicit I/O (`MissingGreenlet`) on the async path and can fail again, turning a best-effort publish into an error after the write was already committed.
+
+A separate session never touches the caller's transaction or instances, so neither can happen. Standalone bookings and all progress publishes skip the lookup, so the hot `sync_record_progress` path does no extra DB work. If the environment is already gone, the routing is omitted and the subscriber falls back (D4). That's harmless, because there is no row left to render.
 
 The cost is at most one indexed lookup per lifecycle event of an environment child, done once by the publisher. The pre-filter saves the environment + children load on every non-admin connection that isn't concerned.
 
@@ -64,7 +70,8 @@ New publishers always write `owner_id` / `created_by` (`created_by: null` when t
 ## Risks / Trade-offs
 
 - [An extra PK select on each lifecycle publish of an environment child] → It's indexed, runs once per event rather than per connection, and never runs on the progress path. It's cheap next to the per-connection environment + children loads it avoids.
-- [The environment routing lookup fails, e.g. a DB hiccup after the commit] → Publishing is best-effort (existing requirement). The lookup's error is caught with the publish, so the write is never failed. If the lookup fails, the message is published without environment routing and subscribers fall back to the DB (D5).
+- [The environment routing lookup fails, e.g. a DB hiccup after the commit] → Publishing is best-effort (existing requirement). The lookup runs in its own session, and its error is caught and logged. The caller's session is neither rolled back nor re-read, so the write is never failed. The message is published without environment routing and subscribers fall back to the DB (D5).
+- [The lookup briefly takes a second pool connection] → Only for lifecycle events of environment children, and only for one PK select. The connection is returned before the publish, so no connection is held while Redis is contacted.
 - [Rolling deploy with an old publisher] → Its messages lack routing keys, so rows take the DB path (D5). They are correct, just not optimised.
 - [Rolling deploy with an old subscriber] → It ignores the unknown keys, so behaviour is unchanged.
 - [An admin connection still does the full DB work for every message] → That's by design, since admins see every row. It's out of scope.

@@ -15,9 +15,10 @@ from uuid import uuid4
 import pytest
 
 from app.infrastructure import events
-from app.infrastructure.events import ProgressCoalescer
+from app.infrastructure.events import ProgressCoalescer, Routing
 
 W = 0.75  # the default SSE_PROGRESS_COALESCE_MS, in seconds
+R = Routing(owner_id="owner-1", created_by=None)  # booking routing (#442); irrelevant to throttling
 
 
 class _FakeTimer:
@@ -97,10 +98,11 @@ def _install_fake_coalescer(scheduler: FakeScheduler, publish_hook=None) -> Prog
     """Swap the module singleton for one on virtual time that publishes through the real
     (Redis-mocked) ``_sync_publish``. ``publish_hook`` runs just before each coalesced publish —
     i.e. after the coalescer already decided to send, outside its lock."""
-    def publish(booking_id, environment_id):
+    def publish(booking_id, context):
         if publish_hook:
             publish_hook()
-        events._sync_publish(booking_id, environment_id, "progress")
+        environment_id, booking_routing = context
+        events._sync_publish(booking_id, environment_id, "progress", booking_routing)
     coalescer = ProgressCoalescer(W, publish, timer_factory=scheduler, clock=lambda: scheduler.now)
     events._coalescer = coalescer
     return coalescer
@@ -115,12 +117,13 @@ def test_coalesce_window_defaults_to_750ms():
 # ── 2.1 payload kind ──────────────────────────────────────────────────────────
 def test_lifecycle_publish_payload_carries_kind(redis_mock):
     booking_id, env_id = uuid4(), uuid4()
-    events.publish_row_changed(booking_id=booking_id, environment_id=env_id)
+    events.publish_row_changed(booking_id=booking_id, booking_routing=R, environment_id=env_id)
 
     channel, raw = redis_mock.publish.call_args.args
     assert channel == events.ROW_CHANGED_CHANNEL
     assert json.loads(raw) == {
         "booking_id": str(booking_id), "environment_id": str(env_id), "kind": "lifecycle",
+        "owner_id": "owner-1", "created_by": None,
     }
 
 
@@ -129,19 +132,21 @@ async def test_async_lifecycle_publish_payload_carries_kind():
     client = MagicMock(); client.publish = AsyncMock()
     booking_id = uuid4()
     with patch.object(events, "get_async_redis", return_value=client):
-        await events.apublish_row_changed(booking_id=booking_id)
+        await events.apublish_row_changed(booking_id=booking_id, booking_routing=R)
 
     assert json.loads(client.publish.call_args.args[1]) == {
         "booking_id": str(booking_id), "environment_id": None, "kind": "lifecycle",
+        "owner_id": "owner-1", "created_by": None,
     }
 
 
 def test_progress_publish_payload_carries_kind(redis_mock):
     booking_id, env_id = uuid4(), uuid4()
-    events.publish_progress_changed(booking_id=booking_id, environment_id=env_id)
+    events.publish_progress_changed(booking_id=booking_id, booking_routing=R, environment_id=env_id)
 
     assert _published(redis_mock) == [
-        {"booking_id": str(booking_id), "environment_id": str(env_id), "kind": "progress"},
+        {"booking_id": str(booking_id), "environment_id": str(env_id), "kind": "progress",
+         "owner_id": "owner-1", "created_by": None},
     ]
 
 
@@ -183,18 +188,54 @@ def test_idle_window_forgets_the_booking():
     assert len(recorder.calls) == 2
 
 
-def test_trailing_publish_uses_latest_environment_id():
+def test_trailing_publish_uses_latest_context():
     scheduler = FakeScheduler()
     seen = []
     coalescer = ProgressCoalescer(
-        W, lambda b, e: seen.append(e), timer_factory=scheduler, clock=lambda: scheduler.now,
+        W, lambda b, ctx: seen.append(ctx), timer_factory=scheduler, clock=lambda: scheduler.now,
     )
 
-    coalescer.submit("b1", "env-1")
-    coalescer.submit("b1", "env-1")
+    coalescer.submit("b1", "ctx-1")
+    coalescer.submit("b1", "ctx-2")
+    coalescer.submit("b1", "ctx-3")
     scheduler.advance(W)
 
-    assert seen == ["env-1", "env-1"]
+    assert seen == ["ctx-1", "ctx-3"]
+
+
+def test_trailing_progress_payload_carries_latest_routing(redis_mock):
+    """#442: the trailing publish carries the environment id and booking routing of the latest
+    submitted line, like any other publish."""
+    scheduler = FakeScheduler()
+    _install_fake_coalescer(scheduler)
+    booking_id, env_id = uuid4(), uuid4()
+
+    events.publish_progress_changed(booking_id=booking_id, booking_routing=R)
+    events.publish_progress_changed(
+        booking_id=booking_id, booking_routing=Routing("owner-1", "disp-1"), environment_id=env_id,
+    )
+    scheduler.advance(W)
+
+    assert _published(redis_mock)[-1] == {
+        "booking_id": str(booking_id), "environment_id": str(env_id), "kind": "progress",
+        "owner_id": "owner-1", "created_by": "disp-1",
+    }
+
+
+def test_environment_routing_is_serialised_separately(redis_mock):
+    """#442 / PR #462 review: an environment child's lifecycle payload carries the environment's
+    own routing alongside the booking's — they can differ (adopted namespace)."""
+    booking_id, env_id = uuid4(), uuid4()
+    events.publish_row_changed(
+        booking_id=booking_id, booking_routing=Routing("u1", None),
+        environment_id=env_id, environment_routing=Routing("u1", "d2"),
+    )
+
+    assert _published(redis_mock) == [{
+        "booking_id": str(booking_id), "environment_id": str(env_id), "kind": "lifecycle",
+        "owner_id": "u1", "created_by": None,
+        "environment_owner_id": "u1", "environment_created_by": "d2",
+    }]
 
 
 # ── 2.3 module wiring: pass-through, lifecycle cancel ─────────────────────────
@@ -202,7 +243,7 @@ def test_zero_window_publishes_every_progress_line(redis_mock):
     booking_id = uuid4()
     with patch.object(events.settings, "SSE_PROGRESS_COALESCE_MS", 0):
         for _ in range(5):
-            events.publish_progress_changed(booking_id=booking_id)
+            events.publish_progress_changed(booking_id=booking_id, booking_routing=R)
 
     assert [p["kind"] for p in _published(redis_mock)] == ["progress"] * 5
     assert events._coalescer is None
@@ -210,8 +251,8 @@ def test_zero_window_publishes_every_progress_line(redis_mock):
 
 def test_default_window_builds_a_coalescer(redis_mock):
     booking_id = uuid4()
-    events.publish_progress_changed(booking_id=booking_id)
-    events.publish_progress_changed(booking_id=booking_id)
+    events.publish_progress_changed(booking_id=booking_id, booking_routing=R)
+    events.publish_progress_changed(booking_id=booking_id, booking_routing=R)
 
     assert events._coalescer._window == pytest.approx(0.75)
     assert len(_published(redis_mock)) == 1       # second line held for the trailing edge
@@ -224,28 +265,28 @@ def test_trailing_publish_failure_is_swallowed_and_booking_stays_usable(redis_mo
     _install_fake_coalescer(scheduler)
     booking_id = uuid4()
 
-    events.publish_progress_changed(booking_id=booking_id)
-    events.publish_progress_changed(booking_id=booking_id)
+    events.publish_progress_changed(booking_id=booking_id, booking_routing=R)
+    events.publish_progress_changed(booking_id=booking_id, booking_routing=R)
     redis_mock.publish.side_effect = ConnectionError("redis down")
     scheduler.advance(W)                          # trailing flush raises inside the timer callback
     assert "Failed to publish row-changed event" in caplog.text
 
     redis_mock.publish.side_effect = None
     scheduler.advance(W)                          # idle window closes
-    events.publish_progress_changed(booking_id=booking_id)
+    events.publish_progress_changed(booking_id=booking_id, booking_routing=R)
     assert redis_mock.publish.call_count == 3     # leading, failed trailing, new leading
 
 
 def test_timer_start_failure_never_fails_the_caller_nor_sticks_the_booking(redis_mock):
     booking_id = uuid4()
     broken = ProgressCoalescer(
-        W, lambda b, e: events._sync_publish(b, e, "progress"),
+        W, lambda b, ctx: events._sync_publish(b, ctx[0], "progress", ctx[1]),
         timer_factory=MagicMock(side_effect=RuntimeError("can't start new thread")),
     )
     events._coalescer = broken
 
-    events.publish_progress_changed(booking_id=booking_id)   # must not raise
-    events.publish_progress_changed(booking_id=booking_id)
+    events.publish_progress_changed(booking_id=booking_id, booking_routing=R)   # must not raise
+    events.publish_progress_changed(booking_id=booking_id, booking_routing=R)
 
     assert broken._entries == {}                  # no timer-less entry swallowing later lines
 
@@ -291,7 +332,7 @@ def test_burst_then_silence_delivers_exactly_one_trailing_progress_publish(redis
     booking_id = uuid4()
 
     for _ in range(10):
-        events.publish_progress_changed(booking_id=booking_id)
+        events.publish_progress_changed(booking_id=booking_id, booking_routing=R)
         scheduler.advance(0.01)
     before = redis_mock.publish.call_count
     last_line_at = scheduler.now - 0.01
@@ -328,8 +369,8 @@ def test_two_bookings_each_get_leading_and_trailing_publish(redis_mock):
     a, b = uuid4(), uuid4()
 
     for _ in range(10):
-        events.publish_progress_changed(booking_id=a, environment_id=None)
-        events.publish_progress_changed(booking_id=b, environment_id=None)
+        events.publish_progress_changed(booking_id=a, booking_routing=R)
+        events.publish_progress_changed(booking_id=b, booking_routing=R)
         scheduler.advance(0.01)
     scheduler.advance(2 * W)
 
@@ -343,10 +384,10 @@ def test_lifecycle_publishes_immediately_and_discards_pending_trailing(redis_moc
     _install_fake_coalescer(scheduler)
     booking_id = uuid4()
 
-    events.publish_progress_changed(booking_id=booking_id)
-    events.publish_progress_changed(booking_id=booking_id)      # pending trailing
+    events.publish_progress_changed(booking_id=booking_id, booking_routing=R)
+    events.publish_progress_changed(booking_id=booking_id, booking_routing=R)      # pending trailing
     scheduler.advance(0.2)
-    events.publish_row_changed(booking_id=booking_id)            # e.g. READY
+    events.publish_row_changed(booking_id=booking_id, booking_routing=R)            # e.g. READY
 
     assert [p["kind"] for p in _published(redis_mock)] == ["progress", "lifecycle"]
     assert scheduler.armed() == []
@@ -372,10 +413,10 @@ def test_progress_line_right_after_lifecycle_publishes_immediately(redis_mock):
     _install_fake_coalescer(scheduler)
     booking_id = uuid4()
 
-    events.publish_progress_changed(booking_id=booking_id)
-    events.publish_row_changed(booking_id=booking_id)   # step boundary: status_message cleared
+    events.publish_progress_changed(booking_id=booking_id, booking_routing=R)
+    events.publish_row_changed(booking_id=booking_id, booking_routing=R)   # step boundary: status_message cleared
     scheduler.advance(0.1)                              # well inside W
-    events.publish_progress_changed(booking_id=booking_id)
+    events.publish_progress_changed(booking_id=booking_id, booking_routing=R)
 
     assert [p["kind"] for p in _published(redis_mock)] == ["progress", "lifecycle", "progress"]
 
@@ -390,11 +431,11 @@ def test_lifecycle_racing_a_deciding_timer_allows_at_most_one_late_progress(redi
         # Runs after the timer decided to publish (outside the lock), before its Redis publish.
         if race["armed"]:
             race["armed"] = False
-            events.publish_row_changed(booking_id=booking_id)
+            events.publish_row_changed(booking_id=booking_id, booking_routing=R)
 
     _install_fake_coalescer(scheduler, publish_hook=lifecycle_lands_mid_flush)
-    events.publish_progress_changed(booking_id=booking_id)       # leading edge
-    events.publish_progress_changed(booking_id=booking_id)       # pending trailing
+    events.publish_progress_changed(booking_id=booking_id, booking_routing=R)       # leading edge
+    events.publish_progress_changed(booking_id=booking_id, booking_routing=R)       # pending trailing
     race["armed"] = True
     scheduler.advance(W)                                         # timer decides, lifecycle lands, publish
 
@@ -422,15 +463,15 @@ def test_publish_slower_than_window_never_has_two_in_flight_for_one_booking(redi
         if state["blocking"]:
             state["blocking"] = False
             for _ in range(10):                   # more progress arrives while Redis is stuck...
-                events.publish_progress_changed(booking_id=booking_id)
+                events.publish_progress_changed(booking_id=booking_id, booking_routing=R)
                 scheduler.advance(0.08)           # ...for 2 windows' worth of time (fires due timers)
-            events.publish_row_changed(booking_id=booking_id)   # lifecycle lands at ~1.55s
+            events.publish_row_changed(booking_id=booking_id, booking_routing=R)   # lifecycle lands at ~1.55s
             scheduler.advance(0.1)
         state["in_flight"] -= 1
 
     _install_fake_coalescer(scheduler, publish_hook=slow_redis)
-    events.publish_progress_changed(booking_id=booking_id)   # leading edge at 0.0
-    events.publish_progress_changed(booking_id=booking_id)   # pending
+    events.publish_progress_changed(booking_id=booking_id, booking_routing=R)   # leading edge at 0.0
+    events.publish_progress_changed(booking_id=booking_id, booking_routing=R)   # pending
     state["blocking"] = True
     scheduler.advance(W)                                     # trailing #1 decides and blocks
     scheduler.advance(10 * W)
@@ -476,16 +517,16 @@ def test_line_after_lifecycle_waits_for_the_in_flight_publish(redis_mock):
         if state["blocking"]:
             state["blocking"] = False
             scheduler.advance(0.5)
-            events.publish_row_changed(booking_id=booking_id)       # step boundary (lifecycle)
+            events.publish_row_changed(booking_id=booking_id, booking_routing=R)       # step boundary (lifecycle)
             scheduler.advance(0.1)
-            events.publish_progress_changed(booking_id=booking_id)  # next step's first line
+            events.publish_progress_changed(booking_id=booking_id, booking_routing=R)  # next step's first line
             scheduler.advance(W)                                    # A still blocked past W
             state["a_returned_at"] = scheduler.now
         state["in_flight"] -= 1
 
     _install_fake_coalescer(scheduler, publish_hook=slow_redis)
-    events.publish_progress_changed(booking_id=booking_id)          # leading edge
-    events.publish_progress_changed(booking_id=booking_id)          # pending
+    events.publish_progress_changed(booking_id=booking_id, booking_routing=R)          # leading edge
+    events.publish_progress_changed(booking_id=booking_id, booking_routing=R)          # pending
     state["blocking"] = True
     starts = []
     redis_mock.publish.side_effect = lambda *a: starts.append(scheduler.now)
@@ -499,7 +540,7 @@ def test_line_after_lifecycle_waits_for_the_in_flight_publish(redis_mock):
     assert starts[-1] == state["a_returned_at"]                     # B right after A, no extra window
     assert len(scheduler.armed()) == 1                              # B opened a normal window
 
-    events.publish_progress_changed(booking_id=booking_id)          # inside B's window: held
+    events.publish_progress_changed(booking_id=booking_id, booking_routing=R)          # inside B's window: held
     assert redis_mock.publish.call_count == 4
     scheduler.advance(W)
     assert redis_mock.publish.call_count == 5                       # ...and flushed as trailing

@@ -89,6 +89,7 @@ async def test_promote_assigns_resource_and_sets_ready():
     queued = SimpleNamespace(
         id=uuid4(), status=BookingStatus.QUEUED.value, ttl_minutes=240,
         static_vm_id=None, namespace_id=None, expires_at=None,
+        user_id="owner-1", created_by=None,
     )
     free_vm = SimpleNamespace(id=uuid4(), name="vm-1")
 

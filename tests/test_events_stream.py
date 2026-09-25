@@ -32,11 +32,12 @@ def _user(role: str = "user", user_id=None) -> User:
     )
 
 
-def _booking(user_id: str) -> Booking:
+def _booking(user_id: str, created_by: str | None = None) -> Booking:
     now = datetime.now(timezone.utc)
     return Booking(
         id=uuid4(),
         user_id=user_id,
+        created_by=created_by,
         status=BookingStatus.PROVISIONING,
         ttl_minutes=240,
         expires_at=now + timedelta(minutes=240),
@@ -45,13 +46,14 @@ def _booking(user_id: str) -> Booking:
     )
 
 
-def _environment(user_id: str) -> Environment:
+def _environment(user_id: str, created_by: str | None = None) -> Environment:
     now = datetime.now(timezone.utc)
     return Environment(
         id=uuid4(),
         name="env-1",
         blueprint_name=None,
         user_id=user_id,
+        created_by=created_by,
         ttl_minutes=240,
         expires_at=now + timedelta(minutes=240),
         created_at=now,
@@ -283,7 +285,7 @@ class _FakePubSub:
         pass
 
 
-async def _drain_one_message(mod, payload):
+async def _drain_one_message(mod, payload, user=None):
     """Run _event_stream over a single pub/sub message, then stop at the next keepalive."""
     redis_client = MagicMock()
     redis_client.pubsub.return_value = _FakePubSub([{"data": json.dumps(payload)}])
@@ -291,7 +293,7 @@ async def _drain_one_message(mod, payload):
     request.is_disconnected.return_value = False
     chunks = []
     with patch.object(mod, "get_async_redis", return_value=redis_client):
-        stream = mod._event_stream(request, _user("user"))
+        stream = mod._event_stream(request, user or _user("user"))
         async for chunk in stream:
             if chunk.startswith(": keepalive"):
                 break
@@ -320,6 +322,187 @@ async def test_event_stream_renders_environment_row_only_for_lifecycle(kind, env
     else:
         render_env.assert_not_awaited()
         assert chunks == ["B"]
+
+
+# ── #442: per-row routing pre-filter before any DB lookup ────────────────────────
+def _routed(booking_id, *, owner, creator=None, kind="lifecycle", env_id=None,
+            env_owner=None, env_creator=None):
+    payload = {
+        "booking_id": str(booking_id), "environment_id": str(env_id) if env_id else None,
+        "kind": kind, "owner_id": owner, "created_by": creator,
+    }
+    if env_owner is not None:
+        payload["environment_owner_id"] = env_owner
+        payload["environment_created_by"] = env_creator
+    return payload
+
+
+_U, _D = str(uuid4()), str(uuid4())  # an owner and a dispatcher who orders on their behalf
+
+
+@pytest.mark.parametrize(
+    ("role", "user_id", "payload", "row", "expected"),
+    [
+        ("user", _U, {"owner_id": _U, "created_by": None}, "booking", True),
+        ("dispatcher", _D, {"owner_id": _U, "created_by": _D}, "booking", True),
+        ("dispatcher", _D, {"owner_id": _U, "created_by": str(uuid4())}, "booking", False),
+        ("dispatcher", _D, {"owner_id": _U, "created_by": None}, "booking", False),
+        ("user", str(uuid4()), {"owner_id": _U, "created_by": _D}, "booking", False),
+        ("admin", str(uuid4()), {"owner_id": _U, "created_by": None}, "booking", True),
+        ("user", str(uuid4()), {}, "booking", True),                     # legacy: unknown
+        ("dispatcher", _D,
+         {"owner_id": _U, "created_by": None,
+          "environment_owner_id": _U, "environment_created_by": _D}, "environment", True),
+        ("dispatcher", _D,
+         {"owner_id": _U, "created_by": _D,
+          "environment_owner_id": _U, "environment_created_by": None}, "environment", False),
+        ("user", str(uuid4()), {"owner_id": _U, "created_by": None}, "environment", True),  # unknown
+    ],
+    ids=[
+        "owner", "creating-dispatcher", "other-dispatcher", "dispatcher-no-creator",
+        "unrelated-user", "admin", "legacy-booking-row", "env-row-own-routing",
+        "env-row-ignores-booking-routing", "legacy-environment-row",
+    ],
+)
+def test_may_concern(role, user_id, payload, row, expected):
+    from app.presentation.routes import events as mod
+
+    assert mod._may_concern(payload, row, _user(role, user_id=user_id)) is expected
+
+
+class _Db:
+    """Patches the stream's DB touchpoints so a test can prove whether any lookup happened."""
+
+    def __init__(self, mod, booking=None, environment=None):
+        self._mod, self._booking, self._environment = mod, booking, environment
+
+    def __enter__(self):
+        from contextlib import ExitStack
+        self._stack = ExitStack()
+        self.sessionmaker = self._stack.enter_context(
+            patch.object(self._mod, "AsyncSessionLocal", return_value=_session_cm()),
+        )
+        self.booking_repo = self._stack.enter_context(patch.object(self._mod, "_booking_repo"))
+        self.booking_repo.get = AsyncMock(return_value=self._booking)
+        self.booking_repo.queue_position = AsyncMock(return_value=None)
+        self.env_repo = self._stack.enter_context(patch.object(self._mod, "_env_repo"))
+        self.env_repo.get = AsyncMock(return_value=self._environment)
+        return self
+
+    def __exit__(self, *exc):
+        return self._stack.__exit__(*exc)
+
+
+def _session_cm():
+    cm = AsyncMock()
+    cm.__aenter__.return_value = AsyncMock()
+    cm.__aexit__.return_value = False
+    return cm
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["progress", "lifecycle"])
+async def test_unrelated_event_opens_no_session_and_looks_nothing_up(kind):
+    from app.presentation.routes import events as mod
+
+    stranger = _user("user")
+    payload = _routed(
+        uuid4(), owner=_U, creator=_D, kind=kind,
+        env_id=uuid4(), env_owner=_U, env_creator=_D,
+    )
+    with _Db(mod) as db:
+        chunks = await _drain_one_message(mod, payload, stranger)
+
+    assert chunks == []
+    db.sessionmaker.assert_not_called()
+    db.booking_repo.get.assert_not_awaited()
+    db.booking_repo.queue_position.assert_not_awaited()
+    db.env_repo.get.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_dispatcher_gets_environment_row_of_adopted_namespace():
+    """PR #462 review: dispatcher D ordered an environment for U that adopted U's pre-existing
+    standalone namespace. The adopted booking has no creator; the environment's creator is D.
+    D must still get the environment row — judged by the environment's own routing — while the
+    booking row (which D doesn't manage) is skipped without a lookup."""
+    from app.presentation.routes import events as mod
+
+    dispatcher = _user("dispatcher", user_id=_D)
+    booking = _booking(_U, created_by=None)
+    env = _environment(_U, created_by=_D)
+    payload = _routed(
+        booking.id, owner=_U, creator=None,
+        env_id=env.id, env_owner=_U, env_creator=_D,
+    )
+    with _Db(mod, booking, env) as db:
+        chunks = await _drain_one_message(mod, payload, dispatcher)
+
+    db.booking_repo.get.assert_not_awaited()
+    db.env_repo.get.assert_awaited_once()
+    assert len(chunks) == 1 and chunks[0].startswith(f"event: environment-{env.id}\n")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("role", "user_id", "creator"),
+    [("user", _U, None), ("dispatcher", _D, _D), ("admin", None, None)],
+    ids=["owner", "creating-dispatcher", "admin"],
+)
+async def test_authorized_users_still_receive_booking_and_environment_rows(role, user_id, creator):
+    from app.presentation.routes import events as mod
+
+    user = _user(role, user_id=user_id)
+    booking = _booking(_U, created_by=creator)
+    env = _environment(_U, created_by=creator)
+    payload = _routed(
+        booking.id, owner=_U, creator=creator,
+        env_id=env.id, env_owner=_U, env_creator=creator,
+    )
+    with _Db(mod, booking, env):
+        chunks = await _drain_one_message(mod, payload, user)
+
+    assert [c.split("\n", 1)[0] for c in chunks] == [
+        f"event: booking-{booking.id}", f"event: environment-{env.id}",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_legacy_payload_without_routing_falls_back_to_db_authorization():
+    from app.presentation.routes import events as mod
+
+    owner, stranger = _user("user", user_id=_U), _user("user")
+    booking = _booking(_U)
+    legacy = {"booking_id": str(booking.id), "environment_id": None, "kind": "lifecycle"}
+
+    with _Db(mod, booking) as db:
+        chunks = await _drain_one_message(mod, legacy, owner)
+    db.booking_repo.get.assert_awaited_once()
+    assert len(chunks) == 1
+
+    with _Db(mod, booking) as db:
+        chunks = await _drain_one_message(mod, legacy, stranger)
+    db.booking_repo.get.assert_awaited_once()  # looked up, then rejected by the DB-backed check
+    assert chunks == []
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_without_environment_routing_authorizes_environment_from_db():
+    """Environment routing omitted (e.g. its lookup failed at publish time): the environment row
+    falls back to the DB check while the booking row is still pre-filtered."""
+    from app.presentation.routes import events as mod
+
+    dispatcher = _user("dispatcher", user_id=_D)
+    booking = _booking(_U)
+    env = _environment(_U, created_by=_D)
+    payload = _routed(booking.id, owner=_U, env_id=env.id)
+
+    with _Db(mod, booking, env) as db:
+        chunks = await _drain_one_message(mod, payload, dispatcher)
+
+    db.booking_repo.get.assert_not_awaited()
+    db.env_repo.get.assert_awaited_once()
+    assert len(chunks) == 1 and chunks[0].startswith(f"event: environment-{env.id}\n")
 
 
 # ── row templates: sse-swap replaces the 3s poll, gated the same as the old trigger ─

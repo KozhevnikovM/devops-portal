@@ -14,13 +14,19 @@ Progress-only notifications (one per Ansible/script output line) go through a pe
 ``SSE_PROGRESS_COALESCE_MS`` window per producer, plus a trailing publish so the last line of a
 burst still reaches the UI. Every notification is an invalidation signal only — subscribers
 re-read the booking — so dropping intermediate progress signals loses nothing.
+
+Every notification also carries per-row **routing** metadata (#442): the owner and creator ids of
+the booking and, for a lifecycle notification of an environment child, of the environment. A
+subscriber uses it to skip rows its user can never manage *before* opening a DB session. The ids
+are opaque user ids; nothing else about the booking or user goes into the payload.
 """
 import json
 import logging
 import threading
 import time
 from collections.abc import Callable
-from typing import Literal, Protocol
+from dataclasses import dataclass
+from typing import Any, Literal, Protocol
 from uuid import UUID
 
 import redis as redis_lib
@@ -74,19 +80,51 @@ def get_async_redis() -> aioredis.Redis:
 Kind = Literal["progress", "lifecycle"]
 
 
-def _payload(booking_id: UUID | str, environment_id: UUID | str | None, kind: Kind) -> str:
+@dataclass(frozen=True)
+class Routing:
+    """Who may manage a row: its owner and, if any, the dispatcher/admin who created it (#442)."""
+
+    owner_id: str
+    created_by: str | None
+
+
+def _payload(
+    booking_id: UUID | str,
+    environment_id: UUID | str | None,
+    kind: Kind,
+    booking_routing: Routing,
+    environment_routing: Routing | None = None,
+) -> str:
     # `kind` lets subscribers treat progress-only changes differently (#441); a payload without
-    # one must be read as "lifecycle".
-    return json.dumps({
+    # one must be read as "lifecycle". The environment routing is its own, not the child's: an
+    # adopted namespace booking keeps its creator while the environment records who ordered it.
+    payload: dict[str, Any] = {
         "booking_id": str(booking_id),
         "environment_id": str(environment_id) if environment_id else None,
         "kind": kind,
-    })
+        "owner_id": str(booking_routing.owner_id),
+        "created_by": str(booking_routing.created_by) if booking_routing.created_by else None,
+    }
+    if environment_routing is not None:
+        payload["environment_owner_id"] = str(environment_routing.owner_id)
+        payload["environment_created_by"] = (
+            str(environment_routing.created_by) if environment_routing.created_by else None
+        )
+    return json.dumps(payload)
 
 
-def _sync_publish(booking_id: UUID | str, environment_id: UUID | str | None, kind: Kind) -> None:
+def _sync_publish(
+    booking_id: UUID | str,
+    environment_id: UUID | str | None,
+    kind: Kind,
+    booking_routing: Routing,
+    environment_routing: Routing | None = None,
+) -> None:
     try:
-        _get_sync_redis().publish(ROW_CHANGED_CHANNEL, _payload(booking_id, environment_id, kind))
+        _get_sync_redis().publish(
+            ROW_CHANGED_CHANNEL,
+            _payload(booking_id, environment_id, kind, booking_routing, environment_routing),
+        )
     except Exception:
         logger.exception("Failed to publish row-changed event for booking %s", booking_id)
 
@@ -106,10 +144,10 @@ def _start_daemon_timer(delay: float, callback: Callable[[], None]) -> Timer:
 
 
 class _Entry:
-    __slots__ = ("cancelled", "environment_id", "in_flight", "pending", "timer")
+    __slots__ = ("cancelled", "context", "in_flight", "pending", "timer")
 
-    def __init__(self, environment_id: UUID | str | None) -> None:
-        self.environment_id = environment_id
+    def __init__(self, context: Any) -> None:
+        self.context = context
         self.pending = False
         self.timer: Timer | None = None
         self.in_flight = False  # a publish for this booking is running (never more than one)
@@ -138,12 +176,15 @@ class ProgressCoalescer:
 
     State is per process, so the bound is per producer (one task execution). Two producers
     overlapping for the same booking are each bounded independently.
+
+    Each submit carries an opaque ``context`` (the environment id and routing, for the module
+    singleton) that is handed to ``publish`` as-is; the latest submitted context wins.
     """
 
     def __init__(
         self,
         window_seconds: float,
-        publish: Callable[[UUID | str, UUID | str | None], None],
+        publish: Callable[[UUID | str, Any], None],
         *,
         timer_factory: TimerFactory = _start_daemon_timer,
         clock: Callable[[], float] = time.monotonic,
@@ -155,18 +196,18 @@ class ProgressCoalescer:
         self._lock = threading.Lock()
         self._entries: dict[str, _Entry] = {}
 
-    def submit(self, booking_id: UUID | str, environment_id: UUID | str | None) -> None:
+    def submit(self, booking_id: UUID | str, context: Any) -> None:
         key = str(booking_id)
         with self._lock:
             entry = self._entries.get(key)
             if entry is not None:
                 entry.pending = True
-                entry.environment_id = environment_id
+                entry.context = context
                 return
-            entry = _Entry(environment_id)
+            entry = _Entry(context)
             entry.in_flight = True
             self._entries[key] = entry
-        self._publish_then_open_window(key, entry, environment_id)
+        self._publish_then_open_window(key, entry, context)
 
     def cancel(self, booking_id: UUID | str) -> None:
         """Forget the booking's window (called by a lifecycle publish).
@@ -191,9 +232,7 @@ class ProgressCoalescer:
         if timer is not None:
             timer.cancel()
 
-    def _publish_then_open_window(
-        self, key: str, entry: _Entry, environment_id: UUID | str | None,
-    ) -> None:
+    def _publish_then_open_window(self, key: str, entry: _Entry, context: Any) -> None:
         """Run the entry's one in-flight publish, then decide what follows it. Loops only when a
         line arrived after a lifecycle cancel: that publish goes out immediately, as a leading
         edge, once the previous one has returned."""
@@ -201,7 +240,7 @@ class ProgressCoalescer:
             # Outside the lock: a slow or unreachable Redis must not stall other bookings.
             started = self._clock()
             try:
-                self._publish(key, environment_id)
+                self._publish(key, context)
             except Exception:
                 # Best-effort; must never leave the entry marked in flight.
                 logger.exception("Failed to publish progress event for booking %s", key)
@@ -215,7 +254,7 @@ class ProgressCoalescer:
                         del self._entries[key]
                         return
                     entry.pending = False
-                    environment_id = entry.environment_id
+                    context = entry.context
                     entry.in_flight = True
                     continue
                 try:
@@ -240,8 +279,8 @@ class ProgressCoalescer:
                 return
             entry.pending = False
             entry.in_flight = True
-            environment_id = entry.environment_id
-        self._publish_then_open_window(key, entry, environment_id)
+            context = entry.context
+        self._publish_then_open_window(key, entry, context)
 
 
 _coalescer: ProgressCoalescer | None = None
@@ -257,12 +296,18 @@ def _get_coalescer() -> ProgressCoalescer | None:
         if _coalescer is None:
             _coalescer = ProgressCoalescer(
                 settings.SSE_PROGRESS_COALESCE_MS / 1000,
-                lambda booking_id, environment_id: _sync_publish(booking_id, environment_id, "progress"),
+                lambda booking_id, context: _sync_publish(booking_id, context[0], "progress", context[1]),
             )
         return _coalescer
 
 
-def publish_row_changed(*, booking_id: UUID | str, environment_id: UUID | str | None = None) -> None:
+def publish_row_changed(
+    *,
+    booking_id: UUID | str,
+    booking_routing: Routing,
+    environment_id: UUID | str | None = None,
+    environment_routing: Routing | None = None,
+) -> None:
     """Sync lifecycle publish — called by BookingRepository's sync_* methods (Celery worker path).
 
     Always immediate. Also drops any open progress window for the booking: this notification
@@ -275,34 +320,48 @@ def publish_row_changed(*, booking_id: UUID | str, environment_id: UUID | str | 
     coalescer = _coalescer
     if coalescer is not None:
         coalescer.cancel(booking_id)
-    _sync_publish(booking_id, environment_id, "lifecycle")
+    _sync_publish(booking_id, environment_id, "lifecycle", booking_routing, environment_routing)
 
 
-def publish_progress_changed(*, booking_id: UUID | str, environment_id: UUID | str | None = None) -> None:
+def publish_progress_changed(
+    *,
+    booking_id: UUID | str,
+    booking_routing: Routing,
+    environment_id: UUID | str | None = None,
+) -> None:
     """Sync progress publish — called by ``BookingRepository.sync_record_progress`` (#440).
 
     Coalesced per booking; publishes immediately when coalescing is disabled. Best-effort like
     ``publish_row_changed``, including the trailing publish fired from the coalescer's timer.
+    Carries no environment routing: a progress notification never refreshes the environment
+    row (#441).
     """
     try:
         coalescer = _get_coalescer()
         if coalescer is None:
-            _sync_publish(booking_id, environment_id, "progress")
+            _sync_publish(booking_id, environment_id, "progress", booking_routing)
         else:
-            coalescer.submit(booking_id, environment_id)
+            coalescer.submit(booking_id, (environment_id, booking_routing))
     except Exception:
         # e.g. the timer thread couldn't be started — never fail the already-committed write.
         logger.exception("Failed to publish progress event for booking %s", booking_id)
 
 
-async def apublish_row_changed(*, booking_id: UUID | str, environment_id: UUID | str | None = None) -> None:
+async def apublish_row_changed(
+    *,
+    booking_id: UUID | str,
+    booking_routing: Routing,
+    environment_id: UUID | str | None = None,
+    environment_routing: Routing | None = None,
+) -> None:
     """Async lifecycle publish — called by BookingRepository's async methods (FastAPI route path).
 
     Nothing to cancel here: progress windows live in the worker process that produces them.
     """
     try:
         await get_async_redis().publish(
-            ROW_CHANGED_CHANNEL, _payload(booking_id, environment_id, "lifecycle"),
+            ROW_CHANGED_CHANNEL,
+            _payload(booking_id, environment_id, "lifecycle", booking_routing, environment_routing),
         )
     except Exception:
         logger.exception("Failed to publish row-changed event for booking %s", booking_id)
