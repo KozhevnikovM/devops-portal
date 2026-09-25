@@ -78,7 +78,7 @@ A live-update subscriber SHALL listen on exactly two channels: the broadcast cha
 
 ### Requirement: Scoped delivery keeps the existing failure and reconnect behaviour
 
-Scoped delivery SHALL NOT weaken the reconciliation guarantees. A subscriber whose pub/sub read fails SHALL end the stream as before, so the browser reconnects and subscribes afresh to its scoped and broadcast channels. Rows SHALL keep their slower fallback poll, which reconciles any notification lost while a connection was reconnecting or Redis was unavailable. Publishing to several channels SHALL remain best-effort as a whole: a failure is logged and SHALL NOT fail or roll back the write that triggered it or interrupt a provisioning or teardown task.
+Scoped delivery SHALL NOT weaken the reconciliation guarantees. A subscriber whose pub/sub read fails SHALL end the stream as before, so the browser reconnects and subscribes afresh to its scoped and broadcast channels. Rows SHALL keep their slower fallback poll, which reconciles any notification lost while a connection was reconnecting or Redis was unavailable. Publishing to several channels SHALL remain best-effort as a whole: a failure is logged and SHALL NOT fail or roll back the write that triggered it or interrupt a provisioning or teardown task. During a rolling deploy, a subscriber MAY miss live pushes from a publisher running a different version, but its rows SHALL converge through the fallback poll and no row SHALL be pushed to a user who may not manage it.
 
 #### Scenario: Notification lost during a reconnect
 - **WHEN** a booking owned by U changes status while U's only stream is reconnecting
@@ -91,3 +91,9 @@ Scoped delivery SHALL NOT weaken the reconciliation guarantees. A subscriber who
 #### Scenario: Publisher running older code during a rolling deploy
 - **WHEN** a publisher still running the pre-change code publishes a notification on the broadcast channel
 - **THEN** every subscriber receives it and handles it by routing and database authorization, as before this change
+
+#### Scenario: Subscriber running older code during a rolling deploy
+- **WHEN** a publisher running the new code publishes a change to a booking owned by U only to scoped channels, and U's tab is connected to a subscriber still running the pre-change code, which listens only on the broadcast channel
+- **THEN** that tab receives no live push for the change
+- **AND** U's row reflects the change no later than its next fallback poll
+- **AND** no row is pushed to any connection whose user may not manage it

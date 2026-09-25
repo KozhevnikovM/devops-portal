@@ -12,7 +12,7 @@ See proposal.md for the motivation. The current state after #440, #441 and #442:
 **Goals:**
 - Only connections of users named in a notification's routing, plus admin connections, receive it at all.
 - Keep one visibility rule. The channel set is derived from the same owner/creator facts `can_manage` uses, and the subscriber-side checks stay unchanged and authoritative.
-- No window during a rolling deploy in which a mixed-version pair loses notifications outright, and no case where unknown routing loses one.
+- During a rolling deploy, a mixed-version publisher/subscriber pair may miss live pushes, but every row converges through the 60 s fallback poll and nothing is ever pushed to a user who may not manage the row. When routing is unknown, the notification is still delivered, via broadcast.
 
 **Non-Goals:**
 - Reducing admin fan-out. Admins may manage every row, so every admin tab still receives every notification.
@@ -51,7 +51,7 @@ The payload is serialised once and `PUBLISH`ed to each recipient channel in a no
 
 Every subscriber also listens on `portal:row-changed`. A new publisher writes to it only when the recipients can't be determined: an environment child's lifecycle notification with no environment routing. That goes to broadcast only, not to broadcast plus the scoped channels, because every subscriber is already listening on broadcast and a double publish would give duplicate deliveries. The subscriber handles it through the existing path: the environment row has no routing, so `_may_concern` returns `True` and the DB check decides, exactly as the "Rows without routing metadata fall back to database authorization" requirement already specifies.
 
-The same subscription also makes a rolling deploy safe in one direction for free: an old publisher still writes to `portal:row-changed`, and new subscribers get those messages. The other direction, a new publisher with an old subscriber, loses scoped notifications until that app instance is replaced. Its tabs fall back to the 60 s poll, and in this deployment (`docker compose`) the app and worker restart together anyway, so the window is the restart itself.
+The same subscription keeps live delivery in one rolling-deploy direction for free: an old publisher still writes to `portal:row-changed`, and new subscribers get those messages. The other direction, a new publisher with an old subscriber, does not keep live delivery: the old subscriber listens only on `portal:row-changed` and misses scoped notifications until that app instance is replaced. This is within the deploy goal above: those tabs converge through the 60 s poll, and nothing unauthorized is pushed because the old subscriber still applies its own DB-backed check. In this deployment (`docker compose`) the app and worker restart together anyway, so the window is the restart itself.
 
 - *Alternative: on unknown environment routing, publish to the booking recipients plus admin only.* Rejected. In the adopted-namespace case the environment's creating dispatcher is not a booking recipient and would silently lose the environment row update until the poll.
 - *Alternative: new publishers dual-publish to the legacy channel for a release.* Rejected. It would keep the global fan-out, which is what this change exists to remove, for the life of that release.
