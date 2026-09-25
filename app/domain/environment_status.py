@@ -10,6 +10,9 @@ def derive_environment_status(statuses: Iterable[BookingStatus]) -> BookingStatu
 
     Anything the rules don't name — e.g. some children RELEASED/RELEASING while others are READY —
     is FAILED, so a partly released stack is never reported as a healthy READY.
+
+    The RELEASED rule is mirrored in SQL by environment_repo._not_fully_released (#466) — change
+    both together.
     """
     statuses = list(statuses)
     if not statuses:

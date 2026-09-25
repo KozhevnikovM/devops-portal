@@ -7,7 +7,6 @@ from fastapi.responses import HTMLResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.entities import User
-from app.domain.enums import BookingStatus
 from app.domain.exceptions import (
     BlueprintNotFoundError, BookingPermissionError, EnvironmentError, EnvironmentItemError,
     EnvironmentNotFoundError, NamespaceUnavailableError, NotFoundError,
@@ -35,14 +34,14 @@ def _annotate(env):
 async def _list_for(
     session, current_user, *, filter: str = "mine", show_released: bool = False, label=None,
 ):
+    # Fully released environments are excluded in SQL, before their children load (#466).
     if filter == "all":
-        envs = await _env_repo.list_all(session, label=label)
+        envs = await _env_repo.list_all(session, label=label, include_released=show_released)
     else:
-        envs = await _env_repo.list_by_user(session, str(current_user.id), label=label)
-    annotated = [_annotate(e) for e in envs]
-    if not show_released:
-        annotated = [e for e in annotated if e.derived_status != BookingStatus.RELEASED.value]
-    return annotated
+        envs = await _env_repo.list_by_user(
+            session, str(current_user.id), label=label, include_released=show_released,
+        )
+    return [_annotate(e) for e in envs]
 
 
 @router.get("/environments", response_class=HTMLResponse)

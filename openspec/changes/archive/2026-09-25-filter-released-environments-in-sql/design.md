@@ -45,7 +45,11 @@ The filter goes in the environments `SELECT`, and `env_ids` for `_children_batch
 ### 3. Indexes: a full index plus a partial "unreleased" index
 
 - `ix_bookings_environment_id` on `bookings (environment_id)`. It serves `NOT EXISTS any child`, `_children_batch`'s `environment_id IN (...)`, `_children_stmt`, and the lease/teardown lookups (`sync_live_children`, `sync_list_expired`), which all filter on `environment_id` today.
-- `ix_bookings_environment_id_unreleased` on `bookings (environment_id) WHERE status <> 'RELEASED' AND environment_id IS NOT NULL`. It serves the `EXISTS non-RELEASED child` probe. Released rows grow without bound and live rows do not, so this index stays small and the probe does not touch released history. The partial predicate textually matches the query's `status <> 'RELEASED'`, so the planner can prove that the query implies it.
+- `ix_bookings_environment_id_unreleased` on `bookings (environment_id) WHERE status <> 'RELEASED'`. It serves the `EXISTS non-RELEASED child` probe. Released rows grow without bound and live rows do not, so this index stays small and the probe does not touch released history. The partial predicate is exactly the query's `status <> 'RELEASED'`, so the planner can prove that the query implies it in both of the forms it uses for this probe:
+  - *Correlated*: one index probe per candidate environment, with `environment_id = e.id`.
+  - *Hashed subplan*: at realistic sizes the planner runs `SELECT environment_id FROM bookings WHERE status <> 'RELEASED'` once. This form has no `environment_id` condition.
+
+  *Revised during implementation:* the first draft also had `AND environment_id IS NOT NULL` in the index predicate. The hashed form cannot imply that clause, so the planner fell back to a sequential scan of all of `bookings` for this probe (`EXPLAIN ANALYZE` on 81.5k bookings: 1,347 buffers, compared with 2 buffers once the clause was removed). The index now also holds live standalone bookings, whose number quotas keep small.
 
 Both indexes are also declared on `BookingModel.__table_args__` (`Index(..., postgresql_where=...)`) so the ORM metadata and the migrated schema agree.
 
@@ -65,7 +69,7 @@ An integration test (real Postgres) seeds one environment per combination of chi
 
 - [The SQL predicate and `derive_environment_status` encode the same rule in two places] → The equivalence test (Decision 5) fails if either one changes, and a comment in both places points to the other.
 - [The environments table itself is still scanned in full. Filtering removes child loading and Python aggregation, not the scan of environment rows] → Environment rows are narrow and the probes are index lookups. Bounding the scan needs pagination, which is deferred to #467. The spec deliberately guarantees only bounded child loading, not bounded total cost.
-- [The planner may prefer a seq scan on small tables, which makes `EXPLAIN` evidence flaky in tests] → The `EXPLAIN` test seeds enough rows and runs `ANALYZE`. It asserts only that an index on `bookings.environment_id` appears in the plan, not a specific plan shape.
+- [The planner may prefer a seq scan on small tables, and it cannot `VACUUM` inside the test's rollback transaction, which makes cost-based `EXPLAIN` assertions flaky] → The test pins that each index can be used rather than preferred. With `enable_seqscan = off`, the list plan must name both indexes, and the bare hashed-probe query (`status <> 'RELEASED'`) must use the partial index. The second check fails for the `IS NOT NULL` predicate described in Decision 3. The cost-based evidence, `EXPLAIN (ANALYZE, BUFFERS)` before and after on a committed, vacuumed dataset, is recorded in the PR.
 - [A non-concurrent index build briefly blocks writes to `bookings` during deploy] → The table is small, so the build takes milliseconds. This is acceptable in a normal deploy window.
 
 ## Migration Plan

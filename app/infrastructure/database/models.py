@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, false, func, text
+from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, false, func, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -131,6 +131,15 @@ class StaticVMModel(Base):
 
 class BookingModel(Base):
     __tablename__ = "bookings"
+    # Child lookups by environment, and the "has a non-RELEASED child" probe of the environments
+    # list (#466). Kept in step with migration 0033.
+    __table_args__ = (
+        Index("ix_bookings_environment_id", "environment_id"),
+        Index(
+            "ix_bookings_environment_id_unreleased", "environment_id",
+            postgresql_where=text("status <> 'RELEASED'"),
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id: Mapped[str] = mapped_column(String(64), nullable=False)
