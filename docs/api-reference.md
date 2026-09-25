@@ -865,6 +865,12 @@ connected user isn't authorized to see (not the owner/creating dispatcher/admin)
 onto their connection — the same `can_manage()` check the polling row endpoints already enforce,
 applied per-connection per-event.
 
+A change to a booking that belongs to an environment refreshes both the booking row and the
+parent `environment-{id}` row, except for provisioning/teardown progress output (Ansible,
+startup-script, SSH-wait lines). Progress output refreshes only the booking row, because the
+environment row doesn't show progress messages. Status changes (READY, FAILED, …) always refresh
+the environment row as well.
+
 Delivery is via Redis pub/sub, which has no replay guarantee — a message published while
 disconnected (a dropped connection, a Redis restart) is lost. Each row keeps a much slower 60s
 fallback poll (`GET /bookings/{id}/row` / `GET /environments/{id}/row`) as the safety net, so a

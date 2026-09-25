@@ -1,3 +1,5 @@
+{# Not refreshed by progress-only SSE notifications (#441): showing a child's status_message or
+   provisioning_log here would need _rows_to_refresh in routes/events.py revisited. #}
 {% set is_terminal = environment.derived_status in ('READY', 'FAILED', 'RELEASED') %}
 {% set is_owner = environment.owner_username == current_user.username %}
 {# Owner, the creating dispatcher (#229/#230) and admins may manage the environment. #}
