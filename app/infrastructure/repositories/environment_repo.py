@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
-from sqlalchemy import String, cast, or_, select
+from sqlalchemy import String, cast, exists, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session, aliased
 
@@ -58,6 +58,39 @@ def _children_stmt(environment_id: UUID):
 # Child statuses that can still become READY — an environment with one isn't lease-eligible (#434).
 _IN_FLIGHT_VALUES = [s.value for s in CAN_BECOME_READY]
 _LIVE_CHILD_STATUSES = [s.value for s in LIVE_CHILD_STATUSES]
+
+
+def _not_fully_released():
+    """SQL twin of `derive_environment_status(...) != RELEASED` (#466): an environment is fully
+    released only when it has a child and every child is RELEASED, so keep it if it has no child
+    or any non-RELEASED one. Keep in step with app/domain/environment_status.py."""
+    child = BookingModel.environment_id == EnvironmentModel.id
+    return or_(
+        ~exists().where(child),
+        exists().where(child, BookingModel.status != BookingStatus.RELEASED.value),
+    )
+
+
+def _list_stmt(user_id: str | None, *, label: str | None, include_released: bool):
+    """The environments-list query (children are fetched separately, only for the rows it returns)."""
+    stmt = (
+        select(EnvironmentModel, UserModel.username, _CreatorUser.username)
+        .join(UserModel, cast(UserModel.id, String) == EnvironmentModel.user_id, isouter=True)
+        .outerjoin(_CreatorUser, cast(_CreatorUser.id, String) == EnvironmentModel.created_by)
+        .order_by(EnvironmentModel.created_at.desc())
+    )
+    if user_id is not None:
+        # Visible to user: owned, plus any dispatched on someone's behalf (created_by).
+        stmt = stmt.where(
+            or_(EnvironmentModel.user_id == user_id, EnvironmentModel.created_by == user_id)
+        )
+    if label is not None and label.strip():
+        # An environment's name already serves as its label (#345); filter on it directly.
+        stmt = stmt.where(EnvironmentModel.name.ilike(f"%{label.strip()}%"))
+    if not include_released:
+        # Decided in SQL so fully released environments' children are never loaded (#466).
+        stmt = stmt.where(_not_fully_released())
+    return stmt
 
 
 def _to_entity(m: EnvironmentModel, bookings=None, owner_username=None, created_by_username=None) -> Environment:
@@ -194,31 +227,22 @@ class EnvironmentRepository:
             for model, owner, creator in env_rows
         ]
 
-    async def list_all(self, session: AsyncSession, label: str | None = None) -> list[Environment]:
-        return await self._list(session, None, label=label)
+    async def list_all(
+        self, session: AsyncSession, label: str | None = None, include_released: bool = True,
+    ) -> list[Environment]:
+        return await self._list(session, None, label=label, include_released=include_released)
 
     async def list_by_user(
         self, session: AsyncSession, user_id: str, label: str | None = None,
+        include_released: bool = True,
     ) -> list[Environment]:
-        return await self._list(session, user_id, label=label)
+        return await self._list(session, user_id, label=label, include_released=include_released)
 
     async def _list(
         self, session: AsyncSession, user_id: str | None, label: str | None = None,
+        include_released: bool = True,
     ) -> list[Environment]:
-        stmt = (
-            select(EnvironmentModel, UserModel.username, _CreatorUser.username)
-            .join(UserModel, cast(UserModel.id, String) == EnvironmentModel.user_id, isouter=True)
-            .outerjoin(_CreatorUser, cast(_CreatorUser.id, String) == EnvironmentModel.created_by)
-            .order_by(EnvironmentModel.created_at.desc())
-        )
-        if user_id is not None:
-            # Visible to user: owned, plus any dispatched on someone's behalf (created_by).
-            stmt = stmt.where(
-                or_(EnvironmentModel.user_id == user_id, EnvironmentModel.created_by == user_id)
-            )
-        if label is not None and label.strip():
-            # An environment's name already serves as its label (#345); filter on it directly.
-            stmt = stmt.where(EnvironmentModel.name.ilike(f"%{label.strip()}%"))
+        stmt = _list_stmt(user_id, label=label, include_released=include_released)
         rows = (await session.execute(stmt)).all()
         env_ids = [model.id for model, _, _ in rows]
         children_by_env = await self._children_batch(session, env_ids)

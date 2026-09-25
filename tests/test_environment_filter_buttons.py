@@ -110,7 +110,28 @@ def test_filter_all_calls_list_all():
 
 
 def test_released_envs_hidden_by_default():
-    """Released environments must not appear unless show_released=1."""
+    """Without show_released the repo is asked to exclude fully released environments in SQL (#466)."""
+    user = _user()
+    cl, app = _client(user)
+    try:
+        with (
+            patch("app.presentation.routes.environments._env_repo") as repo,
+            patch("app.presentation.routes.environments._blueprint_repo") as bp,
+            patch("app.presentation.routes.environments._namespace_repo") as ns,
+        ):
+            repo.list_by_user = AsyncMock(return_value=[])
+            bp.list_active = AsyncMock(return_value=[])
+            ns.list_available = AsyncMock(return_value=[])
+            ns.list_held_standalone_by_user = AsyncMock(return_value=[])
+            resp = cl.get("/environments")
+    finally:
+        app.dependency_overrides.clear()
+    assert resp.status_code == 200
+    assert repo.list_by_user.await_args.kwargs["include_released"] is False
+
+
+def test_route_renders_whatever_the_repo_returns():
+    """The route no longer post-filters in Python: the repo's SQL filter is the only one (#466)."""
     user = _user()
     cl, app = _client(user)
     released_env = _env(user.id, status=BookingStatus.RELEASED)
@@ -128,7 +149,32 @@ def test_released_envs_hidden_by_default():
     finally:
         app.dependency_overrides.clear()
     assert resp.status_code == 200
-    assert str(released_env.id) not in resp.text
+    assert str(released_env.id) in resp.text
+
+
+@pytest.mark.parametrize("query, expected", [
+    ("?filter=all", False),
+    ("?filter=all&show_released=1", True),
+])
+def test_filter_all_passes_include_released(query, expected):
+    """filter=all forwards show_released to list_all as include_released (#466)."""
+    user = _user()
+    cl, app = _client(user)
+    try:
+        with (
+            patch("app.presentation.routes.environments._env_repo") as repo,
+            patch("app.presentation.routes.environments._blueprint_repo") as bp,
+            patch("app.presentation.routes.environments._namespace_repo") as ns,
+        ):
+            repo.list_all = AsyncMock(return_value=[])
+            bp.list_active = AsyncMock(return_value=[])
+            ns.list_available = AsyncMock(return_value=[])
+            ns.list_held_standalone_by_user = AsyncMock(return_value=[])
+            resp = cl.get(f"/environments{query}")
+    finally:
+        app.dependency_overrides.clear()
+    assert resp.status_code == 200
+    assert repo.list_all.await_args.kwargs["include_released"] is expected
 
 
 def test_released_envs_shown_with_flag():
@@ -151,3 +197,4 @@ def test_released_envs_shown_with_flag():
         app.dependency_overrides.clear()
     assert resp.status_code == 200
     assert str(released_env.id) in resp.text
+    assert repo.list_by_user.await_args.kwargs["include_released"] is True
