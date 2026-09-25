@@ -40,17 +40,29 @@ Releasing an environment, whether the owner, a dispatcher or an admin releases i
 - **THEN** the namespace child becomes RELEASED and its namespace returns to the pool
 - **AND** the VM child becomes RELEASING and its teardown is dispatched
 
-### Requirement: The browser does not offer Release for an environment child
+### Requirement: The browser does not offer ordinary booking release actions for an environment child
 
-The booking row SHALL NOT show a Release action for a booking that belongs to an environment. It SHALL show that the booking is managed by its environment, so the user can find the parent environment to release it.
+For a booking that belongs to an environment, the booking row SHALL NOT show any action that calls the ordinary booking release operation. That covers Release (a READY or FAILED booking), Cancel (a QUEUED booking) and the admin Delete (an in-flight booking), so no button is left that always returns `409 Conflict`. The row SHALL instead show that the booking is managed by its environment, so the user can find the parent environment to release it. The admin Force release recovery action for a FAILED or stuck-RELEASING VM is not an ordinary release, and it SHALL stay available for environment children.
 
-#### Scenario: Booking row for an environment child
+#### Scenario: READY environment child
 - **WHEN** a READY booking that belongs to an environment is rendered in the bookings list
 - **THEN** the row has no Release action and it shows that the booking is managed by its environment
 
-#### Scenario: Booking row for a standalone booking
-- **WHEN** a READY standalone booking is rendered
-- **THEN** the row still offers the Release action
+#### Scenario: QUEUED environment child
+- **WHEN** a QUEUED booking that belongs to an environment is rendered
+- **THEN** the row has no Cancel action
+
+#### Scenario: Admin views an in-flight environment child
+- **WHEN** an admin views a PROVISIONING booking that belongs to an environment
+- **THEN** the row has no Delete action
+
+#### Scenario: Admin views a FAILED environment VM child
+- **WHEN** an admin views a FAILED VM booking that belongs to an environment
+- **THEN** the row has no Release action and still offers Force release
+
+#### Scenario: Standalone bookings are unaffected
+- **WHEN** READY, QUEUED and in-flight standalone bookings are rendered, the in-flight one to an admin
+- **THEN** each row still offers Release, Cancel or the admin Delete, as it did before
 
 ### Requirement: A partly released environment is never reported as READY
 
@@ -118,6 +130,32 @@ An environment's shared lease SHALL start once none of its children is still in 
 #### Scenario: Lease already started is not extended
 - **WHEN** an environment's lease has already started and a child later changes to a terminal status
 - **THEN** the environment's expiry does not change
+
+### Requirement: Lease start is guaranteed by periodic reconciliation
+
+Starting the lease SHALL NOT depend only on the immediate trigger that runs after a settling event. A periodic reconciliation SHALL find every environment that meets all of the following, and start its lease through the same serialized, start-once path:
+
+- its TTL is greater than zero;
+- it still has the placeholder expiry;
+- its children satisfy the lease-start rule.
+
+As a result, an environment whose children have settled SHALL have its lease started within one reconciliation interval, even when the process that committed the final settling event (a queued-child promotion, a VM child reaching READY, or a child reaching FAILED) crashed before its immediate lease check ran or committed. Reconciliation SHALL leave alone environments that are still in flight, environments whose lease has already started, and environments with a zero TTL.
+
+#### Scenario: Crash after a queued child is promoted
+- **WHEN** an environment's last in-flight child is a QUEUED namespace, it is promoted to READY and the promotion commits, but the process dies before the environment lease check runs
+- **THEN** the next reconciliation run starts the environment's lease, and the environment and every child get the same deadline, which is not the placeholder
+
+#### Scenario: Crash after a VM child reaches READY
+- **WHEN** an environment's last in-flight VM child commits READY, but the provisioning worker dies before the environment lease check runs
+- **THEN** the next reconciliation run starts the environment's lease
+
+#### Scenario: Environment still in flight
+- **WHEN** reconciliation runs while an environment still has a PROVISIONING child
+- **THEN** the environment keeps its placeholder expiry
+
+#### Scenario: Lease already started
+- **WHEN** reconciliation runs for an environment whose lease has already started
+- **THEN** its deadline does not change
 
 ### Requirement: Releasing a child cannot orphan siblings (regression, #434)
 

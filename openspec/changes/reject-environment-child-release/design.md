@@ -61,12 +61,31 @@ Requiring at least one READY child avoids starting a lease for a stack with noth
 
 Each added trigger calls the existing `sync_start_lease_if_ready_for_booking(booking_id)` or its async equivalent. That function is already a no-op for standalone bookings. For promotion, the repository promotion method runs the check **after its own commit, in a separate transaction**, not inside the promotion transaction. The promotion method is the only place that knows which booking was promoted, so the call still goes there. Running it inside the promotion transaction would risk a lock-order deadlock: the promotion holds the promoted child's booking row (`FOR UPDATE SKIP LOCKED`) and would wait for the environment row, while a concurrent stamper holds the environment row and waits to write that child's `expires_at`. The async promotion path needs an async counterpart, `start_lease_if_ready_for_booking`.
 
+These triggers keep the lease timely, but they are not the correctness guarantee. A crash between a settling commit and its trigger is covered by periodic reconciliation (D4).
+
 - *Alternative:* keep "all READY" and rely on the hardened status plus a manual release. Rejected, because the issue explicitly asks that a terminal child must not leave the placeholder in place forever.
 - *Alternative:* start the lease at order time. Rejected, because it reintroduces #223 (provisioning time eaten out of the lease).
 
-### D4. UI: replace Release with an environment hint
+### D4. Periodic lease reconciliation is the crash-safe guarantee
 
-In `booking_row.html`, wrap the Release button in `{% if not booking.environment_id %}`. For an environment child, render a non-interactive "Managed by environment" line. Link it to the environment if the row can build that link, `/environments#environment-<id>` or the environments page filtered to that id, without an extra query. Admin **Force release** keeps its current condition (see Non-Goals).
+Every immediate lease trigger runs in a separate transaction *after* the settling commit it follows:
+
+- `provision.py` commits READY or final FAILED in one `_run` session and calls the lease check in the next one. This is already true today for READY.
+- `reap_stale_provisioning` does the same.
+- Promotion does the same (D3).
+
+A crash in that gap leaves the environment on the placeholder expiry, and nothing else would ever stamp it. Rather than making each trigger atomic separately, one reconciliation path covers all of them. This mirrors the project's SSE design, a fast push with a slow polling fallback.
+
+- New repository query `EnvironmentRepository.sync_list_lease_pending(session)`. It returns environments with `expires_at = PERMANENT_EXPIRES_AT`, `ttl_minutes > 0`, at least one READY child and no child whose status is in `CAN_BECOME_READY`. The query only preselects candidates; the authoritative check is re-run under the row lock.
+- New beat task `reconcile_environment_leases` in `app/tasks/beat_tasks.py`, scheduled every `ENFORCE_TTL_INTERVAL_SECONDS` next to `enforce_environment_ttl`. For each candidate it calls the same locked start-once path from D3, one short-lived session per environment, and logs and continues if one environment fails. Because that path locks, re-checks and is idempotent, a race between reconciliation and a live trigger still produces exactly one deadline.
+- The immediate triggers stay, so in the normal case the lease starts at the settling event rather than up to one interval later. The #223 promise ("the lease grants ttl_minutes of usable time") is preserved. After a crash, the stack gets up to one interval of extra time, which is accepted.
+
+- *Alternative:* keep promotion and lease start atomic in one transaction with a fixed lock order (environment row, then child rows). Rejected for two reasons. It fixes the promotion gap only, and the provision and reaper gaps would each need their own restructuring. It is also awkward to guarantee: promotion picks the queued booking with `FOR UPDATE SKIP LOCKED` before it knows the booking's environment, so it would have to release that lock and re-acquire in environment-first order, or retry.
+- *Alternative:* start the lease only from reconciliation. Rejected because it adds up to one interval of latency to every environment in the normal case.
+
+### D5. UI: replace Release with an environment hint
+
+In `booking_row.html`, wrap every action that calls `hx-delete="/bookings/{id}"` in `{% if not booking.environment_id %}`. That is Release (READY/FAILED), the admin Delete (in flight) and Cancel (QUEUED); each would always return 409 for an environment child. For an environment child, render a non-interactive "Managed by environment" line. Link it to the environment if the row can build that link, `/environments#environment-<id>` or the environments page filtered to that id, without an extra query. Admin **Force release** keeps its current condition (see Non-Goals).
 
 ## Risks / Trade-offs
 
@@ -74,7 +93,8 @@ In `booking_row.html`, wrap the Release button in `{% if not booking.environment
 - [Starting the lease with a FAILED child means the TTL can tear down READY siblings while someone is still investigating the failure] → The owner can release or order again. Leaving the resources running forever is the worse failure (#434). The admin guide will describe the rule.
 - [Extra triggers on the promotion path add work after promotion] → One environment lookup and a short row lock, only when `environment_id` is set, and outside the promotion transaction, so the promotion's own locks are never held while waiting. The sync/async split is kept.
 - [The environment row lock adds contention] → It is held only for one children read plus the stamp. It is taken only by lease triggers, not by ordinary booking operations. Nothing takes locks in the opposite order (child row, then environment row) while holding them, because promotion runs its check after committing.
-- [The lease check runs after a promotion commits, so a crash in between leaves the environment unstamped] → The promotion itself is not affected. The next trigger, or a re-run, stamps the lease, and the check is idempotent. Accepted.
+- [A crash between a settling commit and its immediate lease check] → This is covered by reconciliation (D4). The immediate triggers only reduce latency; reconciliation guarantees the lease starts. The worst case is a delay of one beat interval (`ENFORCE_TTL_INTERVAL_SECONDS`) before the lease starts.
+- [Reconciliation adds a periodic query] → One indexed scan for environments that still have the placeholder expiry. That set is small: only stacks currently being provisioned or recently settled.
 - [`FAILED` is used both for "a child failed" and "partly released"] → It is accepted as a simplification. In both cases the action is the same: release the environment.
 - [Environments that were already stuck before the deploy keep their placeholder expiry] → The fix is not retroactive. They now show as `FAILED` and can be released by hand.
 
