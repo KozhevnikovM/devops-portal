@@ -23,7 +23,7 @@ from tests.integration._environment_lease import (
     make_sessionmaker,
 )
 
-pytestmark = pytest.mark.integration
+pytestmark = [pytest.mark.integration, pytest.mark.postgres_integration]
 
 
 class _Crash(BaseException):
