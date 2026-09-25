@@ -9,7 +9,8 @@ The page template renders every row into `<tbody id="environments-tbody" sse-con
 ## Goals / Non-Goals
 
 **Goals:**
-- One page query that returns at most `limit + 1` environments in `(created_at DESC, id DESC)` order, reading an index in that order.
+- One page query that returns at most `limit + 1` environments in `(created_at DESC, id DESC)` order. It reads an index in that order from the cursor, with no OFFSET and no sort of the full matching set.
+- A precise cost guarantee that tests can check. Each request is bounded by the page size in three ways: rows returned, children loaded, and rows rendered. The index read is bounded by the page size (`limit + 1` entries) only for the unfiltered list (All, Show released, no label).
 - Load children for the page's ids only, reusing `_children_batch`.
 - A Load more flow that appends rows in place and leaves existing rows and their SSE wiring alone.
 - Leave the JSON list's behaviour unchanged.
@@ -18,7 +19,8 @@ The page template renders every row into `<tbody id="environments-tbody" sse-con
 - Backward pagination ("previous page"), page numbers, or a total count. A count would bring back the full scan.
 - A client-chosen page size. Only the server setting controls it, so a request cannot ask for an unbounded page.
 - Paginating the bookings lists or the JSON environments list.
-- Indexes built for particular filters (per-owner, trigram on name). See Risks.
+- Bounding the environment index read under selective filters (Mine, a label, hidden released). See Decision 8.
+- Indexes built for particular filters (per-owner, trigram on name), or a stored released flag.
 
 ## Decisions
 
@@ -107,9 +109,31 @@ The page template and the fragment share one small `partials/environment_load_mo
 
 `ENVIRONMENTS_PAGE_SIZE: int = Field(50, gt=0)` in `app/config.py`. It is not a query parameter (see Non-Goals).
 
+### 8. Guarantee scope: per-request output is bounded, the selective-filter index read is not
+
+PR #474's review pointed out that `ORDER BY … LIMIT limit + 1` bounds what a request returns and loads. It does not bound how far a backward walk over `ix_environments_created_at_id` goes when most rows fail the filters. So the spec guarantees exactly this:
+
+| Cost per request | Bounded? |
+|---|---|
+| Environments returned or rendered | Yes, ≤ `limit` (plus one internal probe row, not rendered) |
+| Child bookings loaded and aggregated | Yes, only for the page's ids |
+| Sort of the matching set, OFFSET skip | None |
+| Environment index entries before the cursor | Never read (index condition) |
+| Environment index entries read, All + Show released + no label | Yes, ≤ `limit + 1` |
+| Environment index entries read, Mine, label or hidden released | **No**. Can reach every row older than the cursor on a sparse match |
+
+Each of the three selective filters has its own obstacle to a bounded walk:
+- **Hidden released**: skipping released rows by index needs a stored "fully released" flag, which a partial index could then serve. The #466 requirement forbids a separately stored environment status, and #467 lists persisting it as out of scope.
+- **Label** `ILIKE '%x%'`: no btree serves a substring match, and a trigram index returns rows in no useful order, so the planner would have to sort the matches.
+- **Mine** `user_id = X OR created_by = X`: this could be bounded with two ordered per-owner indexes merged through `UNION ALL`. On its own that does not help, because Mine is almost always combined with hidden released, which is the default.
+
+The index walk also has some bounds of its own. It never goes before the cursor, so traversing all pages reads each environment at most once in total and deeper pages don't pay for earlier ones. It reads only narrow environment rows, and each hidden-released check is an index probe from #466. Tests assert the bounded rows of the table and the unfiltered `≤ limit + 1` read. For the selective filters, they assert only correctness and that children are loaded per page. The `EXPLAIN (ANALYZE, BUFFERS)` numbers recorded in the PR show how the unbounded case behaves in practice, and are not a pass/fail gate.
+
+*Alternative:* bound the scans now (option b in the review). It was rejected for this change for the reasons above. It would need its own change, which revises the #466 no-stored-status requirement.
+
 ## Risks / Trade-offs
 
-- [Selective filters can make the index walk long. Mine, a narrow label or hidden released each filter rows during the backward scan, so a user whose environments are rare among many newer ones walks past those non-matching rows] → The walk still stops at `limit + 1` matches, never sorts the full set, and each hidden-released check is an index probe from #466. Owner-specific indexes are harder here because Mine is `user_id = X OR created_by = X`. They are deferred until measurements show a need, and the PR records `EXPLAIN (ANALYZE, BUFFERS)` for All, Mine, and Mine with hidden released on a seeded dataset.
+- [Selective filters leave the environment index read history-dependent. This is an accepted limitation, stated in the spec, not a hidden risk. A user whose environments are rare among many newer ones, or a sparse label or hidden-released match, walks past the non-matching rows, and may walk to the end of history when fewer than a page remain] → Decision 8 scopes the guarantee to match. The walk reads only narrow environment rows, never goes before the cursor, and makes one index probe per row for hidden released. The PR records `EXPLAIN (ANALYZE, BUFFERS)` for All, Mine, and Mine with hidden released on a seeded dataset. If those numbers call for more, a follow-up change can add a stored released flag or per-owner indexes.
 - [Rows change between pages. An environment can become fully released after page one while released environments are hidden, or a new one can be ordered] → A newly released environment is simply skipped on later pages (it sorts after the cursor and no longer matches), and a new one sorts before the cursor. Neither causes a duplicate. The spec's no-gaps guarantee covers only a stable dataset, as the issue asks. A newly ordered environment still appears at the top through the order form's prepend.
 - [Cursor timestamp precision. A cursor that lost microseconds would repeat or skip rows at a boundary] → `isoformat()` keeps microseconds, `timestamptz` stores microseconds, and a round-trip unit test plus an integration test with a boundary inside equal `created_at` values pin it.
 - [Existing unit tests patch `_env_repo.list_by_user` / `list_all` for the HTML page] → Those tests move to `list_page`. The JSON-API tests are unaffected.

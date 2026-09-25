@@ -101,7 +101,11 @@ The Mine / All filter, the name/label filter and the Show released toggle SHALL 
 
 When released environments are hidden, fully released environments SHALL be excluded before any child bookings are loaded. Child bookings SHALL be loaded, and aggregate statuses derived, only for the environments that are returned. The children of a fully released environment SHALL NOT be loaded or aggregated in the application. The database SHALL be able to find the child bookings of an environment, and whether it has any non-`RELEASED` child, through an index rather than a full scan of all bookings.
 
-On the browser environments page, "the environments that are returned" means the environments on the current page. Child bookings SHALL be loaded only for the environments on the page being returned, in one batch after the page is selected. They SHALL NOT be loaded for environments on earlier or later pages, or for environments that were considered and not returned. The database SHALL be able to read environments in page order through an index, so that selecting a page can stop once it has enough matching environments. It SHALL NOT have to sort every matching environment first.
+On the browser environments page, "the environments that are returned" means the environments on the current page. Child bookings SHALL be loaded only for the environments on the page being returned, in one batch after the page is selected. They SHALL NOT be loaded for environments on earlier or later pages, or for environments that were considered and not returned.
+
+Each page request SHALL be bounded by the page size in three ways: environments returned, child bookings loaded, and rows rendered. The database SHALL be able to read environments in page order through an index, starting at the cursor position. It SHALL NOT sort every matching environment, skip a row offset, or read environments that sort before the cursor. When no owner, label or hidden-released filter narrows the list (`filter=all`, `show_released=1`, no `label`), a page SHALL read at most one more environment index entry than the page size.
+
+With a selective filter (Mine, a label, or hidden released), the number of environment index entries a page reads is NOT bounded by the page size. The database skips non-matching environments as it walks, so when matches are sparse or fewer than a page remain, it may read every environment older than the cursor. Each hidden-released check on those rows stays an index probe. This requirement does not bound that read.
 
 #### Scenario: Large released history with a small active set
 - **WHEN** a user has many fully released environments and a few active ones, and views the environments page without `show_released`
@@ -119,5 +123,15 @@ On the browser environments page, "the environments that are returned" means the
 - **AND** when the user activates Load more, child bookings are loaded only for the environments on the page that is appended
 
 #### Scenario: Page selection reads environments in page order through an index
-- **WHEN** the query plan of a page of the environments list is inspected on PostgreSQL with sequential scans disabled
+- **WHEN** the query plan of a page of the environments list is inspected on PostgreSQL with sequential scans disabled, with and without a cursor and under each filter combination
 - **THEN** environments are read through an index on creation time and id in page order, with no separate sort of all matching environments
+- **AND** when a cursor is given, the cursor position is an index condition, so environments before it are not read
+
+#### Scenario: Unfiltered page reads at most one entry past the page
+- **WHEN** a page of the environments list is fetched with `filter=all`, `show_released=1` and no `label`, on a dataset larger than two pages, and its execution is inspected on PostgreSQL
+- **THEN** the environments index scan returns at most the page size plus one row, for both the first page and a page after a cursor
+
+#### Scenario: Selective filter may read past non-matching history
+- **WHEN** a user's only visible environments are older than many environments owned by others, and the user views the Mine list
+- **THEN** the page contains only the user's environments, and at most the page size of them
+- **AND** child bookings are loaded only for those environments, even though the environments index scan read past the others
