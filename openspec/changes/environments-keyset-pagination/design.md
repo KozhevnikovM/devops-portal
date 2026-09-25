@@ -9,7 +9,7 @@ The page template renders every row into `<tbody id="environments-tbody" sse-con
 ## Goals / Non-Goals
 
 **Goals:**
-- One page query that returns at most `limit + 1` environments in `(created_at DESC, id DESC)` order. It reads an index in that order from the cursor, with no OFFSET and no sort of the full matching set.
+- One page query that returns at most `limit + 1` environments in `(created_at DESC, id DESC)` order, with no OFFSET. For every filter combination, the query can run as an index walk from the cursor with no sort. The planner may still choose otherwise for selective filters (Decision 8).
 - A precise cost guarantee that tests can check. Each request is bounded by the page size in three ways: rows returned, children loaded, and rows rendered. The index read is bounded by the page size (`limit + 1` entries) only for the unfiltered list (All, Show released, no label).
 - Load children for the page's ids only, reusing `_children_batch`.
 - A Load more flow that appends rows in place and leaves existing rows and their SSE wiring alone.
@@ -117,8 +117,10 @@ PR #474's review pointed out that `ORDER BY … LIMIT limit + 1` bounds what a r
 |---|---|
 | Environments returned or rendered | Yes, ≤ `limit` (plus one internal probe row, not rendered) |
 | Child bookings loaded and aggregated | Yes, only for the page's ids |
-| Sort of the matching set, OFFSET skip | None |
-| Environment index entries before the cursor | Never read (index condition) |
+| OFFSET skip | None, ever |
+| Sort, and rows before the cursor, on the index path | None: the cursor is an index condition and the walk is in page order |
+| Plan for the unfiltered list (All, Show released, no label) | The index path, which the planner picks unforced (measured below) |
+| Plan for Mine, a label or hidden released | Cost-based: the index path, or a seq scan with a top-N sort (`limit + 1` rows kept) when estimated cheaper |
 | Environment index entries read, All + Show released + no label | Yes, ≤ `limit + 1` |
 | Environment index entries read, Mine, label or hidden released | **No**. Can reach every row older than the cursor on a sparse match |
 
@@ -128,6 +130,8 @@ Each of the three selective filters has its own obstacle to a bounded walk:
 - **Mine** `user_id = X OR created_by = X`: this could be bounded with two ordered per-owner indexes merged through `UNION ALL`. On its own that does not help, because Mine is almost always combined with hidden released, which is the default.
 
 The index walk also has some bounds of its own. It never goes before the cursor, so a deeper page starts from the previous page's last returned row and doesn't rescan the prefix that was already returned. The one exception is the lookahead overlap. The cursor is the last *kept* row, so the next page reads the `limit + 1` probe row again, and under a selective filter it also reads again the non-matching rows between the last kept row and the probe. That overlap affects cost, not correctness. It never causes a duplicate or a gap. It reads only narrow environment rows, and each hidden-released check is an index probe from #466. Tests assert the bounded rows of the table and the unfiltered `≤ limit + 1` read. For the selective filters, they assert only correctness and that children are loaded per page. The `EXPLAIN (ANALYZE, BUFFERS)` numbers recorded in the PR show how the unbounded case behaves in practice, and are not a pass/fail gate.
+
+*Revised during implementation:* those measurements were taken on 20,150 environments and 60,150 bookings, committed and vacuumed. For **Mine with Show released**, the planner chose `Seq Scan on environments` plus a top-N `Sort` over the index walk (3–4 ms, reading all 20,150 rows on both page 1 and page 2), because only 130 rows matched the owner filter. The first draft of the spec said a page never sorts and never reads rows before the cursor, and that plan contradicts it. Forcing the index is not possible without planner hints, which PostgreSQL doesn't have, or per-owner indexes plus a `UNION ALL` rewrite, which is the scope this decision already declines. So the spec now requires the index path to be *available* for every filter, the way the #466 test pins that its indexes are usable. It requires the unfiltered list to be bounded on that path, and it allows a cost-based seq scan with a top-N sort for the selective filters. The unfiltered list took the index path unforced (51 rows, 0.3 ms). A new integration test pins that the planner's choice never changes the page (spec scenario "Planner choice does not change the page").
 
 *Alternative:* bound the scans now (option b in the review). It was rejected for this change for the reasons above. It would need its own change, which revises the #466 no-stored-status requirement.
 

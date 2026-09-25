@@ -103,9 +103,9 @@ When released environments are hidden, fully released environments SHALL be excl
 
 On the browser environments page, "the environments that are returned" means the environments on the current page. Child bookings SHALL be loaded only for the environments on the page being returned, in one batch after the page is selected. They SHALL NOT be loaded for environments on earlier or later pages, or for environments that were considered and not returned.
 
-Each page request SHALL be bounded by the page size in three ways: environments returned, child bookings loaded, and rows rendered. The database SHALL be able to read environments in page order through an index, starting at the cursor position. It SHALL NOT sort every matching environment, skip a row offset, or read environments that sort before the cursor. When no owner, label or hidden-released filter narrows the list (`filter=all`, `show_released=1`, no `label`), a page SHALL read at most one more environment index entry than the page size.
+Each page request SHALL be bounded by the page size in three ways: environments returned, child bookings loaded, and rows rendered. A page SHALL NOT be located by skipping a row offset. For every filter combination, the database SHALL be able to read environments in page order through an index, starting at the cursor position, without sorting the matching environments and without reading environments that sort before the cursor. When no owner, label or hidden-released filter narrows the list (`filter=all`, `show_released=1`, no `label`), a page read on that index path SHALL read at most one more environment index entry than the page size.
 
-With a selective filter (Mine, a label, or hidden released), the number of environment index entries a page reads is NOT bounded by the page size. The database skips non-matching environments as it walks, so when matches are sparse or fewer than a page remain, it may read every environment older than the cursor. Each hidden-released check on those rows stays an index probe. This requirement does not bound that read.
+With a selective filter (Mine, a label, or hidden released), the environment read is NOT bounded by the page size. This requirement does not bound it. On the index path, the database skips non-matching environments as it walks. When matches are sparse or fewer than a page remain, it may read every environment older than the cursor, and each hidden-released check on those rows stays an index probe. The planner MAY instead choose a sequential scan of environments with a top-N sort, keeping only the page size plus one rows, whenever it estimates that as cheaper. That plan reads every environment, including those before the cursor. It still SHALL return the same page as the index path.
 
 #### Scenario: Large released history with a small active set
 - **WHEN** a user has many fully released environments and a few active ones, and views the environments page without `show_released`
@@ -128,10 +128,14 @@ With a selective filter (Mine, a label, or hidden released), the number of envir
 - **AND** when a cursor is given, the cursor position is an index condition, so environments before it are not read
 
 #### Scenario: Unfiltered page reads at most one entry past the page
-- **WHEN** a page of the environments list is fetched with `filter=all`, `show_released=1` and no `label`, on a dataset larger than two pages, and its execution is inspected on PostgreSQL
+- **WHEN** a page of the environments list is fetched with `filter=all`, `show_released=1` and no `label`, on a dataset larger than two pages, and its execution is inspected on PostgreSQL with sequential scans disabled
 - **THEN** the environments index scan returns at most the page size plus one row, for both the first page and a page after a cursor
 
 #### Scenario: Selective filter may read past non-matching history
 - **WHEN** a user's only visible environments are older than many environments owned by others, and the user views the Mine list
 - **THEN** the page contains only the user's environments, and at most the page size of them
-- **AND** child bookings are loaded only for those environments, even though the environments index scan read past the others
+- **AND** child bookings are loaded only for those environments, even though the database read past the others
+
+#### Scenario: Planner choice does not change the page
+- **WHEN** the same page of a selectively filtered list is fetched once with the planner free to choose, and once with sequential scans disabled
+- **THEN** both return the same environments in the same order, with the same next-page cursor
