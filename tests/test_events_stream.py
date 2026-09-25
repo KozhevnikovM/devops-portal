@@ -269,20 +269,26 @@ def test_rows_to_refresh(kind, with_env, expected_rows):
 
 
 class _FakePubSub:
-    def __init__(self, messages):
+    def __init__(self, messages, read_error: Exception | None = None):
         self._messages = list(messages)
+        self._read_error = read_error
+        self.subscribed: list[str] = []
+        self.unsubscribed: list[str] = []
+        self.closed = False
 
-    async def subscribe(self, channel):
-        pass
+    async def subscribe(self, *channels):
+        self.subscribed.extend(channels)
 
     async def get_message(self, ignore_subscribe_messages, timeout):
+        if self._read_error is not None:
+            raise self._read_error
         return self._messages.pop(0) if self._messages else None
 
-    async def unsubscribe(self, channel):
-        pass
+    async def unsubscribe(self, *channels):
+        self.unsubscribed.extend(channels)
 
     async def aclose(self):
-        pass
+        self.closed = True
 
 
 async def _drain_one_message(mod, payload, user=None):
@@ -581,3 +587,51 @@ def test_environment_row_has_no_sse_swap_when_terminal():
         environment=_annotate(env), current_user=user,
     )
     assert "sse-swap=" not in html
+
+
+# ── #443: each connection subscribes only to its own scoped channel + broadcast ─────
+@pytest.mark.parametrize("role", ["user", "dispatcher", "admin"])
+def test_subscription_channels_by_role(role):
+    from app.infrastructure import events
+    from app.presentation.routes import events as mod
+
+    user = _user(role)
+    scoped = events.ADMIN_CHANNEL if role == "admin" else events.user_channel(user.id)
+    assert mod._subscription_channels(user) == [scoped, events.BROADCAST_CHANNEL]
+
+
+async def _run_stream(mod, user, pubsub, *, disconnect_after_first_poll=False):
+    redis_client = MagicMock()
+    redis_client.pubsub.return_value = pubsub
+    request = AsyncMock()
+    request.is_disconnected.side_effect = [False, True] if disconnect_after_first_poll else [False]
+    with patch.object(mod, "get_async_redis", return_value=redis_client):
+        return [chunk async for chunk in mod._event_stream(request, user)]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("role", ["user", "dispatcher", "admin"])
+async def test_event_stream_subscribes_and_unsubscribes_its_scoped_channels_on_disconnect(role):
+    from app.presentation.routes import events as mod
+
+    user = _user(role)
+    pubsub = _FakePubSub([])
+    chunks = await _run_stream(mod, user, pubsub, disconnect_after_first_poll=True)
+
+    assert chunks == [": keepalive\n\n"]
+    assert pubsub.subscribed == mod._subscription_channels(user)
+    assert pubsub.unsubscribed == pubsub.subscribed
+    assert pubsub.closed
+
+
+@pytest.mark.asyncio
+async def test_event_stream_unsubscribes_its_scoped_channels_on_read_failure():
+    from app.presentation.routes import events as mod
+
+    user = _user("user")
+    pubsub = _FakePubSub([], read_error=ConnectionError("redis down"))
+    chunks = await _run_stream(mod, user, pubsub)
+
+    assert chunks == []
+    assert pubsub.unsubscribed == pubsub.subscribed == mod._subscription_channels(user)
+    assert pubsub.closed

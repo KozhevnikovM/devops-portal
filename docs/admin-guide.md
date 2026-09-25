@@ -486,6 +486,38 @@ stripping **or** `ROOT_PATH` — never both, or static assets will 404.
 
 ---
 
+## Live row updates: Redis channels
+
+`GET /events/stream` (see above) is fed by Redis pub/sub. Each row change is published only to
+the channels of the users who may see that row, so a browser tab receives only its own user's
+updates:
+
+| Channel | Carries | Subscribed by |
+|---|---|---|
+| `portal:row-changed:user:<user-id>` | Changes to rows that user owns or, as a dispatcher, ordered for someone | That user's tabs (non-admins) |
+| `portal:row-changed:admin` | Every change | Admins' tabs |
+| `portal:row-changed` | Broadcast fallback. Only used when the recipients can't be worked out (a status change of an environment's booking whose environment couldn't be read), and by publishers still running older code during a rolling deploy | Every tab |
+
+Each tab subscribes to its own scoped channel (user or admin) plus the broadcast channel. The
+scope is chosen from the user's role when the tab connects, so a role change (for example a user
+promoted to admin) applies to already-open tabs only after they reload.
+
+**Rolling deploys.** An old worker publishing to `portal:row-changed` still reaches tabs on the
+new app, live. The reverse (a new worker and an app instance still running the old code) means
+those tabs miss live pushes until that app instance restarts; their rows catch up through the
+60 s fallback poll. Either way nothing is ever pushed to a user who may not see the row.
+
+**Troubleshooting.** To see which channels have subscribers, and how many:
+
+```bash
+docker compose exec redis redis-cli PUBSUB CHANNELS 'portal:row-changed*'
+docker compose exec redis redis-cli PUBSUB NUMSUB portal:row-changed portal:row-changed:admin
+```
+
+With N open tabs you should see `portal:row-changed` with N subscribers, the admin channel with
+one per open admin tab, and one `portal:row-changed:user:<id>` channel per other user with an open
+tab.
+
 ## Log aggregation & dashboards (Grafana + Loki + Prometheus)
 
 The `app`/`worker`/`beat` processes emit structured JSON logs to stdout (`request_id` on every

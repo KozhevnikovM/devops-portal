@@ -1,6 +1,6 @@
 """Redis pub/sub notifications for live booking/environment row updates (#388).
 
-A single shared channel carries every row-visible mutation. ``GET /events/stream``
+Every row-visible mutation is published as a notification. ``GET /events/stream``
 (``app/presentation/routes/events.py``) subscribes to it and pushes freshly rendered row
 fragments to connected browsers via SSE, replacing (most of) the 3s HTMX poll with a push.
 
@@ -19,6 +19,14 @@ Every notification also carries per-row **routing** metadata (#442): the owner a
 the booking and, for a lifecycle notification of an environment child, of the environment. A
 subscriber uses it to skip rows its user can never manage *before* opening a DB session. The ids
 are opaque user ids; nothing else about the booking or user goes into the payload.
+
+Notifications are delivered on **scoped channels** (#443) derived from that routing, so a tab
+only receives rows its user could manage: one channel per user named in the routing, plus the
+admin channel (admins may manage every row). The original shared channel remains as the
+broadcast fallback, used only when a notification's recipients can't be determined (an
+environment child's lifecycle notification whose environment routing couldn't be read). Every
+subscriber also listens on it, which keeps publishers running pre-#443 code reaching new tabs
+during a rolling deploy.
 """
 import json
 import logging
@@ -36,7 +44,13 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-ROW_CHANGED_CHANNEL = "portal:row-changed"
+# The broadcast fallback (#443) — the single channel every notification used before scoping.
+BROADCAST_CHANNEL = "portal:row-changed"
+ADMIN_CHANNEL = "portal:row-changed:admin"
+
+
+def user_channel(user_id: UUID | str) -> str:
+    return f"portal:row-changed:user:{user_id}"
 
 _sync_redis: redis_lib.Redis | None = None
 _async_redis: aioredis.Redis | None = None
@@ -113,6 +127,45 @@ def _payload(
     return json.dumps(payload)
 
 
+def recipient_channels(
+    kind: Kind,
+    booking_routing: Routing,
+    environment_id: UUID | str | None,
+    environment_routing: Routing | None = None,
+) -> list[str]:
+    """The channels a notification goes to (#443): every user its routing names, then admins.
+
+    Mirrors the rows a subscriber may refresh (#441): only a lifecycle notification refreshes the
+    environment row, so only it adds the environment's owner and creator. When that environment
+    routing is unknown, nobody can say who manages the environment row, so the notification goes
+    to the broadcast channel instead — only there, since every subscriber listens on it.
+    """
+    if kind != "progress" and environment_id and environment_routing is None:
+        return [BROADCAST_CHANNEL]
+    routings = [booking_routing]
+    if kind != "progress" and environment_routing is not None:
+        routings.append(environment_routing)
+    user_ids = [uid for r in routings for uid in (r.owner_id, r.created_by) if uid]
+    # dict.fromkeys: dedupe, keeping order (owner first).
+    return [user_channel(uid) for uid in dict.fromkeys(str(uid) for uid in user_ids)] + [ADMIN_CHANNEL]
+
+
+def _queue_publishes(
+    pipe: Any,
+    booking_id: UUID | str,
+    environment_id: UUID | str | None,
+    kind: Kind,
+    booking_routing: Routing,
+    environment_routing: Routing | None,
+) -> Any:
+    """Queue one PUBLISH per recipient channel on a sync or async pipeline, so a notification is a
+    single round trip. Non-transactional: these are invalidation signals, atomicity buys nothing."""
+    data = _payload(booking_id, environment_id, kind, booking_routing, environment_routing)
+    for channel in recipient_channels(kind, booking_routing, environment_id, environment_routing):
+        pipe.publish(channel, data)
+    return pipe
+
+
 def _sync_publish(
     booking_id: UUID | str,
     environment_id: UUID | str | None,
@@ -121,10 +174,10 @@ def _sync_publish(
     environment_routing: Routing | None = None,
 ) -> None:
     try:
-        _get_sync_redis().publish(
-            ROW_CHANGED_CHANNEL,
-            _payload(booking_id, environment_id, kind, booking_routing, environment_routing),
-        )
+        _queue_publishes(
+            _get_sync_redis().pipeline(transaction=False),
+            booking_id, environment_id, kind, booking_routing, environment_routing,
+        ).execute()
     except Exception:
         logger.exception("Failed to publish row-changed event for booking %s", booking_id)
 
@@ -359,9 +412,9 @@ async def apublish_row_changed(
     Nothing to cancel here: progress windows live in the worker process that produces them.
     """
     try:
-        await get_async_redis().publish(
-            ROW_CHANGED_CHANNEL,
-            _payload(booking_id, environment_id, "lifecycle", booking_routing, environment_routing),
-        )
+        await _queue_publishes(
+            get_async_redis().pipeline(transaction=False),
+            booking_id, environment_id, "lifecycle", booking_routing, environment_routing,
+        ).execute()
     except Exception:
         logger.exception("Failed to publish row-changed event for booking %s", booking_id)
