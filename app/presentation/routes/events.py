@@ -1,8 +1,9 @@
 """SSE endpoint pushing live booking/environment row updates (#388).
 
 Replaces (most of) the 3s HTMX poll on `index.html`/`environments.html` with a push: one
-held-open connection per open tab, subscribed to the shared Redis channel
-`app.infrastructure.events.ROW_CHANGED_CHANNEL`. Each row-visible mutation re-fetches the
+held-open connection per open tab, subscribed to its own scoped Redis channel (#443: the user's
+channel, or the admin channel for an admin) plus the broadcast fallback channel — see
+`app/infrastructure/events.py`. Each row-visible mutation re-fetches the
 affected booking/environment, applies this *connection's own* `can_manage()` check, and — only
 if authorized — emits the same HTML the polling endpoints already return, as a named SSE event
 (`booking-<id>` / `environment-<id>`) that `sse-swap` on the row picks up.
@@ -31,7 +32,12 @@ from app.domain.enums import BookingStatus
 from app.domain.exceptions import BookingNotFoundError, EnvironmentNotFoundError
 from app.infrastructure.auth import require_user
 from app.infrastructure.database.session import AsyncSessionLocal, get_async_session
-from app.infrastructure.events import ROW_CHANGED_CHANNEL, get_async_redis
+from app.infrastructure.events import (
+    ADMIN_CHANNEL,
+    BROADCAST_CHANNEL,
+    get_async_redis,
+    user_channel,
+)
 from app.presentation import deps
 from app.presentation.routes.environments import _annotate
 from app.presentation.templating import templates
@@ -129,10 +135,22 @@ def _rows_to_refresh(payload: dict) -> list[tuple[Literal["booking", "environmen
     return rows
 
 
+def _subscription_channels(user: User) -> list[str]:
+    """This connection's scoped channel plus the broadcast fallback (#443).
+
+    Chosen once, from the role at connect time — like ``current_user`` itself, so a role change
+    applies on reconnect. An admin takes only the admin channel (it carries every notification,
+    including ones for the admin's own rows), never its user channel too, so nothing arrives twice.
+    """
+    scoped = ADMIN_CHANNEL if user.role == "admin" else user_channel(user.id)
+    return [scoped, BROADCAST_CHANNEL]
+
+
 async def _event_stream(request: Request, current_user: User):
+    channels = _subscription_channels(current_user)
     redis_client = get_async_redis()
     pubsub = redis_client.pubsub()
-    await pubsub.subscribe(ROW_CHANGED_CHANNEL)
+    await pubsub.subscribe(*channels)
     try:
         while True:
             if await request.is_disconnected():
@@ -162,7 +180,7 @@ async def _event_stream(request: Request, current_user: User):
                 if chunk:
                     yield chunk
     finally:
-        await pubsub.unsubscribe(ROW_CHANGED_CHANNEL)
+        await pubsub.unsubscribe(*channels)
         await pubsub.aclose()
 
 

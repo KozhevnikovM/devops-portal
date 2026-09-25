@@ -879,6 +879,12 @@ connection's user and skips a row it could never show without touching the datab
 authorization check against the database before rendering still runs for every row that passes,
 and a notification without these ids (from a server running older code) simply takes that path.
 
+A connection only receives notifications for rows its user owns or created (for a dispatcher,
+the rows they ordered on someone else's behalf); an admin's connection receives every
+notification. Notifications for other users' rows never reach the connection at all. Which of
+these a connection gets is decided from the user's role when the stream opens, so after a role
+change the new scope applies once the tab reloads or the stream reconnects.
+
 Delivery is via Redis pub/sub, which has no replay guarantee — a message published while
 disconnected (a dropped connection, a Redis restart) is lost. Each row keeps a much slower 60s
 fallback poll (`GET /bookings/{id}/row` / `GET /environments/{id}/row`) as the safety net, so a

@@ -83,15 +83,25 @@ def _burst(coalescer, scheduler, booking_id, *, lines: int, duration: float, env
 
 @pytest.fixture
 def redis_mock():
-    """The real publish path in ``events``, with Redis mocked and a fresh coalescer singleton."""
+    """The real publish path in ``events``, with Redis mocked and a fresh coalescer singleton.
+
+    Yields the *pipeline* (#443): each notification queues one ``publish`` per recipient channel
+    and then makes one round trip, so ``execute`` counts notifications and is where a failing or
+    slow Redis surfaces.
+    """
     client = MagicMock()
     with patch.object(events, "_get_sync_redis", return_value=client), \
          patch.object(events, "_coalescer", None):
-        yield client
+        yield client.pipeline.return_value
 
 
-def _published(client) -> list[dict]:
-    return [json.loads(c.args[1]) for c in client.publish.call_args_list]
+def _published(pipe) -> list[dict]:
+    """One payload per notification: every one reaches exactly one of the admin or broadcast
+    channel, alongside any user channels (#443)."""
+    return [
+        json.loads(c.args[1]) for c in pipe.publish.call_args_list
+        if c.args[0] in (events.ADMIN_CHANNEL, events.BROADCAST_CHANNEL)
+    ]
 
 
 def _install_fake_coalescer(scheduler: FakeScheduler, publish_hook=None) -> ProgressCoalescer:
@@ -119,8 +129,10 @@ def test_lifecycle_publish_payload_carries_kind(redis_mock):
     booking_id, env_id = uuid4(), uuid4()
     events.publish_row_changed(booking_id=booking_id, booking_routing=R, environment_id=env_id)
 
-    channel, raw = redis_mock.publish.call_args.args
-    assert channel == events.ROW_CHANGED_CHANNEL
+    # An environment child without environment routing: recipients unknown → broadcast only (#443).
+    (channel, raw), = [c.args for c in redis_mock.publish.call_args_list]
+    assert channel == events.BROADCAST_CHANNEL
+    redis_mock.execute.assert_called_once_with()
     assert json.loads(raw) == {
         "booking_id": str(booking_id), "environment_id": str(env_id), "kind": "lifecycle",
         "owner_id": "owner-1", "created_by": None,
@@ -129,12 +141,19 @@ def test_lifecycle_publish_payload_carries_kind(redis_mock):
 
 @pytest.mark.asyncio
 async def test_async_lifecycle_publish_payload_carries_kind():
-    client = MagicMock(); client.publish = AsyncMock()
+    client = MagicMock()
+    pipe = client.pipeline.return_value
+    pipe.execute = AsyncMock()
     booking_id = uuid4()
     with patch.object(events, "get_async_redis", return_value=client):
         await events.apublish_row_changed(booking_id=booking_id, booking_routing=R)
 
-    assert json.loads(client.publish.call_args.args[1]) == {
+    client.pipeline.assert_called_once_with(transaction=False)
+    pipe.execute.assert_awaited_once_with()
+    assert [c.args[0] for c in pipe.publish.call_args_list] == [
+        events.user_channel("owner-1"), events.ADMIN_CHANNEL,
+    ]
+    assert json.loads(pipe.publish.call_args.args[1]) == {
         "booking_id": str(booking_id), "environment_id": None, "kind": "lifecycle",
         "owner_id": "owner-1", "created_by": None,
     }
@@ -267,14 +286,14 @@ def test_trailing_publish_failure_is_swallowed_and_booking_stays_usable(redis_mo
 
     events.publish_progress_changed(booking_id=booking_id, booking_routing=R)
     events.publish_progress_changed(booking_id=booking_id, booking_routing=R)
-    redis_mock.publish.side_effect = ConnectionError("redis down")
+    redis_mock.execute.side_effect = ConnectionError("redis down")
     scheduler.advance(W)                          # trailing flush raises inside the timer callback
     assert "Failed to publish row-changed event" in caplog.text
 
-    redis_mock.publish.side_effect = None
+    redis_mock.execute.side_effect = None
     scheduler.advance(W)                          # idle window closes
     events.publish_progress_changed(booking_id=booking_id, booking_routing=R)
-    assert redis_mock.publish.call_count == 3     # leading, failed trailing, new leading
+    assert redis_mock.execute.call_count == 3     # leading, failed trailing, new leading
 
 
 def test_timer_start_failure_never_fails_the_caller_nor_sticks_the_booking(redis_mock):
@@ -334,7 +353,7 @@ def test_burst_then_silence_delivers_exactly_one_trailing_progress_publish(redis
     for _ in range(10):
         events.publish_progress_changed(booking_id=booking_id, booking_routing=R)
         scheduler.advance(0.01)
-    before = redis_mock.publish.call_count
+    before = redis_mock.execute.call_count
     last_line_at = scheduler.now - 0.01
 
     scheduler.advance(W)
@@ -343,7 +362,7 @@ def test_burst_then_silence_delivers_exactly_one_trailing_progress_publish(redis
     assert scheduler.now - last_line_at <= W + 0.01
 
     scheduler.advance(10 * W)                     # silence: nothing more
-    assert redis_mock.publish.call_count == before + 1
+    assert redis_mock.execute.call_count == before + 1
 
 
 # ── 4.3 independent bookings ──────────────────────────────────────────────────
@@ -392,7 +411,7 @@ def test_lifecycle_publishes_immediately_and_discards_pending_trailing(redis_moc
     assert [p["kind"] for p in _published(redis_mock)] == ["progress", "lifecycle"]
     assert scheduler.armed() == []
     scheduler.advance(5 * W)
-    assert redis_mock.publish.call_count == 2                    # the trailing never fires
+    assert redis_mock.execute.call_count == 2                    # the trailing never fires
 
 
 def test_timer_that_fires_after_cancel_publishes_nothing():
@@ -529,7 +548,7 @@ def test_line_after_lifecycle_waits_for_the_in_flight_publish(redis_mock):
     events.publish_progress_changed(booking_id=booking_id, booking_routing=R)          # pending
     state["blocking"] = True
     starts = []
-    redis_mock.publish.side_effect = lambda *a: starts.append(scheduler.now)
+    redis_mock.execute.side_effect = lambda *a: starts.append(scheduler.now)
 
     scheduler.advance(W)                                            # A decides and blocks
 
@@ -541,9 +560,9 @@ def test_line_after_lifecycle_waits_for_the_in_flight_publish(redis_mock):
     assert len(scheduler.armed()) == 1                              # B opened a normal window
 
     events.publish_progress_changed(booking_id=booking_id, booking_routing=R)          # inside B's window: held
-    assert redis_mock.publish.call_count == 4
+    assert redis_mock.execute.call_count == 4
     scheduler.advance(W)
-    assert redis_mock.publish.call_count == 5                       # ...and flushed as trailing
+    assert redis_mock.execute.call_count == 5                       # ...and flushed as trailing
     scheduler.advance(W)
     assert events._coalescer._entries == {}
 
