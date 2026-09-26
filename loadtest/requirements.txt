@@ -1,0 +1,4 @@
+# Load-testing only — deliberately separate from requirements-dev.txt (not needed for the
+# regular pytest suite).
+locust>=2.29
+httpx>=0.27
