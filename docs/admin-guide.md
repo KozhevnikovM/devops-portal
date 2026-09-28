@@ -1904,6 +1904,14 @@ Always commit the generated migration file alongside the model change.
 > compatible (nullable adds only, no drops/renames, no tightened constraints) — see "Migration
 > compatibility" under "Blue-green deployment" above.
 
+> **Migration `0035` (bookings keyset pagination, #479) must be applied before the app version that
+> ships it serves requests.** That version's bookings-page query pins PostgreSQL to index scans, so
+> without `0035`'s page indexes each page falls back to a full scan and sort. The page is still
+> correct, but much slower. Old app + new schema is safe; new app + old schema is not. The `init`
+> container (compose and blue-green) already migrates before `app` starts. If you deploy any other
+> way, run `alembic upgrade head` first. When rolling back, revert the app before running
+> `alembic downgrade 0034`.
+
 ---
 
 ## Scaling Workers

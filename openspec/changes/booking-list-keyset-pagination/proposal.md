@@ -13,9 +13,11 @@ The browser bookings pages (`GET /`, `GET /book/vm`, `GET /book/namespace`) stil
   - Each lookup reads only `QUEUED` bookings, through a new partial index. Today each one scans the whole `bookings` table.
 - The list query's order gains the `id DESC` tiebreak. The JSON list shares that query, so it gets a deterministic order among bookings with equal timestamps. Its contract is otherwise unchanged.
 - **Page selection is bounded by the page size, not by history, for every filter except label.**
-  - **Indexes.** New indexes put the equality filters in front of `(created_at, id)`: `(resource_type, …)` for All, and `(user_id, resource_type, …)` and `(created_by, resource_type, …)` for Mine. Each comes in two forms:
+  - **Indexes.** One index per query branch, each led by the branch's own page-key expression and then `(created_at, id)`. For example, `'ol:' || user_id || ':' || resource_type` means "owner, RELEASED rows excluded". Scopes: type for All, and owner and creator for Mine. Each comes in two forms:
     - a full index, for Show released
     - a partial `WHERE status <> 'RELEASED'` index, for the default view
+
+    A branch constrains exactly its own key, so no broader index can serve it.
   - **Query.** The page query runs one keyset branch per owner column and resource type, at most four branches, each `LIMIT limit + 1`. It merges and deduplicates them, keeps `limit + 1`, and only then loads the list projection for the page's ids. The key query runs with bitmap and sequential scans switched off and index scans switched on, for that query alone, so the ordered walk is always the plan.
   - **Why this is bounded.** Every index entry a branch walks matches the page's filters. The partial index still holds `FAILED` bookings, but `FAILED` bookings are listed when released ones are hidden, so they fill the page rather than being skipped. The page selection reads at most `4 × (limit + 1)` index entries, however much `RELEASED` or `FAILED` history other users or other resource types have.
 - **The label filter is the single stated exception.** `label ILIKE '%x%'` cannot be served in order by a btree. With a label, the walk stays inside the owner, type and released-state branch but may skip non-matching labels. This relaxes #479's acceptance criterion for label-filtered pages only. Bounding them is split out to #485.
@@ -48,8 +50,8 @@ _None._
   - `templates/index.html` renders the Load more row as the last child of `#bookings-list`.
   - new partials: `booking_load_more.html` and `booking_rows_page.html`
 - **Config**: `app/config.py` gets `BOOKINGS_PAGE_SIZE`.
-- **Database**: Alembic migration `0035` adds seven `bookings` indexes, and `BookingModel.__table_args__` declares them:
-  - three owner/type-prefixed `(…, created_at, id)` indexes, each in a full and a `status <> 'RELEASED'` partial form
+- **Database**: Alembic migration `0035` adds seven `bookings` indexes, and the model declares them. `0035` must be applied before this app version serves requests:
+  - three page-key `(key, created_at, id)` index pairs (type, owner, creator), each in a full and a `status <> 'RELEASED'` partial form
   - a `(resource_type, created_at) WHERE status = 'QUEUED'` index for queue rank
 - **Tests**:
   - unit tests for the routes, Load more rendering and filter carry-over

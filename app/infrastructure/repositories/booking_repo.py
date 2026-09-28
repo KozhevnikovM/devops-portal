@@ -21,8 +21,9 @@ from app.domain.resource_details import (
     NamespaceDetails, ResourceFootprint, StaticVMDetails, VMDetails,
 )
 from app.infrastructure.database.models import (
-    BOOKING_NOT_RELEASED, BOOKING_QUEUED, BookingAuditModel, BookingModel, EnvironmentModel,
-    NamespaceModel, StaticVMModel, UserModel,
+    BOOKING_HAS_CREATOR, BOOKING_NOT_RELEASED, BOOKING_QUEUED, BookingAuditModel, BookingModel,
+    EnvironmentModel, NamespaceModel, StaticVMModel, UserModel, booking_page_key,
+    booking_page_key_value,
 )
 from app.infrastructure.events import (
     Routing,
@@ -358,13 +359,14 @@ def _apply_released_filter(stmt, include_released: bool):
     return stmt if include_released else stmt.where(BOOKING_NOT_RELEASED)
 
 
-# Pin for the page key query (#479, design.md Decision 10): with bitmap and sequential scans off
-# and index scans on, the only way to read a branch in page order is its equality-prefixed index
-# walk, which stops after limit + 1 entries. Left free, the planner switches an underestimated
-# branch to bitmap scan + sort, which reads the whole branch; and if an operator had turned index
-# scans off, disabling the other two would leave it only a sequential scan. Transaction-local, and
-# restored to the exact previous values right after the key query, so nothing else in the request
-# plans differently.
+# Pin for the page key query (#479, design.md Decision 10). A branch's page key leaves its own
+# index as the only one with usable conditions. With bitmap and sequential scans off and index
+# scans on, reading that index in page order (a walk that stops after limit + 1 entries) is then
+# always cheaper than the only alternatives left, which read the branch or the table whole and
+# sort. Left free, the planner switches an underestimated branch to bitmap scan + sort; and if an
+# operator had turned index scans off, disabling the other two would leave only a sequential scan.
+# Transaction-local, and restored to the exact previous values right after the key query, so
+# nothing else in the request plans differently.
 _ORDERED_WALK_SETTINGS = {
     "enable_bitmapscan": "off",
     "enable_seqscan": "off",
@@ -411,26 +413,29 @@ def _page_keys_stmt(
     """Phase 1 of a bookings page (#479): the (created_at, id) keys of up to `limit + 1` bookings.
 
     `OR` across owner columns and `IN` across resource types can't be read in page order from
-    one index, so this runs one ordered keyset walk per owner column (Mine: user_id, created_by;
-    All: none) and resource type — each an equality-prefixed ix_bookings_*_page* index scan that
-    stops after `limit + 1` entries — then merges them. The top `limit + 1` of the union is the
-    top `limit + 1` of the branches' tops, so at most 4 × (limit + 1) entries are read and sorted.
-    GROUP BY drops a booking that both Mine branches found (dispatched to oneself).
+    one index, so this runs one ordered keyset walk per page scope (Mine: owner, creator; All:
+    type) and resource type, then merges them. Each branch constrains exactly its own page-key
+    expression (`booking_page_key`), so its own ix_bookings_*_page* index is the only one it can
+    use: a walk that stops after `limit + 1` entries, all of which match. The top `limit + 1` of
+    the union is the top `limit + 1` of the branches' tops, so at most 4 × (limit + 1) entries are
+    read and sorted. GROUP BY drops a booking that both Mine branches found (dispatched to oneself).
     """
-    owner_columns = [BookingModel.user_id, BookingModel.created_by] if user_id is not None else [None]
+    unreleased = not include_released
+    scopes = ["owner", "creator"] if user_id is not None else ["type"]
     branches = []
-    for owner_column in owner_columns:
+    for scope in scopes:
         for resource_type in resource_types:
             branch = select(BookingModel.created_at, BookingModel.id).where(
-                BookingModel.resource_type == resource_type
+                booking_page_key(scope, unreleased)
+                == booking_page_key_value(scope, unreleased, resource_type, user_id)
             )
-            if owner_column is not None:
-                branch = branch.where(owner_column == user_id)
+            if scope == "creator":
+                branch = branch.where(BOOKING_HAS_CREATOR)   # implies the creator index predicate
             branch = _apply_released_filter(branch, include_released)
             branch = _apply_label_filter(branch, label)
             if after is not None:
-                # A row comparison is an index condition on (created_at, id) after the equality
-                # prefix, so each walk starts at the cursor. Typed binds, as in environment_repo.
+                # A row comparison is an index condition on (created_at, id) after the page key,
+                # so each walk starts at the cursor. Typed binds, as in environment_repo.
                 branch = branch.where(
                     tuple_(BookingModel.created_at, BookingModel.id)
                     < tuple_(

@@ -57,25 +57,31 @@ The predicate is built with `tuple_(...) < tuple_(literal(..., type), literal(..
 
 *Alternative:* OFFSET. The issue rules it out.
 
-### 2. Equality-prefixed indexes, so every walked entry is a match
+### 2. One page-key index per branch, so every walked entry is a match
 
-A walk is bounded by the page size only if every index entry it visits either belongs on the page or ends the walk. With a plain `(created_at, id)` index, an entry that fails a filter gets skipped, and that skipping is where history leaks in. Examples: another user's booking on a Mine page, a VM on the namespace page, a released row when released rows are hidden. The equality filters therefore go in front of the order columns, and the released filter becomes a partial-index predicate.
+A walk is bounded by the page size only if every index entry it visits either belongs on the page or ends the walk. With a plain `(created_at, id)` index, an entry that fails a filter gets skipped, and that skipping is where history leaks in. Examples: another user's booking on a Mine page, a VM on the namespace page, a released row when released rows are hidden. So each branch of the page query (Decision 3) gets an index that holds exactly the branch's bookings in page order.
 
-Migration `0035` creates these indexes. `BookingModel.__table_args__` declares all of them.
+A branch is a page scope (All by type, Mine by owner, Mine by creator) combined with released bookings hidden or shown. Each branch's index leads with its own **page-key expression**, then `(created_at, id)`. The branch's query constrains exactly that expression.
 
-| Index | Columns | Predicate | Serves |
+| Index | Key expression | Predicate | Serves |
 |---|---|---|---|
-| `ix_bookings_type_page` | `resource_type, created_at, id` | none | All, Show released |
-| `ix_bookings_type_page_unreleased` | `resource_type, created_at, id` | `status <> 'RELEASED'` | All, released hidden |
-| `ix_bookings_owner_page` | `user_id, resource_type, created_at, id` | none | Mine (owner), Show released |
-| `ix_bookings_owner_page_unreleased` | `user_id, resource_type, created_at, id` | `status <> 'RELEASED'` | Mine (owner), released hidden |
-| `ix_bookings_creator_page` | `created_by, resource_type, created_at, id` | `created_by IS NOT NULL` | Mine (dispatcher), Show released |
-| `ix_bookings_creator_page_unreleased` | `created_by, resource_type, created_at, id` | `created_by IS NOT NULL AND status <> 'RELEASED'` | Mine (dispatcher), released hidden |
-| `ix_bookings_queued_rank` | `resource_type, created_at` | `status = 'QUEUED'` | queue position (Decision 5) |
+| `ix_bookings_type_page` | `'t:' \|\| resource_type` | none | All, Show released |
+| `ix_bookings_type_page_unreleased` | `'tl:' \|\| resource_type` | `status <> 'RELEASED'` | All, released hidden |
+| `ix_bookings_owner_page` | `'o:' \|\| user_id \|\| ':' \|\| resource_type` | none | Mine (owner), Show released |
+| `ix_bookings_owner_page_unreleased` | `'ol:' \|\| user_id \|\| ':' \|\| resource_type` | `status <> 'RELEASED'` | Mine (owner), released hidden |
+| `ix_bookings_creator_page` | `'c:' \|\| created_by \|\| ':' \|\| resource_type` | `created_by IS NOT NULL` | Mine (dispatcher), Show released |
+| `ix_bookings_creator_page_unreleased` | `'cl:' \|\| created_by \|\| ':' \|\| resource_type` | `created_by IS NOT NULL AND status <> 'RELEASED'` | Mine (dispatcher), released hidden |
+| `ix_bookings_queued_rank` | `resource_type`, `created_at` (plain columns) | `status = 'QUEUED'` | queue position (Decision 5) |
+
+**Why expressions, not plain columns.** PR #486's review found the problem with the first version of this change. It used plain equality-prefixed columns, such as `(user_id, resource_type, created_at, id)` and `(resource_type, created_at, id)`. With those, a Mine branch (`user_id = u AND resource_type = t`) could also be read in page order from the broader type index, applying `user_id` as a filter while it walks. A hidden-released branch could likewise use the full index and filter out `RELEASED` rows. Turning seq and bitmap scans off (Decision 10) restricts only the scan *type*, not the choice between those ordered indexes. On adversarial statistics the planner did pick the type index for the owner branch.
+
+With page keys, a branch's condition is `<its key expression> = '<value>'`. No other index has that expression, so no other index has usable conditions for the branch, and the planner cannot read any other index in the branch's order. The tag also differs between full and RELEASED-free (`o` vs `ol`), so a hidden-released branch cannot use the full index. The invariant is structural. It doesn't depend on which plan the planner prefers.
+
+**One definition, three users.** `booking_page_key(scope, unreleased)` in `models.py` builds the key expression. The indexes (`BOOKING_PAGE_INDEXES`, declared from it) and the queries both use it. Separators and tags are SQL literals, never bind parameters, so the query's expression is the index's expression under any plan, including a generic one. `booking_page_key_value(...)` computes the value the query compares against. Migration `0035` spells the same expressions. An integration test compares the model's and the migration's index definitions as PostgreSQL stores them.
 
 **`FAILED` bookings.** The earlier draft said the hidden-released partial index was "bounded by the active set". PR #484's review showed that is false: the index still holds `FAILED` bookings, and those accumulate. The bound now rests on a different property. A hidden-released page lists `FAILED` bookings, so a `FAILED` entry in the branch's range is a match that fills the page, never a skipped row. The walk reads a user's `FAILED` history only as far as the page reaches into it. It never reads other users' or other types' `FAILED` history, because the equality prefix excludes them.
 
-**The partial indexes must stay usable.** The planner uses a partial index only when it can prove that the query's predicate implies the index's `WHERE`. A bound parameter (`status != :p`) cannot be proven under the generic plans that asyncpg prepared statements get. So the repository renders `status <> 'RELEASED'` and `status = 'QUEUED'` as literal SQL. The literals come from shared module-level expressions that `BookingModel`'s index declarations also use. The migration spells the same text, like `0033`. The unforced-plan tests in 4.3 fail if a bound parameter comes back.
+**The partial indexes must stay usable.** The planner uses a partial index only when it can prove that the query's predicate implies the index's `WHERE`. A bound parameter (`status != :p`) cannot be proven under the generic plans that asyncpg prepared statements get. So the repository renders `status <> 'RELEASED'` and `status = 'QUEUED'` as literal SQL. The literals come from shared module-level expressions that `BookingModel`'s index declarations also use. The migration spells the same text, like `0033`. Creator branches also state `created_by IS NOT NULL` explicitly, so they imply the creator indexes' predicate. The plan tests in 4.3 fail if a bound parameter comes back.
 
 **Write cost.** Seven indexes on `bookings` is a real write cost. Bookings are written at human rates: orders, a handful of status transitions, label and extend edits. Each write touches at most seven small btrees. The partial ones change membership only when status moves into or out of `RELEASED` or `QUEUED`.
 
@@ -85,7 +91,7 @@ Migration `0035` creates these indexes. `BookingModel.__table_args__` declares a
 
 ### 3. Page query: per-branch keyset `UNION ALL`, then the projection for the page ids
 
-The planner cannot produce page order from `user_id = X OR created_by = X`, or from `resource_type IN ('VM', 'STATIC_VM')`, with a single index scan. The key query therefore runs one branch per owner column and resource type. Each branch is an equality-prefixed ordered walk.
+The planner cannot produce page order from `user_id = X OR created_by = X`, or from `resource_type IN ('VM', 'STATIC_VM')`, with a single index scan. The key query therefore runs one branch per page scope and resource type. Each branch is an ordered walk of its own page-key index (Decision 2). The SQL below shows the branch logic with plain columns for readability. The real conditions are page-key equalities, for example `('ol:' || user_id || ':' || resource_type) = 'ol:<u>:VM'`, plus `created_by IS NOT NULL` on creator branches.
 
 ```sql
 -- phase 1: page keys (Mine on the VM page with released hidden; 4 branches)
@@ -183,13 +189,23 @@ The bound is a pass/fail test, not only a PR measurement. The integration datase
 - dispatcher-created bookings
 
 For each combination of Mine/All, page type and Show released, with and without a cursor, `EXPLAIN (ANALYZE, FORMAT JSON)` is run inside the same plan pin that `list_page` applies (Decision 10), and never under a setting of the test's own. The tests assert:
-- the sum of `Actual Rows` over the booking index scan nodes is at most `4 × (limit + 1)`
+- there is exactly one scan per branch, on exactly that branch's index, by name, with that branch's key tag in its index condition
+- no scan drops a row by filter (`Rows Removed by Filter` = 0), so every visited entry matched
+- the entries visited (returned rows plus filtered rows) over the booking scans total at most `4 × (limit + 1)`
 - there is no `Seq Scan` or bitmap scan on `bookings`
 - the cursor appears as an index condition
 - no `Sort` node receives more than `4 × (limit + 1)` rows
 
 Other tests cover the rest:
 - **Misestimated branch.** A dataset where the statistics understate a viewer's branch. This was the case that produced Bitmap Heap Scan + sort during implementation.
+- **Adversarial broad indexes (PR #486 review).** The old plain-column indexes `(resource_type, created_at, id)`, `(user_id, …)` and `(created_by, …)` are created inside the test transaction, and the statistics are made to favour them:
+  - the viewer owns nearly every recent VM, and their history is almost free of `RELEASED` rows;
+  - or the statistics were taken before a large unanalyzed growth;
+  - or namespaces are rare among VMs.
+
+  Every branch must still use its own page-key index and filter nothing. On the same data, the old plain-column query shape does walk the broad type index for an owner branch.
+- **Definition parity.** The model's and the migration's page indexes are compared as `pg_indexes` stores them.
+- **Planner settings.** An operator's `enable_indexscan = off` (and `enable_indexonlyscan = off`) is overridden by the pin and restored afterwards.
 - **Generic plan.** A plan under `plan_cache_mode = force_generic_plan`, to check that the literal released predicate still matches the partial indexes.
 - **Settings restored.** `list_page` puts the previous planner settings back.
 - **Correctness.** Traversals, with label, compared against the unpaginated lists. `EXPLAIN (ANALYZE, BUFFERS)` output is still recorded in the PR for information.
@@ -210,7 +226,13 @@ keys = <phase-1 key query>
 SELECT set_config(<each setting>, <its value in prev>, true)
 ```
 
-- **Why this works.** With bitmap and sequential scans off and index scans forced on, the only remaining access paths for a branch are index scans. Forcing index scans on matters. PR #486's review pointed out that an operator's `enable_indexscan = off` would otherwise leave every path disabled, and the planner might then fall back to a sequential scan. The only index scan that yields the branch's order without a sort is the equality-prefixed walk. So the walk is the plan, whatever the statistics say. The outer merge of at most four branches may still sort, but at most `4 × (limit + 1)` rows. `enable_sort` stays on.
+- **Why this works.** Decision 2 makes the branch's own page-key index the only index with usable conditions for the branch. With bitmap and sequential scans off and index scans forced on, what remains is:
+  - (a) reading that index in page order, which stops after `limit + 1` entries;
+  - (b) reading it and sorting;
+  - (c) reading some other index in full, without conditions, and sorting.
+
+  (b) costs (a) plus a sort. (c) reads an index covering the whole table, which is a superset of the branch. So (a) is always the cheapest, whatever the statistics say. Forcing index scans on matters: PR #486's review pointed out that an operator's `enable_indexscan = off` would otherwise leave every path disabled. The outer merge of at most four branches may still sort, but at most `4 × (limit + 1)` rows. `enable_sort` stays on.
+- **The pin needs 0035.** Without the page-key indexes, the pin leaves only full-index or discouraged sequential scans plus a sort, which is much slower. That is why 0035 is a hard prerequisite for this app version (Migration Plan).
 - **Scope.** `set_config(..., true)` is transaction-local. The restore puts back the exact previous values, not the defaults, so an operator's session setting survives. Phase 2 (the projection), queue positions, the form catalogs and everything else in the request plan normally. If the key query fails, the transaction aborts and the local settings go with it. No `finally` is needed, and one would fail on the aborted transaction anyway.
 - **Cost.** Two extra round trips per page. The first merges the read and the pin into one statement, with the read done in a `MATERIALIZED` CTE so it runs first.
 - **What the tests run.** The same pin/unpin helper wraps the `EXPLAIN` in the tests (Decision 9). The tests measure the plan the application runs, with no settings of their own.
@@ -223,9 +245,11 @@ SELECT set_config(<each setting>, <its value in prev>, true)
 ## Risks / Trade-offs
 
 - [The planner prefers another plan for a branch it underestimates] → This happened during implementation. Decision 10 pins the key query to ordered index walks, so the bound doesn't depend on statistics.
+- [The planner reads a broader ordered index and filters as it walks] → Found in PR #486's review for the plain-column indexes. Decision 2's page keys make each branch's own index the only one with usable conditions. The adversarial tests add broad indexes back and check that each branch uses its own index by name, with nothing filtered.
+- [A future index or query change breaks key parity] → `booking_page_key` is the single definition for the indexes and the queries. The parity test compares the migrated definitions with the model's.
 - [The pin leaks into later reads in the request, or overrides an operator's session setting] → The pin is transaction-local, is scoped to the key query, and restores the exact previous values. A test checks the restore.
 - [The partial indexes are silently unused if a status predicate goes back to a bound parameter] → Shared literal expressions, plus the plan tests, including one under a forced generic plan. With seq and bitmap scans off, a regression would show up as a full-index walk that reads `RELEASED` rows, and the read-count assertion fails.
-- [Seven indexes add write cost and disk space on `bookings`] → Bookings are written at human rates (Decision 2). The indexes are narrow, and the partial ones are small.
+- [Seven indexes add write cost and disk space on `bookings`] → Bookings are written at human rates (Decision 2). The key expressions are short strings, and the partial indexes are small.
 - [Label-filtered pages are not bounded by the page size] → This is stated in the spec and tracked by #485. The Mine-label case is still limited to the user's own range.
 - [Rows change between pages] → A booking released after page one sorts after the cursor and drops out of the filter. A new booking sorts before the cursor, and the form prepend shows it. The no-gaps guarantee covers a stable dataset, as for environments.
 - [Tests that patch `_repo.list_by_user` / `list_all` for the HTML pages] → They move to `list_page`. The JSON-API tests are unaffected.
@@ -233,5 +257,5 @@ SELECT set_config(<each setting>, <its value in prev>, true)
 ## Migration Plan
 
 1. Deploy runs `alembic upgrade head`, which applies `0035` and creates the seven indexes. The builds are plain `CREATE INDEX`, like `0033`, and briefly block booking writes, for seconds at this table's size. `CONCURRENTLY` would need Alembic's `autocommit_block` and handling for invalid half-built indexes, which isn't worth it at this size.
-2. The app code deploys with it. Without the indexes the pages are still correct, only slower, so the order of the two steps doesn't matter.
-3. Rollback: revert the app, then run `alembic downgrade 0034` if needed. The previous version depends on none of these indexes.
+2. **`0035` is a hard prerequisite for this app version.** Apply it before any instance of this version serves requests. The page query pins the planner to index scans (Decision 10), so without the page-key indexes a page would fall back to a full-index or discouraged sequential scan plus a sort. The page would still be correct, but dramatically slower, for exactly as long as the rollout lasts. Running the old app against the new schema is safe, because it ignores the indexes. Running the new app against the old schema is not. The bundled `docker compose` `init` service already runs migrations before `app` starts. Blue/green and other deployments must run `alembic upgrade head` first, as `docs/admin-guide.md` says for every migration.
+3. Rollback: revert the app first, then run `alembic downgrade 0034` if needed. The previous version depends on none of these indexes. Never downgrade the schema below `0035` while this version is running.

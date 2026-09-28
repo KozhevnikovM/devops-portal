@@ -136,6 +136,11 @@ The label filter is the single exception to the page-size bound on page selectio
 - **WHEN** a bookings page request has selected its page
 - **THEN** every later read in the same request, such as the list projection, queue positions and the form catalogs, runs with the database's planner settings as they were before the page selection
 
+#### Scenario: Bound holds when statistics favour walking a broader set
+- **WHEN** statistics make it look cheaper to walk all bookings of a type, or all of a viewer's bookings including released ones, than only the bookings the page's filters match, for example because the viewer owns nearly every recent booking of the type and few of them are released
+- **THEN** the page selection still visits only bookings that match the page's owner filter, resource type and released-state filter
+- **AND** it reads at most four times (the page size plus one) booking index entries
+
 #### Scenario: Sparse resource type is bounded
 - **WHEN** namespace bookings are rare among many newer VM bookings, and a user opens the namespace bookings page with All and Show released
 - **THEN** the page selection reads at most four times (the page size plus one) booking index entries

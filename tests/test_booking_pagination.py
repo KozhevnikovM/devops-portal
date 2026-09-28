@@ -26,9 +26,11 @@ from app.domain.pagination import KeysetCursor, KeysetPage
 from app.infrastructure.database.models import (
     BOOKING_NOT_RELEASED,
     BOOKING_NOT_RELEASED_SQL,
+    BOOKING_PAGE_INDEXES,
     BOOKING_QUEUED,
     BOOKING_QUEUED_SQL,
-    BookingModel,
+    booking_page_key,
+    booking_page_key_value,
 )
 from app.infrastructure.repositories.booking_repo import (
     _PIN_ORDERED_WALK,
@@ -143,13 +145,27 @@ def _migration_0035():
     return module
 
 
-def test_model_indexes_match_migration_0035():
-    declared = {}
-    for index in BookingModel.__table__.indexes:
+def test_model_and_migration_0035_declare_the_same_index_names():
+    """Names and predicates here; tests/integration/test_booking_list_pagination.py checks that the
+    model's and the migration's definitions are identical as PostgreSQL stores them."""
+    module = _migration_0035()
+    migrated = {name: where for name, _, where in module._PAGE_INDEXES}
+    for index in BOOKING_PAGE_INDEXES.values():
         where = index.dialect_options["postgresql"]["where"]
-        declared[index.name] = ([c.name for c in index.columns], str(where) if where is not None else None)
-    for name, columns, where in _migration_0035()._INDEXES:
-        assert declared[name] == (columns, where), name
+        assert migrated.pop(index.name) == (str(where) if where is not None else None), index.name
+    assert migrated == {}
+
+
+@pytest.mark.parametrize("scope,unreleased,owner,expected", [
+    ("type", False, None, "t:VM"), ("type", True, None, "tl:VM"),
+    ("owner", False, "u1", "o:u1:VM"), ("owner", True, "u1", "ol:u1:VM"),
+    ("creator", False, "u1", "c:u1:VM"), ("creator", True, "u1", "cl:u1:VM"),
+])
+def test_page_key_values_are_distinct_per_branch_index(scope, unreleased, owner, expected):
+    assert booking_page_key_value(scope, unreleased, "VM", owner) == expected
+    sql = _sql(booking_page_key(scope, unreleased))
+    assert sql.startswith(f"'{expected.split(':')[0]}:' || ")
+    assert "%(" not in str(booking_page_key(scope, unreleased).compile(dialect=postgresql.dialect()))
 
 
 # ── Page key statement ───────────────────────────────────────────────────────
@@ -170,8 +186,13 @@ def test_one_limited_ordered_branch_per_owner_column_and_type(user_id, types, br
     assert sql.count("FROM bookings") == branches
     assert sql.count("ORDER BY bookings.created_at DESC, bookings.id DESC") == branches
     assert sql.count(" OR ") == 0 and " IN " not in sql
-    assert sql.count("bookings.user_id =") == (branches // 2 if user_id else 0)
-    assert sql.count("bookings.created_by =") == (branches // 2 if user_id else 0)
+    # Each branch constrains exactly its own page key (released hidden: the 'l' keys).
+    tags = ("'ol:' || bookings.user_id", "'cl:' || bookings.created_by") if user_id else ("'tl:' || bookings.resource_type",)
+    for tag in tags:
+        assert sql.count(tag) == branches // len(tags), tag
+    assert "bookings.user_id =" not in sql and "bookings.created_by =" not in sql
+    assert "bookings.resource_type =" not in sql
+    assert sql.count("bookings.created_by IS NOT NULL") == (branches // 2 if user_id else 0)
 
 
 def test_page_keys_select_only_the_key_columns():

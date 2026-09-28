@@ -274,22 +274,37 @@ async def _page_plan(session, stmt) -> dict:
         return await _explain_analyze(session, _sql(stmt))
 
 
-def _assert_bounded(plan: dict, *, include_released: bool, mine: bool, after) -> None:
+def _expected_indexes(*, mine: bool, include_released: bool) -> set[str]:
+    suffix = "" if include_released else "_unreleased"
+    scopes = ("owner", "creator") if mine else ("type",)
+    return {f"ix_bookings_{scope}_page{suffix}" for scope in scopes}
+
+
+def _visited(scan: dict) -> float:
+    """Index entries a scan node visited: the rows it returned plus those its filter dropped."""
+    return (scan["Actual Rows"] + scan.get("Rows Removed by Filter", 0)) * scan["Actual Loops"]
+
+
+def _assert_bounded(plan: dict, *, include_released: bool, mine: bool, after,
+                    types=_VM_TYPES) -> None:
     nodes = list(_nodes(plan))
     scans = [n for n in nodes if n.get("Relation Name") == "bookings"]
-    assert scans, plan
     assert all(n["Node Type"] in ("Index Scan", "Index Only Scan") for n in scans), plan
     assert not [n for n in nodes if n["Node Type"].startswith("Bitmap")], plan
-    read = sum(n["Actual Rows"] * n["Actual Loops"] for n in scans)
-    assert read <= _BOUND, (read, plan)
+    # Exactly one scan per branch, each on that branch's own index (design.md, Decision 2).
+    assert len(scans) == len(types) * (2 if mine else 1), plan
+    assert {n["Index Name"] for n in scans} == _expected_indexes(mine=mine, include_released=include_released), plan
+    # Every visited entry matched: no walking past history the page doesn't show.
+    assert all(n.get("Rows Removed by Filter", 0) == 0 for n in scans), plan
+    visited = sum(_visited(n) for n in scans)
+    assert visited <= _BOUND, (visited, plan)
     for n in nodes:
         if n["Node Type"] == "Sort":
             assert all(c["Actual Rows"] <= _BOUND for c in n.get("Plans", [])), plan
     for scan in scans:
-        assert scan["Index Name"].endswith("_unreleased") is (not include_released), scan
-        assert scan["Index Name"].startswith(
-            ("ix_bookings_owner_page", "ix_bookings_creator_page") if mine else ("ix_bookings_type_page",)
-        ), scan
+        tag = scan["Index Name"].removeprefix("ix_bookings_").split("_page")[0][0] + (
+            "" if include_released else "l")
+        assert f"'{tag}:'::text" in scan["Index Cond"], scan
         if after is not None:
             assert "ROW(created_at, id) < ROW(" in scan["Index Cond"], scan
 
@@ -352,7 +367,8 @@ async def test_page_selection_is_bounded_by_the_page_size(
             include_released=include_released, limit=_LIMIT, after=after,
         )
         plan = await _page_plan(async_session, stmt)
-        _assert_bounded(plan, include_released=include_released, mine=mine, after=after)
+        _assert_bounded(plan, include_released=include_released, mine=mine, after=after,
+                        types=resource_types)
 
 
 @pytest.mark.parametrize("include_released", [False, True], ids=["hide-released", "show-released"])
@@ -369,7 +385,7 @@ async def test_bound_holds_when_statistics_underestimate_the_branch(async_sessio
     stmt = _page_keys_stmt(viewer, resource_types=_NS_TYPES, label=None,
                            include_released=include_released, limit=_LIMIT, after=None)
     plan = await _page_plan(async_session, stmt)
-    _assert_bounded(plan, include_released=include_released, mine=True, after=None)
+    _assert_bounded(plan, include_released=include_released, mine=True, after=None, types=_NS_TYPES)
 
 
 async def test_bound_holds_when_an_operator_disabled_index_scans(async_session):
@@ -457,6 +473,118 @@ async def test_partial_index_is_used_under_a_generic_plan(async_session):
     assert "ix_bookings_owner_page_unreleased" in plan, plan
     assert "ix_bookings_creator_page_unreleased" in plan, plan
     assert "Seq Scan" not in plan and "Bitmap" not in plan, plan
+
+
+async def test_model_and_migration_define_identical_page_indexes(async_session):
+    """The migrated indexes (conftest ran 0035) are exactly what the model declares — compared as
+    PostgreSQL stores them, since the planner matches the queries' key expressions to these."""
+    from sqlalchemy.schema import CreateIndex
+
+    from app.infrastructure.database.models import BOOKING_PAGE_INDEXES
+
+    def canonical(defs):
+        return {name: d.split(" USING ", 1)[1] for name, d in defs}
+
+    migrated = canonical((await async_session.execute(text(
+        "SELECT indexname, indexdef FROM pg_indexes WHERE tablename = 'bookings'"
+        " AND indexname LIKE 'ix_bookings_%_page%'"
+    ))).all())
+    await async_session.execute(text(
+        "CREATE TEMP TABLE bookings_model (LIKE bookings INCLUDING DEFAULTS) ON COMMIT DROP"
+    ))
+    for index in BOOKING_PAGE_INDEXES.values():
+        ddl = str(CreateIndex(index).compile(dialect=postgresql.dialect()))
+        await async_session.execute(text(ddl.replace(" ON bookings ", " ON bookings_model ", 1)))
+    declared = canonical((await async_session.execute(text(
+        "SELECT indexname, indexdef FROM pg_indexes WHERE tablename = 'bookings_model'"
+    ))).all())
+    assert declared == migrated
+    assert len(declared) == 6
+
+
+# Review of #486: the invariant is structural, not a planner preference. Plain-column indexes a
+# walk *could* use in page order (the design's first draft) are created here and made attractive
+# by the statistics; each branch must still use only its own page-key index and visit only
+# matching entries.
+_BROAD_INDEXES = {
+    "tmp_broad_type": "(resource_type, created_at, id)",
+    "tmp_broad_owner": "(user_id, resource_type, created_at, id)",
+    "tmp_broad_creator": "(created_by, resource_type, created_at, id)",
+}
+
+
+async def _add_broad_indexes(session) -> None:
+    for name, columns in _BROAD_INDEXES.items():
+        await session.execute(text(f"CREATE INDEX {name} ON bookings {columns}"))
+
+
+@pytest.mark.parametrize("include_released", [False, True], ids=["hide-released", "show-released"])
+async def test_mine_branches_use_only_their_own_index_when_the_type_walk_looks_cheaper(
+    async_session, include_released,
+):
+    """The viewer owns (and dispatched) nearly every recent VM, so walking all VMs by type would
+    find a page almost at once — the broad type index is the planner's natural pick. And the
+    viewer's own history is almost free of RELEASED rows, so the full owner index looks as good
+    as the RELEASED-free one."""
+    viewer = f"inttest-{uuid4()}"
+    rows = []
+    for i in range(3000):
+        rows.append(_row(viewer, _BASE - timedelta(milliseconds=i), rtype="VM",
+                         status=S.RELEASED if i % 97 == 0 else (S.READY, S.FAILED)[i % 2],
+                         created_by=viewer if i % 3 == 0 else None))
+    rows += [_row(f"inttest-crowd-{i}", _BASE - timedelta(seconds=10, milliseconds=i),
+                  status=S.RELEASED) for i in range(300)]
+    await _seed(async_session, rows)
+    await _add_broad_indexes(async_session)
+    await async_session.execute(text("ANALYZE bookings"))
+
+    for after in (None, KeysetCursor(_BASE - timedelta(seconds=1), UUID(int=0))):
+        stmt = _page_keys_stmt(viewer, resource_types=["VM"], label=None,
+                               include_released=include_released, limit=_LIMIT, after=after)
+        plan = await _page_plan(async_session, stmt)
+        _assert_bounded(plan, include_released=include_released, mine=True, after=after, types=["VM"])
+
+
+@pytest.mark.parametrize("include_released", [False, True], ids=["hide-released", "show-released"])
+async def test_mine_branches_use_only_their_own_index_under_misleading_statistics(
+    async_session, include_released,
+):
+    """Statistics taken while the viewer had almost nothing, then the viewer's branch and a huge
+    RELEASED/FAILED crowd grow unanalyzed: nothing about the estimates favours the page-key walk."""
+    viewer = f"inttest-{uuid4()}"
+    await _seed(async_session, [_row(viewer, _BASE - timedelta(days=2))])
+    await _add_broad_indexes(async_session)
+    await async_session.execute(text("ANALYZE bookings"))
+    await _seed(async_session, [
+        _row(f"inttest-crowd-{i % 50}", _BASE - timedelta(milliseconds=i), status=(S.RELEASED, S.FAILED)[i % 2],
+             rtype="NAMESPACE") for i in range(3000)
+    ] + [
+        _row(viewer, _BASE - timedelta(days=1, seconds=i), status=(S.FAILED, S.READY, S.RELEASED)[i % 3],
+             rtype="NAMESPACE", created_by=viewer if i % 2 else None) for i in range(400)
+    ])
+
+    stmt = _page_keys_stmt(viewer, resource_types=_NS_TYPES, label=None,
+                           include_released=include_released, limit=_LIMIT, after=None)
+    plan = await _page_plan(async_session, stmt)
+    _assert_bounded(plan, include_released=include_released, mine=True, after=None, types=_NS_TYPES)
+
+
+@pytest.mark.parametrize("include_released", [False, True], ids=["hide-released", "show-released"])
+async def test_all_branches_use_only_their_own_index(async_session, include_released):
+    """All on the namespace page, with namespaces rare among VMs and a broad plain index present:
+    the walk stays on its type's page-key index."""
+    rows = [_row(f"inttest-crowd-{i % 70}", _BASE - timedelta(milliseconds=i),
+                 status=(S.RELEASED, S.FAILED, S.READY)[i % 3], rtype="VM") for i in range(3000)]
+    rows += [_row(f"inttest-crowd-{i % 70}", _BASE - timedelta(seconds=30, milliseconds=i),
+                  status=(S.RELEASED, S.READY)[i % 2], rtype="NAMESPACE") for i in range(60)]
+    await _seed(async_session, rows)
+    await _add_broad_indexes(async_session)
+    await async_session.execute(text("ANALYZE bookings"))
+
+    stmt = _page_keys_stmt(None, resource_types=_NS_TYPES, label=None,
+                           include_released=include_released, limit=_LIMIT, after=None)
+    plan = await _page_plan(async_session, stmt)
+    _assert_bounded(plan, include_released=include_released, mine=False, after=None, types=_NS_TYPES)
 
 
 # ── 4.4: queue rank, and the label exception ─────────────────────────────────────────────────

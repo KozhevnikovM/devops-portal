@@ -8,13 +8,15 @@
   - `ix_bookings_creator_page` and `ix_bookings_creator_page_unreleased`
   - `ix_bookings_queued_rank`
 
+  Each page index leads with its branch's page-key expression (`booking_page_key`, PR #486 review), and the model declares them from that same builder (`BOOKING_PAGE_INDEXES`).
+
   Drop them all on downgrade. Declare the same indexes in `BookingModel.__table_args__`, with the `status <> 'RELEASED'` and `status = 'QUEUED'` predicates taken from shared module-level literal expressions. Verify that `tests/test_migration_chain.py` passes after the head bump, and that `alembic upgrade head` / `downgrade 0034` round-trips against local Postgres (port 5433).
 
 ## 2. Repository
 
 - [x] 2.1 Add `BookingModel.id.desc()` as the tiebreaker in `_list_item_stmt`'s `ORDER BY`. Factor the owner filter, the resource-type filter and the literal released predicate into helpers that `list_all`, `list_by_user` and `list_page` share. Switch `_queue_rank_stmt` to the literal `status = 'QUEUED'` expression. Verify that the existing booking-list unit and integration tests still pass, and that the JSON list returns equal-timestamp bookings in `id DESC` order.
 - [x] 2.2 Implement `BookingRepository.list_page(session, *, user_id, resource_types, label, include_released, limit, after) -> KeysetPage[BookingListItem]` as the two-phase read in design.md Decision 3:
-  - **Phase 1.** One keyset branch per owner column and resource type (All: one per type; Mine: `user_id` and `created_by` per type). Each branch applies the equality prefix, the literal released predicate when released bookings are hidden, the label filter, and the typed-literal `tuple_(created_at, id) < tuple_(...)` predicate, ordered `created_at DESC, id DESC` with `LIMIT limit + 1`. The branches are `UNION ALL`ed, grouped on `(created_at, id)` to dedupe, then ordered and limited to `limit + 1`.
+  - **Phase 1.** One keyset branch per page scope and resource type (All: one per type; Mine: owner and creator per type). Each branch constrains its own page-key expression (plus `created_by IS NOT NULL` for creator branches) and applies the literal released predicate when released bookings are hidden, the label filter, and the typed-literal `tuple_(created_at, id) < tuple_(...)` predicate, ordered `created_at DESC, id DESC` with `LIMIT limit + 1`. The branches are `UNION ALL`ed, grouped on `(created_at, id)` to dedupe, then ordered and limited to `limit + 1`.
   - **Phase 2.** `_list_item_stmt()` restricted to the kept ids, in page order.
   - **Cursor.** Set `next_cursor` only when phase 1 returned a probe key.
   - **Pin.** Run phase 1 inside the plan pin from design.md Decision 10: one statement reads the previous `enable_bitmapscan` / `enable_seqscan` / `enable_indexscan` values, sets the first two off and `enable_indexscan` on with `set_config(..., true)`, and the exact previous values are restored right after the key query. Unit-test that the pin runs before the key query and the restore right after it, before phase 2.
@@ -73,6 +75,8 @@
   - a misestimated-branch case, where the statistics understate a viewer's branch and the page selection is still bounded
   - a forced-generic-plan case (`plan_cache_mode = force_generic_plan`) that still uses the `_unreleased` indexes
   - a check that `list_page` restores the previous planner settings, including a non-default session value
+  - adversarial plan tests for PR #486's second review: the old plain-column broad indexes are created in the test transaction, and the statistics favour them (viewer-dominated recent history, stale statistics, sparse namespaces). Every branch must use its own page-key index by exact name and filter out no rows.
+  - an integration parity test: the model's and migration 0035's page-index definitions are identical as stored in `pg_indexes`.
   - a regression case for PR #486's review: with `enable_indexscan` (and `enable_indexonlyscan`) off beforehand, the pin still has index scans on, the key plan is the bounded ordered walk, and the previous values come back after `list_page`
 
   Verify with `pytest -m integration`.
@@ -95,6 +99,6 @@
   Record `EXPLAIN (ANALYZE, BUFFERS)` in the PR description for information, on a committed, vacuumed dataset with large `RELEASED` and `FAILED` histories. Cover All, Mine and the namespace page, each with released hidden and shown, plus one label-filtered Mine page. The pass/fail bound lives in 4.3.
 - [x] 5.2 Update `docs/api-reference.md` and `docs/admin-guide.md`. Verify that both docs mention the new behaviour.
   - `docs/api-reference.md`, the browser bookings pages note: page size, Load more, `GET /book/vm/rows` / `GET /book/namespace/rows`, 400 on a bad cursor, and that the JSON list is unchanged apart from its deterministic tiebreak order.
-  - `docs/admin-guide.md`: the `BOOKINGS_PAGE_SIZE` setting, and that label-filtered pages are the one unbounded case (#485).
+  - `docs/admin-guide.md`: the `BOOKINGS_PAGE_SIZE` setting, and that label-filtered pages are the one unbounded case (#485). Also an upgrade note that migration `0035` must be applied before this version serves requests.
 - [x] 5.3 Run the `py-review` skill on the changed Python files and fix the findings. Verify that the review is clean.
 - [ ] 5.4 At sync time, update the `## Purpose` of `openspec/specs/booking-listing/spec.md` to state that the browser bookings pages are keyset-paginated, and that their page selection is bounded by the page size for every filter except label (#485). Verify that `openspec validate --specs --strict` passes after sync.
