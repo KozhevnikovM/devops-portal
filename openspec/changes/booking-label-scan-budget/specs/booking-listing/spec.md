@@ -55,6 +55,22 @@ The JSON bookings list (`GET /api/v1/bookings` and `GET /api/bookings`) is not p
 - **THEN** every matching booking in that range is listed, up to the page size
 - **AND** if no more matching bookings exist, no next-page control is shown
 
+#### Scenario: Exactly the label scan size remaining offers no next page
+- **WHEN** a user filters by a label, the page's filter range after the cursor holds exactly the label scan size of bookings, and at most the page size of them match
+- **THEN** every matching booking in that range is listed
+- **AND** no next-page control is shown
+
+#### Scenario: Oldest remaining booking is listed once
+- **WHEN** a user filters by a label, the page's filter range after the cursor holds no more bookings than the label scan size, and the oldest of them matches the label
+- **THEN** that booking is listed exactly once, in page order
+- **AND** no next-page control is shown
+
+#### Scenario: Unmatched oldest remaining booking is not listed
+- **WHEN** a user filters by a label, the page's filter range after the cursor holds no more bookings than the label scan size, and the oldest of them does not match the label
+- **THEN** that booking is not listed
+- **AND** the page lists exactly the bookings in that range whose label matches
+- **AND** no next-page control is shown
+
 #### Scenario: Released history is paginated
 - **WHEN** a user with 200 released VM bookings opens the VM bookings page with Show released and the page size is 50
 - **THEN** at most 50 bookings are listed
@@ -145,7 +161,7 @@ Without a label filter, the database work to select a page SHALL be bounded by t
 
 With a label filter, the database work to select a page SHALL be bounded by the label scan size and not by the number of bookings in the table. The label scan size is a server setting, 200 by default, and a request SHALL NOT be able to choose it. It SHALL be greater than the page size, and the system SHALL refuse to start when it is not.
 
-A label-filtered page selection SHALL examine at most the label scan size of bookings. They are the first bookings after the cursor, in page order, that match the page's owner filter, resource types and released-state filter. Of those, it keeps the bookings whose label matches, up to the page size. It SHALL read at most four times the label scan size booking index entries, and at most the label scan size booking rows to test labels. It SHALL read no booking row or index entry that sorts before the cursor, and no index entry outside the page's owner, resource-type and released-state range. It SHALL sort no more than four times the label scan size rows. The bound SHALL hold whatever the history, however few of the examined bookings match, and whatever share of them match. The label filter itself is unchanged: a case-insensitive substring match on the trimmed label.
+A label-filtered page selection SHALL examine at most the label scan size of bookings. They are the first bookings after the cursor, in page order, that match the page's owner filter, resource types and released-state filter. Of those, it keeps the bookings whose label matches, up to the page size. To tell whether older bookings exist beyond those it examined, it MAY read one more index entry per branch, without testing that booking's label. It SHALL read at most four times (the label scan size plus one) booking index entries, and at most the label scan size booking rows to test labels. It SHALL read no booking row or index entry that sorts before the cursor, and no index entry outside the page's owner, resource-type and released-state range. It SHALL sort no more than four times (the label scan size plus one) rows. The bound SHALL hold whatever the history, however few of the examined bookings match, and whatever share of them match. The label filter itself is unchanged: a case-insensitive substring match on the trimmed label.
 
 The bound SHALL hold on the plan that the page request actually runs. The system MAY constrain the database's choice of plan for the page selection, so that the ordered walk is the only plan available. Any such constraint SHALL apply to the page selection alone. Every other read in the same request SHALL run with the database's settings as they were before the page selection. The bound SHALL NOT depend on any setting that a test or an operator applies outside the system.
 
@@ -190,11 +206,11 @@ A queue-position lookup SHALL read only `QUEUED` bookings of the booking's resou
 #### Scenario: Page selection does not read before the cursor
 - **WHEN** the plan of a page after a cursor is inspected on PostgreSQL, for each combination of Mine/All, page resource types, Show released, and with and without a label filter
 - **THEN** the cursor position is an index condition on every booking index scan in the plan
-- **AND** no sort in the plan receives more than four times (the page size plus one) rows without a label filter, or four times the label scan size rows with one
+- **AND** no sort in the plan receives more than four times (the page size plus one) rows without a label filter, or four times (the label scan size plus one) rows with one
 
 #### Scenario: Sparse label is bounded by the scan size
 - **WHEN** on PostgreSQL, a user's filter range holds a large history, a label matches only a handful of bookings deep in that history, and the user views the Mine list and the All list with that label, with and without Show released, with and without a cursor
-- **THEN** each page selection reads at most four times the label scan size booking index entries and at most the label scan size booking rows, on the plan the page request runs
+- **THEN** each page selection reads at most four times (the label scan size plus one) booking index entries and at most the label scan size booking rows, on the plan the page request runs
 
 #### Scenario: Dense label fills the page
 - **WHEN** a user filters by a label that most bookings in the page's filter range match, and more than a page of them exist

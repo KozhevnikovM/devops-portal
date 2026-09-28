@@ -12,7 +12,7 @@ The route helper `_list_page` in `routes/bookings.py` builds `load_more_url` fro
 ## Goals / Non-Goals
 
 **Goals:**
-- Bound label-filtered page selection by a server setting (the scan size `S`), whatever the history and however sparse the label: at most `4 × S` index entries and at most `S` heap rows to test labels.
+- Bound label-filtered page selection by a server setting (the scan size `S`), whatever the history and however sparse the label: at most `4 × (S + 1)` index entries and at most `S` heap rows to test labels.
 - Keep the label filter's substring semantics exactly as they are.
 - Keep #479's unlabelled plan, its bound and its tests unchanged.
 - Keep traversal complete: no gaps and no duplicates.
@@ -41,39 +41,46 @@ The scan budget is the only option that keeps behaviour and still gives a strict
 
 ### 2. One window, then the matches inside it
 
-The label-filtered key query examines a **window**: the first `S` bookings after the cursor in page order, across the page's branches. It then tests labels only inside that window.
+The label-filtered key query examines a **window**: the first `S` bookings after the cursor in page order, across the page's branches. It tests labels only inside that window. It also reads one **probe** entry past the window, which proves that older bookings exist without testing that booking's label (PR #487 review: `|window| = S` alone can't tell "more remain" from "exactly `S` remained").
 
 ```sql
-WITH w AS MATERIALIZED (             -- the window: #479's merged branch walks, without label
-  SELECT created_at, id FROM ( <branch walks, each LIMIT :S> ) k
+WITH w AS MATERIALIZED (             -- window + probe: #479's merged branch walks, without label
+  SELECT created_at, id FROM ( <branch walks, each LIMIT :S + 1> ) k
   GROUP BY created_at, id
-  ORDER BY created_at DESC, id DESC LIMIT :S
+  ORDER BY created_at DESC, id DESC LIMIT :S + 1
 ),
-m AS (                               -- matches inside the window, in page order
-  SELECT w.created_at, w.id FROM w JOIN bookings b ON b.id = w.id
+e AS MATERIALIZED (                  -- the examined window: the first S of w
+  SELECT created_at, id FROM w ORDER BY created_at DESC, id DESC LIMIT :S
+),
+m AS (                               -- matches inside the examined window, in page order
+  SELECT e.created_at, e.id FROM e JOIN bookings b ON b.id = e.id
   WHERE b.label ILIKE :pattern
-  ORDER BY w.created_at DESC, w.id DESC LIMIT :limit_plus_one
+  ORDER BY e.created_at DESC, e.id DESC LIMIT :limit_plus_one
 )
-SELECT created_at, id, false AS window_end FROM m
+SELECT created_at, id, false AS is_window_end FROM m
 UNION ALL
-(SELECT created_at, id, (SELECT count(*) FROM w) = :S FROM w
-  ORDER BY created_at, id LIMIT 1)   -- the window's last (oldest) entry, and whether w is full
+SELECT created_at, id, true AS is_window_end
+  FROM (SELECT created_at, id FROM e ORDER BY created_at, id LIMIT 1) last  -- oldest examined entry
+ WHERE (SELECT count(*) FROM w) > :S                                        -- only if the probe exists
+ORDER BY is_window_end, created_at DESC, id DESC
 ```
 
-- **Branch walks are #479's.** They are the same page-key equality, cursor index condition and `ORDER BY … LIMIT`, only with `LIMIT S` and no label predicate. Every entry they visit matches the branch, and none is filtered (`Rows Removed by Filter = 0`). The top `S` of the union is the top `S` of each branch's top `S`, which is #479's correctness argument with `S` in place of `limit + 1`.
-- **`MATERIALIZED` is required.** It keeps the planner from pushing `label ILIKE` down into the branch walks. Pushed down, it would turn them back into filtered walks. The join to `bookings` is by primary key, and there are at most `S` of those lookups. Under the pin (seq and bitmap scans off), the pkey index is the only way in.
-- **At most `limit + 2` rows go back to the application**: up to `limit + 1` matches, plus the window's end marker.
+- **Branch walks are #479's.** They are the same page-key equality, cursor index condition and `ORDER BY … LIMIT`, only with `LIMIT S + 1` and no label predicate. Every entry they visit matches the branch, and none is filtered (`Rows Removed by Filter = 0`). The top `S + 1` of the union is the top `S + 1` of each branch's top `S + 1`, which is #479's correctness argument with `S + 1` in place of `limit + 1`. So the walks read at most `4 × (S + 1)` index entries, and the merge sorts at most that many rows.
+- **The probe is key-only.** The `(S + 1)`-th entry of `w` is never joined to `bookings`, so the label test still reads at most `S` rows. It exists only to answer "is there anything older than the examined window?".
+- **`MATERIALIZED` is required** on `w` and `e`. It keeps the planner from pushing `label ILIKE` down into the branch walks. Pushed down, it would turn them back into filtered walks. The join to `bookings` is by primary key, and there are at most `S` of those lookups. Under the pin (seq and bitmap scans off), the pkey index is the only way in.
+- **The sentinel is explicit.** Match rows carry `is_window_end = false`. The window-end row carries `is_window_end = true`, and it is emitted only when the probe exists, so it is never mistaken for a match. `list_page` separates the two kinds of row by that flag alone, never by position or by comparing keys. The outer `ORDER BY` makes the output order deterministic anyway: matches first, in page order, then the sentinel. The sentinel's key can equal a match's key when the oldest examined booking matches. The flag keeps them apart, so that booking is still listed exactly once.
+- **At most `limit + 2` rows go back to the application**: up to `limit + 1` matches, plus at most one window-end sentinel.
 
 `list_page` decides the page from those rows, in this order:
 1. More than `limit` matches: keep `limit` of them. The cursor is the `limit`-th match (#479's rule).
-2. The window is full (`|w| = S`): keep all the matches, fewer than or exactly `limit`. The cursor is the **window's last entry**, which may be a booking that was not shown. Everything up to it has been examined, so resuming there leaves no gap.
-3. Otherwise the branch range is exhausted: keep all the matches, with no cursor.
+2. A window-end sentinel is present (the probe found an older booking): keep all the matches, `limit` or fewer. The cursor is the **sentinel's key**, the oldest examined booking, which may not have been shown. Everything up to it has been examined, and something older exists, so resuming there leaves no gap and is never a dead step.
+3. Otherwise the range after the cursor held at most `S` bookings and all of them were examined: keep all the matches, with no cursor. This includes the case where exactly `S` bookings remained.
 
-**No label, no window.** An unlabelled page keeps `_page_keys_stmt` exactly as it is, with its index-only walks and no heap join. The window builder is factored out of it and shared, with `size = limit + 1` and no match step when there is no label, so both paths use one definition of the branches. The decision rule above also holds for the unlabelled path: every window entry is a match, so rule 1 or rule 3 always applies.
+**No label, no window.** An unlabelled page keeps `_page_keys_stmt` exactly as it is, with its index-only walks and no heap join. The window builder is factored out of it and shared, with the branch and merge `LIMIT` as a parameter (`limit + 1` unlabelled, `S + 1` labelled), so both paths use one definition of the branches. The unlabelled path keeps #479's own `limit + 1` probe rule and never emits a sentinel.
 
 *Alternatives:*
 - Put a `LIMIT` on examined rows *inside* a filtered walk. SQL has no such construct, because `LIMIT` counts output rows, not scanned ones.
-- Fetch the label inside each branch walk (a non-index-only scan). That makes up to `4 × S` heap fetches instead of `S`.
+- Fetch the label inside each branch walk (a non-index-only scan). That makes up to `4 × (S + 1)` heap fetches instead of `S`.
 - Add `label` as an `INCLUDE` column on the six page-key indexes, so the label test is index-only. That means a migration and index rebuilds to save at most `S` pkey lookups. Not worth it now, and it can be added later without changing the spec.
 
 ### 3. The scan size setting
@@ -82,7 +89,7 @@ UNION ALL
 
 The default of 200 is four page sizes:
 - A label that matches at least a quarter of the range pages as it does today, with full pages and "Load more".
-- One request costs at most 800 index-only entries and 200 pkey lookups, which is the same order as the unlabelled bound (204 entries).
+- One request costs at most 804 index-only entries and 200 pkey lookups, which is the same order as the unlabelled bound (204 entries).
 
 `list_page` takes `scan_size` as a parameter, and the route passes the setting. The repository doesn't read settings.
 
@@ -105,12 +112,13 @@ This extends #479's Decision 9 harness: the same pin, `EXPLAIN (ANALYZE, FORMAT 
 - **Sparse-label dataset.** A viewer with thousands of `FAILED` and `RELEASED` bookings, whose label `needle` matches a handful of bookings deep in their range. Other users have many `needle` bookings. The dataset is committed and `ANALYZE`d. It is used for Mine and All, VM and namespace pages, Show released on and off, with and without a cursor.
 - **Assertions:**
   - one scan per branch, on that branch's page-key index by name, with `Rows Removed by Filter = 0`
-  - the entries visited over the branch scans total at most `4 × S`
+  - the entries visited over the branch scans total at most `4 × (S + 1)`
   - the rows read through `bookings_pkey` total at most `S`, and the label `Filter` sits only on that join
   - no `Seq Scan` or bitmap scan on `bookings`
   - the cursor is an index condition on every branch scan
-  - no `Sort` receives more than `4 × S` rows
+  - no `Sort` receives more than `4 × (S + 1)` rows
 - **Dense label.** A full page, cursor rule 1, and "Load more".
+- **Window edges.** Datasets with exactly `S` bookings after the cursor (no next page), and with `S + 1` (a next page whose window holds one booking). Each is run with the oldest examined booking matching the label and not matching it. The assertions: the booking is listed exactly once or not at all, the sentinel never becomes a listed row, and a cursor is issued only when the probe exists.
 - **Traversal equality.** With `S = 10` and `limit = 3` in the test, following the cursor to the end with a sparse label yields exactly the unpaginated label-filtered list, including through empty windows.
 - **Unlabelled plans.** #479's existing plan tests stay and must pass unchanged.
 - **Unit and route tests.** The three cursor rules; the wording of the control; the three empty-state texts; an empty fragment that holds only a control; and the config validator.
