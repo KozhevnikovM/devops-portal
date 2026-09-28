@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.use_cases._permissions import can_manage
 from app.application.use_cases._roles import resolve_config_roles
+from app.domain.booking_list import BookingListItem
 from app.domain.entities import Booking, User
 from app.domain.enums import BookingStatus, ResourceType
 from app.domain.exceptions import (
@@ -79,8 +80,9 @@ class UpdateBookingLabelRequest(BaseModel):
 
 
 # ── Serialization ──────────────────────────────────────────────────────────────
-def _summary(b: Booking) -> dict:
-    """Full booking view used by the list endpoint. Never includes secrets."""
+def _summary(b: BookingListItem | Booking) -> dict:
+    """Booking view used by the list endpoint (built from the list projection). Never includes
+    secrets."""
     return {
         "id": str(b.id),
         "user_id": b.user_id,
@@ -96,7 +98,7 @@ def _summary(b: Booking) -> dict:
         "hw_config_name": b.hw_config_name,
         "vm_ip": b.vm_ip,
         "config_failed": b.config_failed,
-        "roles": [r.get("name") for r in (b.config_roles or [])],
+        "roles": list(b.config_role_names),
         "namespace": b.namespace_name,
         "cluster": b.cluster_name,
         "api_url": b.api_url,

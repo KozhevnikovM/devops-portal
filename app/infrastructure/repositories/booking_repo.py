@@ -2,10 +2,12 @@ import logging
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
-from sqlalchemy import cast, Connection, Engine, func, or_, select, String
+from sqlalchemy import cast, column, Connection, Engine, func, or_, select, String, Text
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, AsyncSession
 from sqlalchemy.orm import Session, aliased
 
+from app.domain.booking_list import BookingListItem
 from app.domain.booking_status import LIVE_STATUSES, can_transition
 from app.domain.entities import Booking, BookingAuditEntry
 from app.domain.enums import BookingStatus, ResourceType
@@ -233,6 +235,79 @@ def _to_entity(
     )
 
 
+def _role_names_expr():
+    """Configured role names in array order, as text[] — the roles' vars/secret_vars stay in the
+    database. ``ARRAY(SELECT ...)`` yields ``{}`` for an empty role list, never NULL."""
+    role = func.jsonb_array_elements(BookingModel.config_roles).table_valued(
+        column("value", JSONB), with_ordinality="ord",
+    ).render_derived(name="cfg_role")
+    names = select(role.c.value["name"].astext).order_by(role.c.ord).scalar_subquery()
+    return func.array(names, type_=ARRAY(Text))
+
+
+def _list_item_stmt():
+    """Bulk booking-list read (#477): exactly the BookingListItem columns, labelled by field name.
+
+    Never selects the BookingModel entity, nor provisioning_log / startup_script / extra_vars /
+    config_roles — the log is reduced to a presence flag (``octet_length`` reads the TOAST header,
+    not the value) and the roles to their names.
+    """
+    return (
+        select(
+            BookingModel.id.label("id"),
+            BookingModel.user_id.label("user_id"),
+            BookingModel.status.label("status"),
+            BookingModel.resource_type.label("resource_type"),
+            BookingModel.ttl_minutes.label("ttl_minutes"),
+            BookingModel.expires_at.label("expires_at"),
+            BookingModel.created_at.label("created_at"),
+            BookingModel.label.label("label"),
+            BookingModel.status_message.label("status_message"),
+            BookingModel.config_failed.label("config_failed"),
+            BookingModel.environment_id.label("environment_id"),
+            UserModel.username.label("owner_username"),
+            BookingModel.created_by.label("created_by"),
+            _CreatorUser.username.label("created_by_username"),
+            BookingModel.image_id.label("image_id"),
+            BookingModel.image_name.label("image_name"),
+            BookingModel.hw_config_id.label("hw_config_id"),
+            BookingModel.hw_config_name.label("hw_config_name"),
+            BookingModel.vm_ip.label("vm_ip"),
+            BookingModel.vm_password.label("vm_password"),
+            NamespaceModel.name.label("namespace_name"),
+            NamespaceModel.cluster_name.label("cluster_name"),
+            NamespaceModel.api_url.label("api_url"),
+            StaticVMModel.name.label("static_vm_name"),
+            StaticVMModel.host.label("static_vm_host"),
+            StaticVMModel.username.label("static_vm_username"),
+            StaticVMModel.password.label("static_vm_password"),
+            StaticVMModel.ssh_key.label("static_vm_ssh_key"),
+            (func.coalesce(func.octet_length(BookingModel.provisioning_log), 0) > 0)
+            .label("has_provisioning_log"),
+            _role_names_expr().label("config_role_names"),
+        )
+        .select_from(BookingModel)
+        .join(UserModel, cast(UserModel.id, String) == BookingModel.user_id, isouter=True)
+        .outerjoin(NamespaceModel, NamespaceModel.id == BookingModel.namespace_id)
+        .outerjoin(StaticVMModel, StaticVMModel.id == BookingModel.static_vm_id)
+        .outerjoin(_CreatorUser, cast(_CreatorUser.id, String) == BookingModel.created_by)
+        .order_by(BookingModel.created_at.desc())
+    )
+
+
+def _to_list_item(row) -> BookingListItem:
+    fields = dict(row._mapping)
+    try:
+        fields["status"] = BookingStatus(fields["status"])
+    except ValueError:
+        raise ValueError(
+            f"Booking {fields['id']} has unrecognised status {fields['status']!r} in the database"
+        )
+    fields["resource_type"] = ResourceType(fields["resource_type"])
+    fields["config_role_names"] = tuple(fields["config_role_names"] or ())
+    return BookingListItem(**fields)
+
+
 def _apply_resource_type_filter(stmt, resource_type: str | list[str] | None):
     """Filter by a single resource_type or any of a list (VM page wants VM + STATIC_VM)."""
     if resource_type is None:
@@ -409,22 +484,14 @@ class BookingRepository:
         include_released: bool = False,
         resource_type: str | list[str] | None = None,
         label: str | None = None,
-    ) -> list[Booking]:
-        stmt = (
-            select(BookingModel, UserModel.username, NamespaceModel, StaticVMModel, _CreatorUser.username)
-            .join(UserModel, cast(UserModel.id, String) == BookingModel.user_id, isouter=True)
-            .outerjoin(NamespaceModel, NamespaceModel.id == BookingModel.namespace_id)
-            .outerjoin(StaticVMModel, StaticVMModel.id == BookingModel.static_vm_id)
-            .outerjoin(_CreatorUser, cast(_CreatorUser.id, String) == BookingModel.created_by)
-            .order_by(BookingModel.created_at.desc())
-        )
+    ) -> list[BookingListItem]:
+        stmt = _list_item_stmt()
         if not include_released:
             stmt = stmt.where(BookingModel.status != BookingStatus.RELEASED.value)
         stmt = _apply_resource_type_filter(stmt, resource_type)
         stmt = _apply_label_filter(stmt, label)
         result = await session.execute(stmt)
-        return [_to_entity(m, username, ns, svm, created_by_username=creator)
-                for m, username, ns, svm, creator in result.all()]
+        return [_to_list_item(row) for row in result.all()]
 
     async def list_by_user(
         self,
@@ -433,26 +500,19 @@ class BookingRepository:
         include_released: bool = False,
         resource_type: str | list[str] | None = None,
         label: str | None = None,
-    ) -> list[Booking]:
+    ) -> list[BookingListItem]:
         # "Visible to user": bookings they own, plus any they dispatched on someone's behalf
         # (created_by). created_by is only ever a dispatcher/admin id, so for an ordinary user
         # this is just their own bookings.
-        stmt = (
-            select(BookingModel, UserModel.username, NamespaceModel, StaticVMModel, _CreatorUser.username)
-            .join(UserModel, cast(UserModel.id, String) == BookingModel.user_id, isouter=True)
-            .outerjoin(NamespaceModel, NamespaceModel.id == BookingModel.namespace_id)
-            .outerjoin(StaticVMModel, StaticVMModel.id == BookingModel.static_vm_id)
-            .outerjoin(_CreatorUser, cast(_CreatorUser.id, String) == BookingModel.created_by)
-            .where(or_(BookingModel.user_id == user_id, BookingModel.created_by == user_id))
-            .order_by(BookingModel.created_at.desc())
+        stmt = _list_item_stmt().where(
+            or_(BookingModel.user_id == user_id, BookingModel.created_by == user_id)
         )
         if not include_released:
             stmt = stmt.where(BookingModel.status != BookingStatus.RELEASED.value)
         stmt = _apply_resource_type_filter(stmt, resource_type)
         stmt = _apply_label_filter(stmt, label)
         result = await session.execute(stmt)
-        return [_to_entity(m, username, ns, svm, created_by_username=creator)
-                for m, username, ns, svm, creator in result.all()]
+        return [_to_list_item(row) for row in result.all()]
 
     async def list_audit(self, session: AsyncSession, booking_id: UUID) -> list[BookingAuditEntry]:
         result = await session.execute(

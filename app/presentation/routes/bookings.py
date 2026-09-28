@@ -7,7 +7,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.use_cases._permissions import can_manage
 from app.application.use_cases._roles import resolve_config_roles
-from app.domain.entities import User
+from app.domain.booking_list import BookingListItem
+from app.domain.entities import Booking, User
 from app.domain.enums import BookingStatus, ResourceType
 from app.domain.exceptions import (
     BookingError, BookingNotFoundError, NamespaceUnavailableError, BookingPermissionError,
@@ -64,7 +65,7 @@ def _parse_vars_yaml(raw: str) -> dict:
 _VM_PAGE_TYPES = [ResourceType.VM.value, ResourceType.STATIC_VM.value]
 
 
-async def _attach_queue_position(session, booking) -> None:
+async def _attach_queue_position(session, booking: BookingListItem | Booking) -> None:
     """Populate FIFO rank for a QUEUED booking (display only)."""
     if booking.status == BookingStatus.QUEUED:
         booking.queue_position = await _repo.queue_position(
