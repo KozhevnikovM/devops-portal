@@ -89,7 +89,7 @@ async def _list_page(
         session,
         user_id=None if filter == "all" else str(current_user.id),
         resource_types=resource_types, label=label, include_released=show_released,
-        limit=settings.BOOKINGS_PAGE_SIZE, after=after,
+        limit=settings.BOOKINGS_PAGE_SIZE, scan_size=settings.BOOKINGS_LABEL_SCAN_SIZE, after=after,
     )
     for b in page.items:
         await _attach_queue_position(session, b)
@@ -109,6 +109,11 @@ async def _list_page(
         "show_released": show_released,
         "label_filter": label,
         "load_more_url": load_more_url,
+        # A short page with a next page only happens when a label scan ran out (#485): say that
+        # the next step searches older bookings, rather than promising more rows.
+        "searches_older": (
+            page.next_cursor is not None and len(page.items) < settings.BOOKINGS_PAGE_SIZE
+        ),
     }
 
 

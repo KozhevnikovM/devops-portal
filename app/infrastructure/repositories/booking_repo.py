@@ -3,8 +3,8 @@ from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 from sqlalchemy import (
-    cast, column, Connection, Engine, func, literal, or_, select, String, Text, text, tuple_,
-    union_all,
+    cast, column, Connection, Engine, false, func, literal, or_, select, String, Text, text, true,
+    tuple_, union_all,
 )
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, AsyncSession
@@ -340,11 +340,17 @@ def _apply_resource_type_filter(stmt, resource_type: str | list[str] | None):
     return stmt.where(BookingModel.resource_type == resource_type)
 
 
+def _label_filter_text(label: str | None) -> str | None:
+    """The label filter's search text, or None when no label filter applies (blank/None)."""
+    return (label or "").strip() or None
+
+
 def _apply_label_filter(stmt, label: str | None):
     """Case-insensitive substring match on the booking's label; no-op if blank/None."""
-    if label is None or not label.strip():
+    text_ = _label_filter_text(label)
+    if text_ is None:
         return stmt
-    return stmt.where(BookingModel.label.ilike(f"%{label.strip()}%"))
+    return stmt.where(BookingModel.label.ilike(f"%{text_}%"))
 
 
 def _owner_filter(user_id: str):
@@ -359,18 +365,27 @@ def _apply_released_filter(stmt, include_released: bool):
     return stmt if include_released else stmt.where(BOOKING_NOT_RELEASED)
 
 
-# Pin for the page key query (#479, design.md Decision 10). A branch's page key leaves its own
-# index as the only one with usable conditions. With bitmap and sequential scans off and index
-# scans on, reading that index in page order (a walk that stops after limit + 1 entries) is then
-# always cheaper than the only alternatives left, which read the branch or the table whole and
-# sort. Left free, the planner switches an underestimated branch to bitmap scan + sort; and if an
-# operator had turned index scans off, disabling the other two would leave only a sequential scan.
+# Pin for the page key query (#479, design.md Decision 10; #485). A branch's page key leaves its
+# own index as the only one with usable conditions, and the only one read in page order, so that
+# walk needs no sort. Every other path for a branch sorts: a bitmap or sequential scan, or a full
+# scan of another page index whose partial predicate the branch implies (e.g. a creator branch's
+# `created_by IS NOT NULL` makes ix_bookings_creator_page a candidate). Such a full scan is cheap
+# when that index is empty or its statistics are stale, and then reads the index whole with the
+# page key as a mere filter (review of #488). With bitmap scans, sequential scans and sorts off
+# and index scans on, the sort-free page-key walk is the one plan left that no disabled step
+# penalises, whatever the statistics. The label window's own sorts, of at most S + 1 rows, still
+# run: a disabled step is only penalised, and those sorts have no alternative. If an operator
+# had turned index scans off, disabling the rest would leave only a sequential scan, hence "on".
+# Those penalised label-window sorts inflate the plan's estimated cost past jit_above_cost, which
+# would JIT-compile a millisecond query for most of a second — so JIT is off here too.
 # Transaction-local, and restored to the exact previous values right after the key query, so
 # nothing else in the request plans differently.
 _ORDERED_WALK_SETTINGS = {
     "enable_bitmapscan": "off",
     "enable_seqscan": "off",
+    "enable_sort": "off",
     "enable_indexscan": "on",
+    "jit": "off",
 }
 _PIN_ORDERED_WALK = text(
     "WITH prev AS MATERIALIZED (SELECT "
@@ -406,19 +421,20 @@ class _OrderedWalk:
         return False
 
 
-def _page_keys_stmt(
-    user_id: str | None, *, resource_types: list[str], label: str | None, include_released: bool,
-    limit: int, after: KeysetCursor | None,
+def _page_window_stmt(
+    user_id: str | None, *, resource_types: list[str], include_released: bool, size: int,
+    after: KeysetCursor | None,
 ):
-    """Phase 1 of a bookings page (#479): the (created_at, id) keys of up to `limit + 1` bookings.
+    """The (created_at, id) keys of the first `size` bookings after `after`, in page order, of the
+    page's owner / type / released range — no label test (#479, #485).
 
     `OR` across owner columns and `IN` across resource types can't be read in page order from
     one index, so this runs one ordered keyset walk per page scope (Mine: owner, creator; All:
     type) and resource type, then merges them. Each branch constrains exactly its own page-key
     expression (`booking_page_key`), so its own ix_bookings_*_page* index is the only one it can
-    use: a walk that stops after `limit + 1` entries, all of which match. The top `limit + 1` of
-    the union is the top `limit + 1` of the branches' tops, so at most 4 × (limit + 1) entries are
-    read and sorted. GROUP BY drops a booking that both Mine branches found (dispatched to oneself).
+    use: a walk that stops after `size` entries, all of which match. The top `size` of the union
+    is the top `size` of the branches' tops, so at most 4 × size entries are read and sorted.
+    GROUP BY drops a booking that both Mine branches found (dispatched to oneself).
     """
     unreleased = not include_released
     scopes = ["owner", "creator"] if user_id is not None else ["type"]
@@ -432,7 +448,6 @@ def _page_keys_stmt(
             if scope == "creator":
                 branch = branch.where(BOOKING_HAS_CREATOR)   # implies the creator index predicate
             branch = _apply_released_filter(branch, include_released)
-            branch = _apply_label_filter(branch, label)
             if after is not None:
                 # A row comparison is an index condition on (created_at, id) after the page key,
                 # so each walk starts at the cursor. Typed binds, as in environment_repo.
@@ -444,15 +459,81 @@ def _page_keys_stmt(
                     )
                 )
             branches.append(
-                branch.order_by(BookingModel.created_at.desc(), BookingModel.id.desc())
-                .limit(limit + 1)
+                branch.order_by(BookingModel.created_at.desc(), BookingModel.id.desc()).limit(size)
             )
     keys = union_all(*branches).subquery("page_keys")
     return (
         select(keys.c.created_at, keys.c.id)
         .group_by(keys.c.created_at, keys.c.id)
         .order_by(keys.c.created_at.desc(), keys.c.id.desc())
+        .limit(size)
+    )
+
+
+def _page_keys_stmt(
+    user_id: str | None, *, resource_types: list[str], include_released: bool, limit: int,
+    after: KeysetCursor | None,
+):
+    """Phase 1 of an unlabelled bookings page (#479): the keys of up to `limit + 1` bookings —
+    every one a match, the extra one only telling whether another page exists."""
+    return _page_window_stmt(
+        user_id, resource_types=resource_types, include_released=include_released,
+        size=limit + 1, after=after,
+    )
+
+
+def _label_page_keys_stmt(
+    user_id: str | None, *, resource_types: list[str], label: str, include_released: bool,
+    limit: int, scan_size: int, after: KeysetCursor | None,
+):
+    """Phase 1 of a label-filtered bookings page (#485, design.md Decision 2).
+
+    No btree serves a substring match in page order, so instead of walking until `limit + 1`
+    labels match (which on a sparse label walks the whole range), this examines a fixed window:
+    the first `scan_size` bookings of the page's range, via the same page-key walks as an
+    unlabelled page, and tests labels only inside it. One more key-only "probe" entry tells
+    whether anything older than the window exists, without testing its label.
+
+    Rows: up to `limit + 1` matches (`is_window_end` false) in page order, then — only when the
+    probe exists — one sentinel (`is_window_end` true) holding the oldest examined key. The
+    window CTEs are MATERIALIZED so the label test can't be pushed down into the walks, which
+    would turn them back into filtered walks.
+    """
+    window = _page_window_stmt(
+        user_id, resource_types=resource_types, include_released=include_released,
+        size=scan_size + 1, after=after,
+    ).cte("page_window").prefix_with("MATERIALIZED")
+    examined = (
+        select(window.c.created_at, window.c.id)
+        .order_by(window.c.created_at.desc(), window.c.id.desc())
+        .limit(scan_size)
+        .cte("page_examined")
+        .prefix_with("MATERIALIZED")
+    )
+    matches = (
+        _apply_label_filter(
+            select(examined.c.created_at, examined.c.id, false().label("is_window_end"))
+            .join(BookingModel, BookingModel.id == examined.c.id),
+            label,
+        )
+        .order_by(examined.c.created_at.desc(), examined.c.id.desc())
         .limit(limit + 1)
+        .subquery("page_matches")
+    )
+    oldest = (
+        select(examined.c.created_at, examined.c.id)
+        .order_by(examined.c.created_at, examined.c.id)
+        .limit(1)
+        .subquery("page_oldest")
+    )
+    window_end = select(oldest.c.created_at, oldest.c.id, true().label("is_window_end")).where(
+        select(func.count()).select_from(window).scalar_subquery() > scan_size
+    )
+    rows = union_all(
+        select(matches.c.created_at, matches.c.id, matches.c.is_window_end), window_end,
+    ).subquery("page_rows")
+    return select(rows.c.created_at, rows.c.id, rows.c.is_window_end).order_by(
+        rows.c.is_window_end, rows.c.created_at.desc(), rows.c.id.desc(),
     )
 
 
@@ -648,32 +729,50 @@ class BookingRepository:
         label: str | None,
         include_released: bool,
         limit: int,
+        scan_size: int,
         after: KeysetCursor | None,
     ) -> KeysetPage[BookingListItem]:
         """One keyset page of a bookings list, newest first (#479).
 
         `user_id=None` lists everyone's bookings, otherwise the Mine list. The page starts strictly
-        after `after`; one extra key is fetched only to tell whether another page exists. Two
-        phases: the bounded key walk (`_page_keys_stmt`, pinned to ordered index walks), then the
+        after `after`. Two phases: the bounded key query (pinned to ordered index walks), then the
         list projection for the kept ids alone.
+
+        Without a label, one extra key is fetched only to tell whether another page exists. With a
+        label (#485), at most `scan_size` bookings are examined, so the page may be short — even
+        empty — while older matches exist; its cursor is then the last *examined* booking.
         """
+        label = _label_filter_text(label)
         async with _OrderedWalk(session):
-            keys = (await session.execute(_page_keys_stmt(
-                user_id, resource_types=resource_types, label=label,
-                include_released=include_released, limit=limit, after=after,
-            ))).all()
+            if label is not None:
+                rows = (await session.execute(_label_page_keys_stmt(
+                    user_id, resource_types=resource_types, label=label,
+                    include_released=include_released, limit=limit, scan_size=scan_size,
+                    after=after,
+                ))).all()
+            else:
+                rows = (await session.execute(_page_keys_stmt(
+                    user_id, resource_types=resource_types,
+                    include_released=include_released, limit=limit, after=after,
+                ))).all()
+        # Matches and the window-end sentinel are told apart by the flag alone — never by
+        # position or key: the sentinel's key is also a match's when the oldest examined matched.
+        keys = [r for r in rows if not getattr(r, "is_window_end", False)]
+        window_end = next((r for r in rows if getattr(r, "is_window_end", False)), None)
         has_more = len(keys) > limit
         keys = keys[:limit]
         items: list[BookingListItem] = []
         if keys:
-            rows = await session.execute(
+            result = await session.execute(
                 _list_item_stmt().where(BookingModel.id.in_([k.id for k in keys]))
             )
-            items = [_to_list_item(row) for row in rows.all()]
+            items = [_to_list_item(row) for row in result.all()]
         next_cursor = None
-        if has_more:
+        if has_more:                   # a full page: continue after its last booking
             last = keys[-1]
             next_cursor = KeysetCursor(created_at=last.created_at, id=last.id)
+        elif window_end is not None:   # the label scan ran out, and older bookings exist
+            next_cursor = KeysetCursor(created_at=window_end.created_at, id=window_end.id)
         return KeysetPage(items=items, next_cursor=next_cursor)
 
     async def list_audit(self, session: AsyncSession, booking_id: UUID) -> list[BookingAuditEntry]:

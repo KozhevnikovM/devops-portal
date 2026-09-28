@@ -124,10 +124,26 @@ This extends #479's Decision 9 harness: the same pin, `EXPLAIN (ANALYZE, FORMAT 
 - **Unit and route tests.** The three cursor rules; the wording of the control; the three empty-state texts; an empty fragment that holds only a control; and the config validator.
 - `EXPLAIN (ANALYZE, BUFFERS)` output on the sparse dataset, before and after, goes in the code PR (#485's acceptance criterion).
 
+### 6. Pin the branch walks with sorts and JIT off too (review of #488)
+
+#479's pin (its Decision 10) turns bitmap and sequential scans off and forces index scans on. It argued that any remaining alternative to a branch's page-key walk reads a superset of the branch and so always costs more. PR #488's review showed that isn't deterministic.
+
+- **The leak.** A branch must state its own index's partial predicate: `created_by IS NOT NULL` on creator branches, and `status <> 'RELEASED'` when released bookings are hidden. That same predicate implies the predicates of *other* partial page indexes, for example `ix_bookings_creator_page`. PostgreSQL treats an implied partial index as a candidate for a full scan even with no usable condition. It reads the whole index with the page key as a `Filter`, then sorts, because only the branch's own index gives page order.
+- **When it wins.** That full scan is cheap when the index is empty, as when no one has dispatched anything, or when statistics predate its growth. The planner then picks it. The integration test reproduced this, and the stale-statistics case flipped between runs. Once other dispatchers' history grows, the walk reads outside the viewer's range and is no longer bounded by `S + 1`.
+- **Fix: `enable_sort = off` in the pin.** Every path for a branch *except* its own page-key walk needs a sort to produce page order. With sorts disabled, each of those paths carries the planner's disable penalty. The page-key walk carries none, so it wins whatever the statistics say. The unlabelled merge (Merge Append into Group) needs no sort either. The label window's two small sorts, at most `S + 1` rows each, have no sort-free alternative, so they still run with the penalty.
+- **`jit = off` in the pin.** That penalty lifts the label query's estimated cost past `jit_above_cost`, and JIT compiling a 1 ms query took about 1 s: 43 functions, measured on the test DB. JIT is off for the key query only.
+- **Scope.** The pin is still transaction-local, scoped to the key query, and restored to the exact previous values (#479). The restore tests now cover `enable_sort` as well.
+- **Tests.** The adversarial case: a viewer with zero creator bookings and 5,000 bookings created by other dispatchers, analysed both before and after that history grows. It runs on both pages, with released hidden and shown, with and without a cursor, and for both key queries. A second case has no dispatched bookings at all. Each asserts that every walk is on its own index, with the page key (and cursor) as `Index Cond`, no `Filter`, and within the bound. A further test asserts that the pinned label query is not JIT-compiled.
+
+*Alternatives:*
+- Drop the partial predicates by folding them into the key expression. For example, the key could be NULL for released rows in the `…l` variants, with `created_by` NULL leaving the key NULL. No branch would then imply another index's predicate. It is also structural, but needs a migration that rebuilds six indexes. The pin gives the same determinism without one.
+- Extended statistics. They make estimates better but leave the choice probabilistic.
+
 ## Risks / Trade-offs
 
 - [A very sparse label needs many clicks. For example, one match 10,000 bookings deep takes 50 "Search older" steps at `S = 200`.] → That is the price of a strict per-request bound with substring semantics. Operators can raise `S` (documented in `docs/admin-guide.md`), and the empty state says plainly that the search is continuing. An index-backed option can come later behind the same spec, as long as it keeps the bound.
 - [A user reads a short page as "that's all there is".] → The control reads "Search older bookings", not "Load more", whenever the page is short and more may exist, and the empty first page says "among the most recent bookings".
+- [A branch walks another page index whose predicate it implies, in full, when that index is empty or its statistics are stale (review of #488).] → Decision 6: sorts are off in the pin, so the sort-free page-key walk is the only unpenalised path. JIT is off so the penalty doesn't trigger compilation. Adversarial integration tests cover both cases.
 - [The planner inlines the window CTE and pushes the label test into the walks.] → `MATERIALIZED` is explicit, and the plan test asserts `Rows Removed by Filter = 0` on every page-key scan, so a push-down fails the test.
 - [A cursor now points at an unshown booking, and a crafted cursor can point anywhere.] → No change in trust: the server re-applies every filter and the user's visibility on each request (#479), and the cursor only sets the start position.
 - [Rows change between steps.] → As in #479, the no-gaps guarantee holds for a stable dataset. A booking that is relabelled to match after its window was examined isn't shown until the list restarts.

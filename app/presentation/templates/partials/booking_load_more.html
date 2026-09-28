@@ -1,6 +1,8 @@
 {# "Load more" for the bookings lists (#479). Replaces itself (outerHTML) with the next page's rows
    plus, when there is a further page, a new copy of this row — rows already shown are never
-   re-rendered. load_more_url echoes the filters in effect (built in routes/bookings.py). #}
+   re-rendered. load_more_url echoes the filters in effect (built in routes/bookings.py). A short
+   page that still has a next one means a label scan ran out (#485): the control then says it
+   searches older bookings instead of promising more rows. #}
 {% if load_more_url %}
 <tr id="bookings-load-more">
     <td colspan="9" class="px-4 py-3 text-center">
@@ -9,7 +11,7 @@
             hx-target="closest tr"
             hx-swap="outerHTML"
             class="text-xs px-3 py-1 rounded border bg-gray-800 text-gray-400 border-gray-700 hover:text-gray-200 transition-colors"
-        >Load more</button>
+        >{% if searches_older %}Search older bookings{% else %}Load more{% endif %}</button>
     </td>
 </tr>
 {% endif %}

@@ -12,7 +12,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 from urllib.parse import parse_qs, urlparse
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
@@ -36,6 +36,7 @@ from app.infrastructure.repositories.booking_repo import (
     _PIN_ORDERED_WALK,
     _UNPIN_ORDERED_WALK,
     BookingRepository,
+    _label_page_keys_stmt,
     _page_keys_stmt,
     _queue_rank_stmt,
 )
@@ -120,6 +121,21 @@ def test_page_size_must_be_positive(bad):
         Settings(BOOKINGS_PAGE_SIZE=bad)
 
 
+def test_label_scan_size_defaults_to_200():
+    assert Settings().BOOKINGS_LABEL_SCAN_SIZE == 200
+
+
+@pytest.mark.parametrize("page_size,scan_size", [(50, 50), (50, 10), (300, 200)])
+def test_label_scan_size_must_exceed_the_page_size(page_size, scan_size):
+    """#485: with scan size ≤ page size even a label matching everything would never fill a page."""
+    with pytest.raises(ValidationError, match="BOOKINGS_LABEL_SCAN_SIZE"):
+        Settings(BOOKINGS_PAGE_SIZE=page_size, BOOKINGS_LABEL_SCAN_SIZE=scan_size)
+
+
+def test_label_scan_size_just_above_the_page_size_is_accepted():
+    assert Settings(BOOKINGS_PAGE_SIZE=50, BOOKINGS_LABEL_SCAN_SIZE=51).BOOKINGS_LABEL_SCAN_SIZE == 51
+
+
 # ── Partial-index predicates ─────────────────────────────────────────────────
 
 def _sql(expr) -> str:
@@ -170,9 +186,9 @@ def test_page_key_values_are_distinct_per_branch_index(scope, unreleased, owner,
 
 # ── Page key statement ───────────────────────────────────────────────────────
 
-def _keys_sql(user_id, resource_types, *, include_released=False, label=None, after=None) -> str:
+def _keys_sql(user_id, resource_types, *, include_released=False, after=None) -> str:
     stmt = _page_keys_stmt(
-        user_id, resource_types=resource_types, label=label, include_released=include_released,
+        user_id, resource_types=resource_types, include_released=include_released,
         limit=50, after=after,
     )
     return str(stmt.compile(dialect=postgresql.dialect()))
@@ -197,7 +213,7 @@ def test_one_limited_ordered_branch_per_owner_column_and_type(user_id, types, br
 
 def test_page_keys_select_only_the_key_columns():
     stmt = _page_keys_stmt(
-        "u1", resource_types=_VM_TYPES, label=None, include_released=False, limit=50, after=None,
+        "u1", resource_types=_VM_TYPES, include_released=False, limit=50, after=None,
     )
     assert [c.name for c in stmt.selected_columns] == ["created_at", "id"]
 
@@ -214,7 +230,8 @@ def test_queue_rank_uses_the_literal_queued_predicate():
     assert "bookings.status = 'QUEUED'" in sql
 
 
-_PREVIOUS = {"enable_bitmapscan": "on", "enable_seqscan": "off", "enable_indexscan": "off"}
+_PREVIOUS = {"enable_bitmapscan": "on", "enable_seqscan": "off", "enable_sort": "on",
+             "enable_indexscan": "off", "jit": "on"}
 
 
 @pytest.mark.asyncio
@@ -229,7 +246,7 @@ async def test_key_query_runs_pinned_and_the_previous_settings_are_restored_befo
 
     await BookingRepository().list_page(
         session, user_id="u1", resource_types=_VM_TYPES, label=None, include_released=False,
-        limit=50, after=None,
+        limit=50, scan_size=200, after=None,
     )
 
     calls = session.execute.await_args_list
@@ -239,15 +256,144 @@ async def test_key_query_runs_pinned_and_the_previous_settings_are_restored_befo
     assert len(calls) == 4   # then phase 2, unpinned
 
 
-def test_pin_leaves_only_index_scans_and_is_transaction_local():
+def test_pin_leaves_only_the_sort_free_page_key_walk_and_is_transaction_local():
     """Review of #486: bitmap and seq scans off is not enough on its own — index scans are forced
-    on too, or an operator's enable_indexscan = off would leave only a sequential scan."""
+    on too, or an operator's enable_indexscan = off would leave only a sequential scan. Review of
+    #488: sorts are off too, so a full scan of another page index (which needs a sort to give page
+    order) can't tie with the page-key walk when that index is empty or its statistics are stale.
+    JIT is off because the penalised label-window sorts inflate the estimated cost past its
+    threshold."""
     sql = str(_PIN_ORDERED_WALK)
-    for name, value in (("enable_bitmapscan", "off"), ("enable_seqscan", "off"), ("enable_indexscan", "on")):
+    for name, value in (("enable_bitmapscan", "off"), ("enable_seqscan", "off"),
+                        ("enable_sort", "off"), ("enable_indexscan", "on"), ("jit", "off")):
         assert f"current_setting('{name}')" in sql
         assert f"set_config('{name}', '{value}', true)" in sql
         assert f"set_config('{name}', :{name}, true)" in str(_UNPIN_ORDERED_WALK)
-    assert "enable_sort" not in sql
+
+
+# ── Label scan window (#485) ─────────────────────────────────────────────────
+
+def _label_sql(user_id="u1", types=_VM_TYPES, *, after=None) -> str:
+    stmt = _label_page_keys_stmt(
+        user_id, resource_types=types, label="db", include_released=False, limit=50,
+        scan_size=200, after=after,
+    )
+    return str(stmt.compile(dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}))
+
+
+def test_label_window_is_materialized_and_the_walks_carry_no_label_test():
+    """Decision 2: the label test runs only on the examined window, joined by primary key — pushed
+    into the walks it would make them filtered walks again."""
+    sql = _label_sql(after=_CURSOR)
+    assert "page_window AS MATERIALIZED" in sql
+    assert "page_examined AS MATERIALIZED" in sql
+    window = sql[sql.index("page_window AS MATERIALIZED"):sql.index("page_examined AS MATERIALIZED")]
+    assert "ILIKE" not in window.upper()
+    assert window.count("FROM bookings") == 4   # the unlabelled page's four Mine branches
+    assert window.count("(bookings.created_at, bookings.id) <") == 4
+    assert window.count("LIMIT 201") == 5       # S + 1 per branch and for the merge: the probe
+    assert sql.upper().count("ILIKE") == 1
+    assert "JOIN bookings ON bookings.id = page_examined.id" in sql
+
+
+def test_label_rows_end_with_an_explicit_sentinel_in_a_fixed_order():
+    sql = _label_sql()
+    assert "false AS is_window_end" in sql and "true AS is_window_end" in sql
+    assert "FROM page_window) > 200" in sql     # the sentinel only when the probe exists
+    assert sql.rstrip().endswith(
+        "ORDER BY page_rows.is_window_end, page_rows.created_at DESC, page_rows.id DESC"
+    )
+    assert "LIMIT 51" in sql                    # at most limit + 1 matches
+
+
+def _page_session(key_rows, *, projected=True):
+    """A session for list_page: pin → key query (key_rows) → unpin → projection (if any keys kept)."""
+    pin, keys, unpin, items = MagicMock(), MagicMock(), MagicMock(), MagicMock()
+    pin.one.return_value = SimpleNamespace(_mapping=_PREVIOUS)
+    keys.all.return_value = key_rows
+    items.all.return_value = []
+    session = AsyncMock()
+    session.execute = AsyncMock(side_effect=[pin, keys, unpin, items] if projected else [pin, keys, unpin])
+    return session
+
+
+def _key(i, *, end=False):
+    return SimpleNamespace(created_at=_CURSOR.created_at - timedelta(seconds=i), id=uuid4(),
+                           is_window_end=end)
+
+
+async def _label_page(session, limit=3):
+    return await BookingRepository().list_page(
+        session, user_id="u1", resource_types=_VM_TYPES, label="db", include_released=False,
+        limit=limit, scan_size=10, after=None,
+    )
+
+
+def _projected_ids(session) -> list:
+    """The ids phase 2 projects: the one list-of-UUID parameter of the projection statement."""
+    params = session.execute.await_args_list[3].args[0].compile(dialect=postgresql.dialect()).params
+    [ids] = [v for v in params.values() if isinstance(v, list) and v and all(isinstance(i, UUID) for i in v)]
+    return ids
+
+
+@pytest.mark.asyncio
+async def test_label_page_with_more_matches_than_the_limit_continues_after_the_last_shown():
+    rows = [_key(1), _key(2), _key(3), _key(4), _key(9, end=True)]
+    page = await _label_page(session := _page_session(rows))
+    assert page.next_cursor == KeysetCursor(rows[2].created_at, rows[2].id)   # rule 1
+    stmt = session.execute.await_args_list[1].args[0]
+    assert "is_window_end" in [c.name for c in stmt.selected_columns]
+
+
+@pytest.mark.asyncio
+async def test_label_page_short_with_a_sentinel_continues_after_the_last_examined():
+    rows = [_key(1), _key(9, end=True)]
+    session = _page_session(rows)
+    page = await _label_page(session)
+    assert page.next_cursor == KeysetCursor(rows[1].created_at, rows[1].id)   # rule 2
+    assert _projected_ids(session) == [rows[0].id]   # the sentinel is never a listed row
+
+
+@pytest.mark.asyncio
+async def test_label_page_with_no_matches_but_a_sentinel_is_empty_and_continues():
+    end = _key(9, end=True)
+    session = _page_session([end], projected=False)
+    page = await _label_page(session)
+    assert page.items == []
+    assert page.next_cursor == KeysetCursor(end.created_at, end.id)
+    assert session.execute.await_count == 3   # no projection for an empty page
+
+
+@pytest.mark.asyncio
+async def test_label_page_without_a_sentinel_is_the_last():
+    session = _page_session([_key(1), _key(2)])
+    page = await _label_page(session)
+    assert page.next_cursor is None                                            # rule 3
+
+
+@pytest.mark.asyncio
+async def test_sentinel_sharing_a_matchs_key_is_listed_once():
+    """The oldest examined booking matched: its key comes back twice, once per kind of row. The flag,
+    not the key, decides — the booking is listed once and the scan continues after it."""
+    match = _key(5)
+    end = SimpleNamespace(created_at=match.created_at, id=match.id, is_window_end=True)
+    session = _page_session([_key(1), match, end])
+    page = await _label_page(session)
+    ids = _projected_ids(session)
+    assert ids.count(match.id) == 1 and len(ids) == 2
+    assert page.next_cursor == KeysetCursor(match.created_at, match.id)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("label", [None, "", "   "])
+async def test_blank_label_takes_the_unlabelled_key_query(label):
+    session = _page_session([_key(1)])
+    await BookingRepository().list_page(
+        session, user_id="u1", resource_types=_VM_TYPES, label=label, include_released=False,
+        limit=3, scan_size=10, after=None,
+    )
+    stmt = session.execute.await_args_list[1].args[0]
+    assert [c.name for c in stmt.selected_columns] == ["created_at", "id"]
 
 
 # ── First page: GET / , /book/vm, /book/namespace ────────────────────────────
@@ -261,6 +407,7 @@ def test_page_requests_first_page_with_configured_limit(client, repo, user, path
     kwargs = repo.list_page.await_args.kwargs
     assert kwargs["after"] is None
     assert kwargs["limit"] == settings.BOOKINGS_PAGE_SIZE
+    assert kwargs["scan_size"] == settings.BOOKINGS_LABEL_SCAN_SIZE
     assert kwargs["user_id"] == str(user.id)
     assert kwargs["resource_types"] == types
     assert kwargs["include_released"] is False
@@ -354,6 +501,7 @@ def test_rows_forwards_cursor_filters_and_the_paths_types(client, repo, path, ty
     assert kwargs["label"] == "dev"
     assert kwargs["resource_types"] == types
     assert kwargs["limit"] == settings.BOOKINGS_PAGE_SIZE
+    assert kwargs["scan_size"] == settings.BOOKINGS_LABEL_SCAN_SIZE
 
 
 def test_rows_mine_is_default_and_hides_released(client, repo, user):
@@ -425,3 +573,75 @@ def test_rows_routes_absent_from_schema():
     paths = TestClient(app).get("/openapi.json").json()["paths"]
     for path in _ROWS:
         assert path not in paths
+
+
+# ── Short label pages and the label-aware empty state (#485) ─────────────────
+
+def _control_text(html: str) -> str:
+    anchor = html.index('id="bookings-load-more"')
+    start = html.index(">", html.index("<button", anchor)) + 1
+    return html[start:html.index("</button>", start)].strip()
+
+
+def _empty_text(html: str) -> str:
+    anchor = html.index('id="empty-row"')
+    start = html.index(">", html.index("<td", anchor)) + 1
+    return " ".join(html[start:html.index("</td>", start)].split())
+
+
+def test_full_page_with_a_next_page_says_load_more(client, repo, user):
+    items = [_booking(user) for _ in range(settings.BOOKINGS_PAGE_SIZE)]
+    repo.list_page.return_value = KeysetPage(items=items, next_cursor=_CURSOR)
+    assert _control_text(client.get("/book/vm?label=db").text) == "Load more"
+
+
+@pytest.mark.parametrize("path", ["/book/vm?label=db", f"/book/vm/rows?cursor={encode_cursor(_CURSOR)}&label=db"])
+def test_short_page_with_a_next_page_says_search_older_bookings(client, repo, user, path):
+    repo.list_page.return_value = KeysetPage(items=[_booking(user)], next_cursor=_CURSOR)
+    resp = client.get(path)
+    assert _control_text(resp.text) == "Search older bookings"
+    assert "Load more" not in resp.text
+
+
+def test_rows_fragment_full_page_says_load_more(client, repo, user):
+    items = [_booking(user) for _ in range(settings.BOOKINGS_PAGE_SIZE)]
+    repo.list_page.return_value = KeysetPage(items=items, next_cursor=_CURSOR)
+    resp = client.get(f"/book/vm/rows?cursor={encode_cursor(_CURSOR)}&label=db")
+    assert _control_text(resp.text) == "Load more"
+
+
+def test_empty_page_without_a_label_says_no_bookings_yet(client, repo):
+    assert _empty_text(client.get("/book/namespace").text) == "No namespace bookings yet."
+
+
+def test_empty_label_page_that_continues_says_among_the_most_recent(client, repo):
+    repo.list_page.return_value = KeysetPage(items=[], next_cursor=_CURSOR)
+    resp = client.get("/book/vm?label=db")
+    assert _empty_text(resp.text) == "No bookings matching “db” among the most recent bookings."
+    assert "bookings yet" not in resp.text
+    assert _control_text(resp.text) == "Search older bookings"
+    assert decode_cursor(_load_more_query(resp.text)["cursor"][0]) == _CURSOR
+    # The control still follows the empty row, so the order form's prepend removes only that row.
+    assert resp.text.index('id="bookings-load-more"') > resp.text.index('id="empty-row"')
+
+
+def test_empty_label_page_that_ends_says_no_bookings_match(client, repo):
+    repo.list_page.return_value = KeysetPage(items=[], next_cursor=None)
+    resp = client.get("/book/vm?label=db")
+    assert _empty_text(resp.text) == "No bookings match “db”."
+    assert "bookings-load-more" not in resp.text
+
+
+def test_blank_label_keeps_the_no_bookings_yet_message(client, repo):
+    assert _empty_text(client.get("/book/vm?label=%20%20").text) == "No vm bookings yet."
+
+
+def test_empty_rows_page_with_a_next_page_holds_only_the_new_control(client, repo):
+    nxt = KeysetCursor(created_at=_CURSOR.created_at - timedelta(days=1), id=uuid4())
+    repo.list_page.return_value = KeysetPage(items=[], next_cursor=nxt)
+    resp = client.get(f"/book/vm/rows?cursor={encode_cursor(_CURSOR)}&label=db")
+    assert resp.status_code == 200
+    assert 'id="empty-row"' not in resp.text
+    assert resp.text.count("<tr") == 1 and 'id="bookings-load-more"' in resp.text
+    assert _control_text(resp.text) == "Search older bookings"
+    assert decode_cursor(_load_more_query(resp.text)["cursor"][0]) == nxt
