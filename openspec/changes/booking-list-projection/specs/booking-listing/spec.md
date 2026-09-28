@@ -49,7 +49,7 @@ The bookings table SHALL show, for every listed booking, the same state and offe
 - the environment-managed hint
 - the row's actions and their permission gating
 
-The "View full log" link SHALL be shown exactly when the booking has a non-empty provisioning log. A row rendered from a bulk list read SHALL be identical to the same booking's row rendered by the single-row refresh or a live row update.
+The "View full log" link SHALL be shown exactly when the booking has a non-empty provisioning log. A row rendered from a bulk list read SHALL be semantically equivalent to the same booking's row rendered by the single-row refresh or a live row update, for the same viewing user. It SHALL show the same displayed state and the same credentials, and it SHALL offer the same actions under the same permission gating. Presentational differences that do not change what is displayed or offered are not covered by this requirement. One example is the first table row's action-menu positioning.
 
 #### Scenario: View full log link follows log presence
 - **WHEN** the bookings page lists one booking with a non-empty provisioning log and one with no log or an empty log
@@ -64,8 +64,9 @@ The "View full log" link SHALL be shown exactly when the booking has a non-empty
 - **THEN** its row shows queue position 3 and the cancel action, as before
 
 #### Scenario: List row matches the refreshed row
-- **WHEN** a booking's row is rendered once from the bookings page and once from the single-row refresh, for the same user and with no change to the booking in between
-- **THEN** both renderings show the same state and the same actions
+- **WHEN** a booking's row is rendered once from the bookings page that lists its resource type and once from the single-row refresh, for the same user and with no change to the booking in between
+- **THEN** both renderings show the same state and credentials, and offer the same actions
+- **AND** they may differ only presentationally, such as the first row's action-menu positioning
 
 #### Scenario: Credentials visibility is unchanged
 - **WHEN** a non-admin user views the All list, which contains a READY VM booking owned by another user

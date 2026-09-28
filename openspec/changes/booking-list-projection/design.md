@@ -118,11 +118,17 @@ The new tests do three things:
 3. **Postgres integration.** Against a real database, insert a VM booking with a large log, roles with vars and secret vars, a startup script and extra-vars. Then check:
    - `list_by_user` returns `has_provisioning_log=True` and the ordered `config_role_names`.
    - An empty-string log gives `False`.
-   - The rendered table row matches the `/row` rendering of the same booking. This is the spec's "List row matches the refreshed row" scenario.
+   - The table row and the `/row` rendering of the same booking are **semantically** equal. This is the spec's "List row matches the refreshed row" scenario.
+     - Each booking is rendered from the bookings page that lists its type: VM and static VM from `/book/vm`, namespace from `/book/namespace`. `GET /` lists only VM and static VM.
+     - Byte equality is not the contract. The list passes `is_first_row = loop.first`, which switches the action-menu positioning classes, and `/row` does not. So a small stdlib `html.parser` helper reduces each `<tr id="booking-<id>">` to a comparable summary:
+       - the whitespace-normalised visible text, which covers state, labels, credentials, TTL/expiry, queue position and role chips
+       - the set of actions, each as the tag, its `href`/`hx-get`/`hx-post`/`hx-put`/`hx-patch`/`hx-delete` target and its visible label
+
+       `class` and other purely presentational attributes are ignored. The test compares the two summaries.
 
 ## Risks / Trade-offs
 
-- **The partial silently reads an attribute the projection lacks.** Jinja renders a missing attribute as empty. → The row-parity test in D5.3 renders both paths for each resource type (VM, static VM, namespace, queued), as owner and as a non-owner admin, and compares them. The field set is pinned by D5.1.
+- **The partial silently reads an attribute the projection lacks.** Jinja renders a missing attribute as empty. → The row-parity test in D5.3 renders both paths for each resource type (VM, static VM, namespace, queued), each from the page that lists it. It renders as the owner and as a non-owner admin, and compares the semantic row summaries. Missing text, credentials or actions show up as a difference, while positioning classes do not. The field set is pinned by D5.1.
 - **Role names come from a PostgreSQL-only JSONB function.** The unit suite uses mocked sessions and never runs it. → It is exercised by the `-m integration` suite, which CI already gates.
 - **Rows without a `name` key.** `_summary` today emits `None` for a role dict with no `name` key. The SQL `->> 'name'` also yields `NULL`, which is kept in the array. Every writer (`_roles.py`, `order_environment.py`) always sets `name`, so the result is identical in practice.
 - **Mutable read model.** Only `queue_position` is meant to be assigned. → It is documented on the field. The alternative, a frozen type with a second queue-position helper, would add a special case.

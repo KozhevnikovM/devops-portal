@@ -22,9 +22,9 @@
   - For both `list_all` and `list_by_user` (captured via an AsyncMock session), no forbidden column is among the selected columns, and `BookingModel` is not a selected entity.
 
   Verify that the tests pass. Also check that temporarily adding `BookingModel.provisioning_log` to the select makes them fail, then revert it.
-- [ ] 4.2 Add a Postgres integration test (`tests/integration/test_booking_list_projection.py`, marked `integration`). It seeds VM, static-VM, namespace and queued bookings, including a VM with a large log, roles with vars/secret_vars, a startup script and extra-vars, plus one with an empty-string log. It then asserts:
+- [ ] 4.2 Add a Postgres integration test (`tests/integration/test_booking_list_projection.py`, marked `integration`). It seeds VM, static-VM, namespace and queued-namespace bookings, including a VM with a large log, roles with vars/secret_vars, a startup script and extra-vars, plus one with an empty-string log. It then asserts:
   - `has_provisioning_log` and the ordered `config_role_names` values.
-  - The HTML row from `GET /` equals the `GET /bookings/{id}/row` HTML for each booking, as the owner and as an admin non-owner.
+  - Each booking's list row is semantically equal to its `GET /bookings/{id}/row` rendering, as the owner and as an admin non-owner. VM and static-VM rows come from `/book/vm`, and namespace and queued-namespace rows from `/book/namespace`. The comparison uses the stdlib `html.parser` row summary from design D5.3 (normalised visible text plus the action set of tag, target and label, ignoring `class`), not raw HTML equality, because the list's `is_first_row` menu positioning intentionally differs.
   - The `GET /api/v1/bookings` entry equals the pre-change `_summary` of the full `Booking`.
 
   Verify with `TEST_POSTGRES_URL=… pytest -m integration tests/integration/test_booking_list_projection.py`.
