@@ -7,8 +7,9 @@ strictly after a (created_at, id) cursor. Every traversal is checked against the
 Guarantee (design.md, Decisions 2, 3, 9 and 10): without a label, page selection reads at most
 4 × (limit + 1) booking index entries on the plan the page query runs — pinned by `list_page` to
 the ordered index walks; plans here are taken under that same pin, never a setting of the test's
-own — however much RELEASED / FAILED history other users or other resource types have. The label filter is the one
-exception (#485). Queue rank reads only QUEUED rows.
+own — however much RELEASED / FAILED history other users or other resource types have. With a
+label (#485) it examines a window of at most the scan size S: at most 4 × (S + 1) index entries
+and S label tests, however sparse the label. Queue rank reads only QUEUED rows.
 """
 import json
 from datetime import datetime, timedelta, timezone
@@ -25,6 +26,7 @@ from app.domain.pagination import KeysetCursor
 from app.infrastructure.database.models import BookingModel
 from app.infrastructure.repositories.booking_repo import (
     BookingRepository,
+    _label_page_keys_stmt,
     _OrderedWalk,
     _page_keys_stmt,
     _queue_rank_stmt,
@@ -36,6 +38,8 @@ S = BookingStatus
 _repo = BookingRepository()
 _VM_TYPES = ["VM", "STATIC_VM"]
 _NS_TYPES = ["NAMESPACE"]
+# The label scan size (#485) for tests that don't exercise it: larger than any seeded range.
+_SCAN = 200
 # Far in the future so seeded rows sort before any other booking in the test database.
 _BASE = datetime(2999, 1, 1, tzinfo=timezone.utc)
 
@@ -62,20 +66,27 @@ def _spaced(owner: str, n: int, step=timedelta(seconds=1), start=_BASE, **kw) ->
 
 
 async def _traverse(session, *, limit, user_id, resource_types=_VM_TYPES, label=None,
-                    include_released=True):
+                    include_released=True, scan_size=_SCAN):
     """Follow next_cursor from the first page to the last; return the pages' id lists."""
     pages, after = [], None
     while True:
         page = await _repo.list_page(
             session, user_id=user_id, resource_types=resource_types, label=label,
-            include_released=include_released, limit=limit, after=after,
+            include_released=include_released, limit=limit, scan_size=scan_size, after=after,
         )
         assert len(page.items) <= limit
         pages.append([b.id for b in page.items])
         if page.next_cursor is None:
             return pages
-        # The cursor is the last row shown on this page.
-        assert page.next_cursor == KeysetCursor(page.items[-1].created_at, page.items[-1].id)
+        if label is None:
+            # An unlabelled page is full and continues after the last row it shows.
+            assert len(page.items) == limit
+            assert page.next_cursor == KeysetCursor(page.items[-1].created_at, page.items[-1].id)
+        elif page.items:
+            # A label page continues after its last row, or — when its scan ran out (#485) —
+            # after the last booking it examined; never before a row it shows.
+            last = page.items[-1]
+            assert (page.next_cursor.created_at, page.next_cursor.id) <= (last.created_at, last.id)
         after = page.next_cursor
 
 
@@ -104,7 +115,7 @@ async def test_page_bound_and_next_cursor(async_session, n, first_page, has_more
 
     page = await _repo.list_page(
         async_session, user_id=owner, resource_types=_VM_TYPES, label=None,
-        include_released=True, limit=5, after=None,
+        include_released=True, limit=5, scan_size=_SCAN, after=None,
     )
     assert [b.id for b in page.items] == ids[:first_page]   # newest first
     assert (page.next_cursor is not None) is has_more
@@ -143,13 +154,13 @@ async def test_cursor_keeps_microsecond_precision(async_session):
 
     first = await _repo.list_page(
         async_session, user_id=owner, resource_types=_VM_TYPES, label=None,
-        include_released=True, limit=1, after=None,
+        include_released=True, limit=1, scan_size=_SCAN, after=None,
     )
     assert [x.id for x in first.items] == [a]
     assert first.next_cursor.created_at == _BASE
     second = await _repo.list_page(
         async_session, user_id=owner, resource_types=_VM_TYPES, label=None,
-        include_released=True, limit=1, after=first.next_cursor,
+        include_released=True, limit=1, scan_size=_SCAN, after=first.next_cursor,
     )
     assert [x.id for x in second.items] == [b]
     assert second.next_cursor is None
@@ -172,12 +183,12 @@ async def test_row_added_after_first_page_does_not_shift_later_pages(async_sessi
     ids = await _seed(async_session, _spaced(owner, 6))
     first = await _repo.list_page(
         async_session, user_id=owner, resource_types=_VM_TYPES, label=None,
-        include_released=True, limit=3, after=None,
+        include_released=True, limit=3, scan_size=_SCAN, after=None,
     )
     await _seed(async_session, [_row(owner, _BASE + timedelta(seconds=1))])   # newer
     second = await _repo.list_page(
         async_session, user_id=owner, resource_types=_VM_TYPES, label=None,
-        include_released=True, limit=3, after=first.next_cursor,
+        include_released=True, limit=3, scan_size=_SCAN, after=first.next_cursor,
     )
     assert [b.id for b in second.items] == ids[3:]
 
@@ -355,7 +366,7 @@ async def test_page_selection_is_bounded_by_the_page_size(
     user_id = data["viewer"] if mine else None
     first = await _repo.list_page(
         async_session, user_id=user_id, resource_types=resource_types, label=None,
-        include_released=include_released, limit=_LIMIT, after=None,
+        include_released=include_released, limit=_LIMIT, scan_size=_SCAN, after=None,
     )
     assert len(first.items) == _LIMIT and first.next_cursor is not None
     if not include_released:
@@ -363,8 +374,7 @@ async def test_page_selection_is_bounded_by_the_page_size(
 
     for after in (None, first.next_cursor):
         stmt = _page_keys_stmt(
-            user_id, resource_types=resource_types, label=None,
-            include_released=include_released, limit=_LIMIT, after=after,
+            user_id, resource_types=resource_types, include_released=include_released, limit=_LIMIT, after=after,
         )
         plan = await _page_plan(async_session, stmt)
         _assert_bounded(plan, include_released=include_released, mine=mine, after=after,
@@ -382,8 +392,7 @@ async def test_bound_holds_when_statistics_underestimate_the_branch(async_sessio
              rtype="NAMESPACE")
         for i in range(600)
     ])
-    stmt = _page_keys_stmt(viewer, resource_types=_NS_TYPES, label=None,
-                           include_released=include_released, limit=_LIMIT, after=None)
+    stmt = _page_keys_stmt(viewer, resource_types=_NS_TYPES, include_released=include_released, limit=_LIMIT, after=None)
     plan = await _page_plan(async_session, stmt)
     _assert_bounded(plan, include_released=include_released, mine=True, after=None, types=_NS_TYPES)
 
@@ -405,14 +414,13 @@ async def test_bound_holds_when_an_operator_disabled_index_scans(async_session):
     assert tuple(pinned) == ("on", "off", "off")
 
     for mine in (True, False):
-        stmt = _page_keys_stmt(data["viewer"] if mine else None, resource_types=_VM_TYPES, label=None,
-                               include_released=False, limit=_LIMIT, after=None)
+        stmt = _page_keys_stmt(data["viewer"] if mine else None, resource_types=_VM_TYPES, include_released=False, limit=_LIMIT, after=None)
         plan = await _page_plan(async_session, stmt)
         _assert_bounded(plan, include_released=False, mine=mine, after=None)
 
     page = await _repo.list_page(
         async_session, user_id=data["viewer"], resource_types=_VM_TYPES, label=None,
-        include_released=False, limit=_LIMIT, after=None,
+        include_released=False, limit=_LIMIT, scan_size=_SCAN, after=None,
     )
     assert len(page.items) == _LIMIT
     settings = (await async_session.execute(text(
@@ -432,7 +440,7 @@ async def test_list_page_restores_the_previous_planner_settings(async_session):
 
     page = await _repo.list_page(
         async_session, user_id=owner, resource_types=_VM_TYPES, label=None,
-        include_released=True, limit=2, after=None,
+        include_released=True, limit=2, scan_size=_SCAN, after=None,
     )
 
     assert len(page.items) == 2
@@ -448,7 +456,7 @@ async def test_partial_index_is_used_under_a_generic_plan(async_session):
     as asyncpg sends them) can use the RELEASED-free index (design.md, Decision 2)."""
     data = await _seed_history(async_session)
     stmt = _page_keys_stmt(
-        data["viewer"], resource_types=["VM"], label=None, include_released=False,
+        data["viewer"], resource_types=["VM"], include_released=False,
         limit=_LIMIT, after=None,
     )
     compiled = stmt.compile(dialect=postgresql.dialect())
@@ -539,8 +547,7 @@ async def test_mine_branches_use_only_their_own_index_when_the_type_walk_looks_c
     await async_session.execute(text("ANALYZE bookings"))
 
     for after in (None, KeysetCursor(_BASE - timedelta(seconds=1), UUID(int=0))):
-        stmt = _page_keys_stmt(viewer, resource_types=["VM"], label=None,
-                               include_released=include_released, limit=_LIMIT, after=after)
+        stmt = _page_keys_stmt(viewer, resource_types=["VM"], include_released=include_released, limit=_LIMIT, after=after)
         plan = await _page_plan(async_session, stmt)
         _assert_bounded(plan, include_released=include_released, mine=True, after=after, types=["VM"])
 
@@ -563,8 +570,7 @@ async def test_mine_branches_use_only_their_own_index_under_misleading_statistic
              rtype="NAMESPACE", created_by=viewer if i % 2 else None) for i in range(400)
     ])
 
-    stmt = _page_keys_stmt(viewer, resource_types=_NS_TYPES, label=None,
-                           include_released=include_released, limit=_LIMIT, after=None)
+    stmt = _page_keys_stmt(viewer, resource_types=_NS_TYPES, include_released=include_released, limit=_LIMIT, after=None)
     plan = await _page_plan(async_session, stmt)
     _assert_bounded(plan, include_released=include_released, mine=True, after=None, types=_NS_TYPES)
 
@@ -581,8 +587,7 @@ async def test_all_branches_use_only_their_own_index(async_session, include_rele
     await _add_broad_indexes(async_session)
     await async_session.execute(text("ANALYZE bookings"))
 
-    stmt = _page_keys_stmt(None, resource_types=_NS_TYPES, label=None,
-                           include_released=include_released, limit=_LIMIT, after=None)
+    stmt = _page_keys_stmt(None, resource_types=_NS_TYPES, include_released=include_released, limit=_LIMIT, after=None)
     plan = await _page_plan(async_session, stmt)
     _assert_bounded(plan, include_released=include_released, mine=False, after=None, types=_NS_TYPES)
 
@@ -609,8 +614,8 @@ async def test_queue_rank_reads_only_the_queue(async_session):
 
 
 async def test_label_walk_stays_within_the_users_own_branches(async_session):
-    """The label filter is the one unbounded case (#485), but a Mine walk never leaves the
-    viewer's owner / creator index ranges, however common the label is among other users."""
+    """A Mine label page never leaves the viewer's owner / creator index ranges, however common the
+    label is among other users."""
     await _seed_history(async_session)
     owner = f"inttest-{uuid4()}"
     token = f"tok{uuid4().hex[:8]}"
@@ -626,16 +631,243 @@ async def test_label_walk_stays_within_the_users_own_branches(async_session):
 
     page = await _repo.list_page(
         async_session, user_id=owner, resource_types=_VM_TYPES, label=token,
-        include_released=True, limit=_LIMIT, after=None,
+        include_released=True, limit=_LIMIT, scan_size=_SCAN, after=None,
     )
     assert [b.id for b in page.items] == [r["id"] for r in rows if r["label"] == f"{token}-mine"]
 
-    stmt = _page_keys_stmt(owner, resource_types=_VM_TYPES, label=token, include_released=True,
-                           limit=_LIMIT, after=None)
+    stmt = _label_page_keys_stmt(owner, resource_types=_VM_TYPES, label=token, include_released=True,
+                                 limit=_LIMIT, scan_size=_SCAN, after=None)
     plan = await _page_plan(async_session, stmt)
     scans = [n for n in _nodes(plan) if n.get("Relation Name") == "bookings"]
-    assert scans and all(
+    walks = [n for n in scans if n["Index Name"] != "bookings_pkey"]
+    assert walks and all(
         n["Node Type"] in ("Index Scan", "Index Only Scan")
         and n["Index Name"].startswith(("ix_bookings_owner_page", "ix_bookings_creator_page"))
-        for n in scans
+        for n in walks
     ), plan
+
+
+# ── #485: label-filtered pages are bounded by the scan size ──────────────────────────────────
+
+_LABEL_LIMIT = 10
+_LABEL_SCAN = 50
+_LABEL_BOUND = 4 * (_LABEL_SCAN + 1)
+
+
+async def _seed_sparse_label(session, needle: str) -> dict:
+    """A large, ANALYZEd history where `needle` is sparse (task 4.1).
+
+    - `crowd`: 4000 RELEASED / FAILED bookings owned by others, newer than the viewer's, of every
+      page type; only every 997th carries `needle`, so All with the label is sparse too.
+    - `viewer`: 1500 bookings of both page types, interleaved READY / FAILED / RELEASED, labelled
+      "other" except a handful deep in the history; plus bookings it dispatched for others.
+    """
+    viewer = f"inttest-{uuid4()}"
+    crowd = []
+    for i in range(4000):
+        rtype = "NAMESPACE" if i % 50 == 0 else ("STATIC_VM" if i % 7 == 0 else "VM")
+        crowd.append(_row(f"inttest-crowd-{i % 97}", _BASE - timedelta(milliseconds=i),
+                          status=(S.RELEASED, S.FAILED)[i % 2], rtype=rtype,
+                          label=f"{needle}-crowd" if i % 997 == 0 else "other"))
+    older = _BASE - timedelta(hours=1)
+    mine = []
+    deep = {1100, 1250, 1301, 1402, 1460, 1497, 1498}
+    for i in range(1500):
+        mine.append(_row(viewer, older - timedelta(seconds=i),
+                         status=(S.RELEASED, S.FAILED, S.READY, S.FAILED, S.RELEASED)[i % 5],
+                         rtype=("VM", "STATIC_VM", "VM", "NAMESPACE")[i % 4],
+                         label=f"{needle}-mine" if i in deep else "other"))
+    for i in range(40):
+        mine.append(_row(f"inttest-crowd-{i}", older - timedelta(seconds=i, microseconds=5),
+                         status=(S.READY, S.FAILED, S.RELEASED)[i % 3],
+                         rtype=("VM", "NAMESPACE")[i % 2], created_by=viewer, label="other"))
+    await _seed(session, crowd + mine)
+    await session.execute(text("ANALYZE bookings"))
+    count = (await session.execute(text(
+        "SELECT count(*) FROM bookings WHERE user_id = :v"), {"v": viewer})).scalar_one()
+    assert count == 1500
+    matches = (await session.execute(text(
+        "SELECT count(*) FROM bookings WHERE label ILIKE :p"), {"p": f"%{needle}%"})).scalar_one()
+    assert matches == len(deep) + len([i for i in range(4000) if i % 997 == 0])
+    return {"viewer": viewer}
+
+
+def _assert_label_bounded(plan: dict, *, include_released: bool, mine: bool, after,
+                          types=_VM_TYPES) -> None:
+    """Design Decision 2 / task 4.2: the walks are #479's (own index, nothing filtered, cursor as
+    an index condition) but bounded by S + 1; the label is tested only by pkey lookups, ≤ S."""
+    nodes = list(_nodes(plan))
+    scans = [n for n in nodes if n.get("Relation Name") == "bookings"]
+    assert all(n["Node Type"] in ("Index Scan", "Index Only Scan") for n in scans), plan
+    assert not [n for n in nodes if n["Node Type"].startswith("Bitmap")], plan
+    walks = [n for n in scans if n["Index Name"] != "bookings_pkey"]
+    lookups = [n for n in scans if n["Index Name"] == "bookings_pkey"]
+    assert len(walks) == len(types) * (2 if mine else 1), plan
+    assert {n["Index Name"] for n in walks} == _expected_indexes(mine=mine, include_released=include_released), plan
+    assert all(n.get("Rows Removed by Filter", 0) == 0 and "Filter" not in n for n in walks), plan
+    visited = sum(_visited(n) for n in walks)
+    assert visited <= _LABEL_BOUND, (visited, plan)
+    for walk in walks:
+        if after is not None:
+            assert "ROW(created_at, id) < ROW(" in walk["Index Cond"], walk
+    # The label test: pkey lookups of the examined window only, and nowhere else.
+    assert lookups, plan
+    assert sum(_visited(n) for n in lookups) <= _LABEL_SCAN, plan
+    label_tests = [n for n in nodes if "~~*" in n.get("Filter", "") + n.get("Join Filter", "")]
+    assert label_tests and all(n in lookups for n in label_tests), plan
+    for n in nodes:
+        if n["Node Type"] == "Sort":
+            assert all(c["Actual Rows"] <= _LABEL_BOUND for c in n.get("Plans", [])), plan
+
+
+@pytest.mark.parametrize("mine", [True, False], ids=["mine", "all"])
+@pytest.mark.parametrize("resource_types", [_VM_TYPES, _NS_TYPES], ids=["vm-page", "namespace-page"])
+@pytest.mark.parametrize("include_released", [False, True], ids=["hide-released", "show-released"])
+async def test_sparse_label_page_selection_is_bounded_by_the_scan_size(
+    async_session, mine, resource_types, include_released,
+):
+    needle = f"tok{uuid4().hex[:8]}"
+    data = await _seed_sparse_label(async_session, needle)
+    user_id = data["viewer"] if mine else None
+    first = await _repo.list_page(
+        async_session, user_id=user_id, resource_types=resource_types, label=needle,
+        include_released=include_released, limit=_LABEL_LIMIT, scan_size=_LABEL_SCAN, after=None,
+    )
+    # The needle is sparse: the first window can't fill a page, but the scan continues.
+    assert len(first.items) < _LABEL_LIMIT and first.next_cursor is not None
+    if mine:
+        assert first.items == []   # the viewer's matches are all deep in their history
+
+    for after in (None, first.next_cursor):
+        stmt = _label_page_keys_stmt(
+            user_id, resource_types=resource_types, label=needle, include_released=include_released,
+            limit=_LABEL_LIMIT, scan_size=_LABEL_SCAN, after=after,
+        )
+        plan = await _page_plan(async_session, stmt)
+        _assert_label_bounded(plan, include_released=include_released, mine=mine, after=after,
+                              types=resource_types)
+
+
+async def test_label_plan_uses_the_partial_indexes_under_a_generic_plan(async_session):
+    """Task 4.3: the literal released predicate still matches the partial indexes when the label
+    query is a generic prepared plan (owner, type and label as parameters)."""
+    needle = f"tok{uuid4().hex[:8]}"
+    data = await _seed_sparse_label(async_session, needle)
+    stmt = _label_page_keys_stmt(
+        data["viewer"], resource_types=["VM"], label=needle, include_released=False,
+        limit=_LABEL_LIMIT, scan_size=_LABEL_SCAN, after=None,
+    )
+    compiled = stmt.compile(dialect=postgresql.dialect())
+    names = list(compiled.params)
+    sql = str(compiled)
+    for i, name in enumerate(names, start=1):
+        sql = sql.replace(f"%({name})s", f"${i}")
+    args = ", ".join(
+        str(compiled.params[n]) if isinstance(compiled.params[n], int) else f"'{compiled.params[n]}'"
+        for n in names
+    )
+    await async_session.execute(text("SET LOCAL plan_cache_mode = force_generic_plan"))
+    await async_session.execute(text(f"PREPARE label_keys AS {sql}"))
+    try:
+        async with _OrderedWalk(async_session):
+            plan = "\n".join(
+                (await async_session.execute(text(f"EXPLAIN EXECUTE label_keys({args})"))).scalars()
+            )
+    finally:
+        await async_session.execute(text("DEALLOCATE label_keys"))
+    assert "$1" in sql
+    assert "ix_bookings_owner_page_unreleased" in plan, plan
+    assert "ix_bookings_creator_page_unreleased" in plan, plan
+    assert "bookings_pkey" in plan, plan
+    assert "Seq Scan" not in plan and "Bitmap" not in plan, plan
+
+
+async def test_labelled_list_page_restores_the_previous_planner_settings(async_session):
+    owner = f"inttest-{uuid4()}"
+    rows = _spaced(owner, 30)
+    rows[4]["label"] = "needle"
+    await _seed(async_session, rows)
+    await async_session.execute(text("SET LOCAL enable_seqscan = off"))
+    await async_session.execute(text("SET LOCAL enable_bitmapscan = on"))
+    await async_session.execute(text("SET LOCAL enable_indexscan = off"))
+
+    page = await _repo.list_page(
+        async_session, user_id=owner, resource_types=_VM_TYPES, label="needle",
+        include_released=True, limit=3, scan_size=10, after=None,
+    )
+
+    assert [b.id for b in page.items] == [rows[4]["id"]]
+    settings = (await async_session.execute(text(
+        "SELECT current_setting('enable_bitmapscan'), current_setting('enable_seqscan'),"
+        " current_setting('enable_indexscan')"
+    ))).one()
+    assert tuple(settings) == ("on", "off", "off")
+
+
+@pytest.mark.parametrize("mine", [True, False], ids=["mine", "all"])
+async def test_sparse_label_traversal_equals_the_unpaginated_list(async_session, mine):
+    """Task 4.4: with S = 10 and limit = 3, a sparse label is found through short and empty pages,
+    each match exactly once, in page order."""
+    token = f"tok{uuid4().hex[:8]}"
+    owner, _other, _ = await _seed_mixed(async_session, token)
+    # Stretch the owner's range well past S with non-matching bookings, matches spread through it.
+    rows = _spaced(owner, 120, step=timedelta(milliseconds=3), start=_BASE - timedelta(minutes=5))
+    for i, r in enumerate(rows):
+        r["label"] = f"{token}-deep" if i in (0, 37, 38, 39, 40, 41, 90, 119) else "other"
+    await _seed(async_session, rows)
+    kw = {"user_id": owner if mine else None, "resource_types": _VM_TYPES, "label": token,
+          "include_released": True}
+
+    expected = await _unpaginated(async_session, **kw)
+    pages = await _traverse(async_session, limit=3, scan_size=10, **kw)
+
+    assert _flat(pages) == expected
+    assert len(set(_flat(pages))) == len(expected)
+    assert any(len(p) < 3 for p in pages[:-1]), pages   # the scan ran out before a full page
+    assert any(p == [] for p in pages[:-1]), pages      # …and at least once found nothing
+
+
+async def test_dense_label_pages_are_full(async_session):
+    owner = f"inttest-{uuid4()}"
+    rows = _spaced(owner, 25)
+    for r in rows:
+        r["label"] = "dense-match"
+    await _seed(async_session, rows)
+
+    pages = await _traverse(async_session, limit=3, scan_size=10, user_id=owner, label="dense")
+
+    assert [len(p) for p in pages] == [3] * 8 + [1]
+    assert _flat(pages) == [r["id"] for r in rows]
+
+
+@pytest.mark.parametrize("oldest_matches", [True, False], ids=["oldest-matches", "oldest-unmatched"])
+@pytest.mark.parametrize("remaining", [10, 11], ids=["exactly-S", "S-plus-one"])
+async def test_window_edges(async_session, remaining, oldest_matches):
+    """Task 4.5, S = 10: exactly S bookings left → no next page; S + 1 → the cursor is the S-th
+    (oldest examined) booking and the next page holds the last one. A matching oldest examined
+    booking is listed once; an unmatched one never; the sentinel is never a row."""
+    owner = f"inttest-{uuid4()}"
+    rows = _spaced(owner, remaining)
+    for i, r in enumerate(rows):
+        r["label"] = "edge-match" if i == 2 or (i == 9 and oldest_matches) or i == 10 else "other"
+    ids = await _seed(async_session, rows)
+    matching = [r["id"] for r in rows if r["label"] == "edge-match"]
+
+    first = await _repo.list_page(
+        async_session, user_id=owner, resource_types=_VM_TYPES, label="edge",
+        include_released=True, limit=3, scan_size=10, after=None,
+    )
+    shown = [b.id for b in first.items]
+    assert shown == [i for i in ids[:10] if i in matching]
+    assert (ids[9] in shown) is oldest_matches
+    if remaining == 10:
+        assert first.next_cursor is None
+        return
+    assert first.next_cursor == KeysetCursor(rows[9]["created_at"], ids[9])
+    second = await _repo.list_page(
+        async_session, user_id=owner, resource_types=_VM_TYPES, label="edge",
+        include_released=True, limit=3, scan_size=10, after=first.next_cursor,
+    )
+    assert [b.id for b in second.items] == [ids[10]]
+    assert second.next_cursor is None
+    assert len(set(shown + [ids[10]])) == len(matching)

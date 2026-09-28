@@ -1,4 +1,4 @@
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -53,6 +53,12 @@ class Settings(BaseSettings):
     ENVIRONMENTS_PAGE_SIZE: int = Field(50, gt=0)
     # Bookings pages: bookings per page / per "Load more" (keyset pagination, #479). Same rule.
     BOOKINGS_PAGE_SIZE: int = Field(50, gt=0)
+    # Label-filtered bookings pages: bookings examined per page / per "Search older bookings"
+    # (#485). The label is a substring match no index can serve in page order, so each request
+    # examines at most this many bookings of the page's filter range and shows the ones whose
+    # label matches. Must exceed BOOKINGS_PAGE_SIZE, or even a label matching everything would
+    # never fill a page.
+    BOOKINGS_LABEL_SCAN_SIZE: int = Field(200, gt=0)
 
     # Live row updates (SSE): progress-only row-changed notifications (one per Ansible/script
     # output line) are coalesced per booking to at most one per window, plus a trailing publish
@@ -94,6 +100,15 @@ class Settings(BaseSettings):
     # Fail-closed: roles with non-empty secret_vars are rejected if this key is unset.
     SECRET_VARS_ENABLED: bool = True
     SECRETS_ENCRYPTION_KEY: str = ""
+
+    @model_validator(mode="after")
+    def _label_scan_exceeds_page_size(self):
+        if self.BOOKINGS_LABEL_SCAN_SIZE <= self.BOOKINGS_PAGE_SIZE:
+            raise ValueError(
+                f"BOOKINGS_LABEL_SCAN_SIZE ({self.BOOKINGS_LABEL_SCAN_SIZE}) must be greater than "
+                f"BOOKINGS_PAGE_SIZE ({self.BOOKINGS_PAGE_SIZE})"
+            )
+        return self
 
 
 settings = Settings()

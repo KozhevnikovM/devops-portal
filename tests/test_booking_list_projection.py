@@ -137,28 +137,32 @@ async def _captured_stmt(method, *args):
 
 async def _captured_list_stmt(call: str):
     """The statement a bulk list read uses to fetch the listed bookings' fields. For list_page
-    (#479) that is phase 2 — the projection for the page's ids — so phase 1 returns one key."""
+    (#479) that is phase 2 — the projection for the page's ids — so phase 1 returns one key. With
+    a label (#485) phase 1 is the scan window, whose rows also carry the window-end flag."""
     repo = BookingRepository()
-    if call != "list_page":
+    if not call.startswith("list_page"):
         args = ("uid-1",) if call == "list_by_user" else ()
         return await _captured_stmt(getattr(repo, call), *args)
     pin, keys, unpin, items = MagicMock(), MagicMock(), MagicMock(), MagicMock()
     pin.one.return_value = SimpleNamespace(
         _mapping={"enable_bitmapscan": "on", "enable_seqscan": "on", "enable_indexscan": "on"}
     )
-    keys.all.return_value = [SimpleNamespace(created_at=datetime.now(timezone.utc), id=uuid4())]
+    keys.all.return_value = [
+        SimpleNamespace(created_at=datetime.now(timezone.utc), id=uuid4(), is_window_end=False)
+    ]
     items.all.return_value = []
     session = AsyncMock()
     session.execute = AsyncMock(side_effect=[pin, keys, unpin, items])
     await repo.list_page(
-        session, user_id="uid-1", resource_types=["VM"], label=None, include_released=False,
-        limit=50, after=None,
+        session, user_id="uid-1", resource_types=["VM"],
+        label="db" if call == "list_page_label" else None, include_released=False,
+        limit=50, scan_size=200, after=None,
     )
     return session.execute.call_args.args[0]
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("call", ["list_all", "list_by_user", "list_page"])
+@pytest.mark.parametrize("call", ["list_all", "list_by_user", "list_page", "list_page_label"])
 async def test_list_reads_never_select_detail_only_columns(call):
     stmt = await _captured_list_stmt(call)
 
@@ -172,7 +176,7 @@ async def test_list_reads_never_select_detail_only_columns(call):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("call", ["list_all", "list_by_user", "list_page"])
+@pytest.mark.parametrize("call", ["list_all", "list_by_user", "list_page", "list_page_label"])
 async def test_list_reads_never_select_a_raw_secret_column(call):
     """#478: secrets may be evaluated inside has_credentials, but no result column *is* one."""
     stmt = await _captured_list_stmt(call)
@@ -182,6 +186,17 @@ async def test_list_reads_never_select_a_raw_secret_column(call):
         table = getattr(inner, "table", None)
         key = (getattr(table, "name", None), getattr(inner, "name", None))
         assert key not in SECRET_COLUMNS, f"{col.name} selects raw secret column {key}"
+
+
+def test_label_scan_window_selects_only_keys_and_the_window_end_flag():
+    """#485: the label window joins bookings to test labels, but returns nothing but keys."""
+    from app.infrastructure.repositories.booking_repo import _label_page_keys_stmt
+
+    stmt = _label_page_keys_stmt(
+        "uid-1", resource_types=["VM"], label="db", include_released=False, limit=50,
+        scan_size=200, after=None,
+    )
+    assert [c.name for c in stmt.selected_columns] == ["created_at", "id", "is_window_end"]
 
 
 # ── mapper ──────────────────────────────────────────────────────────────────────

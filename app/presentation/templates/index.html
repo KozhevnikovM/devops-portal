@@ -71,7 +71,15 @@
                         {% include "partials/booking_row.html" %}
                     {% else %}
                         <tr id="empty-row">
-                            <td colspan="9" class="px-4 py-6 text-center text-gray-600">No {{ type_label.lower() }} bookings yet.</td>
+                            <td colspan="9" class="px-4 py-6 text-center text-gray-600">
+                                {%- if not (label_filter or '').strip() -%}
+                                    No {{ type_label.lower() }} bookings yet.
+                                {%- elif load_more_url -%}
+                                    No bookings matching “{{ label_filter.strip() }}” among the most recent bookings.
+                                {%- else -%}
+                                    No bookings match “{{ label_filter.strip() }}”.
+                                {%- endif -%}
+                            </td>
                         </tr>
                     {% endfor %}
                     {% include "partials/booking_load_more.html" %}
