@@ -184,6 +184,16 @@ class Booking:
     details: VMDetails | NamespaceDetails | StaticVMDetails | None = field(default=None)
     footprint: ResourceFootprint | None = field(default=None)
 
+    @property
+    def has_provisioning_log(self) -> bool:
+        """Whether a non-empty provisioning log exists (same contract as BookingListItem)."""
+        return bool(self.provisioning_log)
+
+    @property
+    def config_role_names(self) -> tuple[str | None, ...]:
+        """Names of the configured roles, in order (same contract as BookingListItem)."""
+        return tuple(r.get("name") for r in (self.config_roles or []))
+
     def transition_to(self, new: BookingStatus) -> None:
         """Enforce the status-transition invariant and advance self.status.
 
