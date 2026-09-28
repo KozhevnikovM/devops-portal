@@ -245,12 +245,30 @@ def _role_names_expr():
     return func.array(names, type_=ARRAY(Text))
 
 
+def _non_empty(col):
+    """``col`` is non-NULL and non-empty — Python truthiness, without returning the value."""
+    return func.coalesce(func.octet_length(col), 0) > 0
+
+
+def _has_credentials_expr():
+    """Same rule as ``Booking.has_credentials``: no per-type branch is needed, since a VM has no
+    static-VM join, a static VM no VM password, and a namespace neither."""
+    return or_(
+        _non_empty(BookingModel.vm_password),
+        _non_empty(StaticVMModel.username),
+        _non_empty(StaticVMModel.password),
+        _non_empty(StaticVMModel.ssh_key),
+    )
+
+
 def _list_item_stmt():
     """Bulk booking-list read (#477): exactly the BookingListItem columns, labelled by field name.
 
     Never selects the BookingModel entity, nor provisioning_log / startup_script / extra_vars /
     config_roles — the log is reduced to a presence flag (``octet_length`` reads the TOAST header,
-    not the value) and the roles to their names.
+    not the value) and the roles to their names. Credential values (VM password, static-VM
+    password / SSH key) never leave the database either (#478): they are reduced to
+    ``has_credentials``, and revealed per booking by ``GET /bookings/{id}/credentials``.
     """
     return (
         select(
@@ -273,18 +291,15 @@ def _list_item_stmt():
             BookingModel.hw_config_id.label("hw_config_id"),
             BookingModel.hw_config_name.label("hw_config_name"),
             BookingModel.vm_ip.label("vm_ip"),
-            BookingModel.vm_password.label("vm_password"),
             NamespaceModel.name.label("namespace_name"),
             NamespaceModel.cluster_name.label("cluster_name"),
             NamespaceModel.api_url.label("api_url"),
             StaticVMModel.name.label("static_vm_name"),
             StaticVMModel.host.label("static_vm_host"),
             StaticVMModel.username.label("static_vm_username"),
-            StaticVMModel.password.label("static_vm_password"),
-            StaticVMModel.ssh_key.label("static_vm_ssh_key"),
-            (func.coalesce(func.octet_length(BookingModel.provisioning_log), 0) > 0)
-            .label("has_provisioning_log"),
+            _non_empty(BookingModel.provisioning_log).label("has_provisioning_log"),
             _role_names_expr().label("config_role_names"),
+            _has_credentials_expr().label("has_credentials"),
         )
         .select_from(BookingModel)
         .join(UserModel, cast(UserModel.id, String) == BookingModel.user_id, isouter=True)

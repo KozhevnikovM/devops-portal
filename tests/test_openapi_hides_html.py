@@ -31,6 +31,7 @@ HIDDEN_PATHS = {
     "/book/namespace",
     "/bookings",
     "/bookings/{booking_id}/row",
+    "/bookings/{booking_id}/credentials",  # #478: credential-bearing fragment
     "/bookings/{booking_id}/audit",
     "/admin/catalog",
 }

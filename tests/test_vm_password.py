@@ -180,7 +180,8 @@ def test_provision_task_password_is_16_alphanumeric():
 
 # --- Booking row UI tests ---
 
-def test_booking_row_shows_password_to_owner(client_as_owner):
+def test_booking_row_offers_password_to_owner_without_embedding_it(client_as_owner):
+    """#478: the row offers "Show credentials"; the password itself is fetched on demand."""
     client, owner = client_as_owner
     booking = _make_booking(owner_username=owner.username, user_id=str(owner.id))
     with patch("app.presentation.routes.bookings._repo") as mock_repo:
@@ -188,10 +189,11 @@ def test_booking_row_shows_password_to_owner(client_as_owner):
         resp = client.get(f"/bookings/{booking.id}/row")
 
     assert resp.status_code == 200
-    assert "Abc123XyZ456qwER" in resp.text
+    assert f'hx-get="/bookings/{booking.id}/credentials"' in resp.text
+    assert "Abc123XyZ456qwER" not in resp.text
 
 
-def test_booking_row_shows_password_to_admin(client_as_admin):
+def test_booking_row_offers_password_to_admin_without_embedding_it(client_as_admin):
     client, admin = client_as_admin
     booking = _make_booking(owner_username="alice")
     with patch("app.presentation.routes.bookings._repo") as mock_repo:
@@ -199,7 +201,8 @@ def test_booking_row_shows_password_to_admin(client_as_admin):
         resp = client.get(f"/bookings/{booking.id}/row")
 
     assert resp.status_code == 200
-    assert "Abc123XyZ456qwER" in resp.text
+    assert f'hx-get="/bookings/{booking.id}/credentials"' in resp.text
+    assert "Abc123XyZ456qwER" not in resp.text
 
 
 def test_booking_row_denies_other_user(client_as_other):
@@ -237,8 +240,8 @@ def test_booking_row_no_password_when_not_ready(client_as_owner):
 def test_list_bookings_json_omits_vm_password(client_as_admin):
     """#137: the list endpoint must never vend secrets, even to an admin.
 
-    The password is delivered only via the creation response and the
-    owner/admin-gated single-row view.
+    The password is delivered only via the owner/admin-gated credentials
+    fragment (#478).
     """
     client, _ = client_as_admin
     booking = _make_booking()

@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.application.use_cases._permissions import can_manage
+from app.application.use_cases._permissions import can_manage, can_view_credentials
 from app.application.use_cases._roles import resolve_config_roles
 from app.domain.booking_list import BookingListItem
 from app.domain.entities import Booking, User
@@ -268,6 +268,34 @@ async def booking_row(
     await _attach_queue_position(session, booking)
     return templates.TemplateResponse(
         request, "partials/booking_row.html", {"booking": booking, "current_user": current_user}
+    )
+
+
+@router.get("/bookings/{booking_id}/credentials", response_class=HTMLResponse)
+async def booking_credentials(
+    booking_id: UUID,
+    request: Request,
+    session: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(require_user),
+):
+    """A booking's credentials, revealed on explicit request (#478) — never embedded in a row.
+
+    Owner or admin only (not the creating dispatcher). Authorization is checked before status, so a
+    refused caller cannot tell a READY booking from any other.
+    """
+    try:
+        booking = await _repo.get(session, booking_id)
+    except BookingNotFoundError:
+        raise HTTPException(status_code=404, detail="Booking not found")
+
+    if not can_view_credentials(owner_id=booking.user_id, user=current_user):
+        raise HTTPException(status_code=403, detail="Not allowed to view these credentials")
+    if booking.status != BookingStatus.READY:
+        raise HTTPException(status_code=409, detail="Credentials are available only while the booking is READY")
+
+    return templates.TemplateResponse(
+        request, "partials/booking_credentials.html", {"booking": booking},
+        headers={"Cache-Control": "no-store"},
     )
 
 

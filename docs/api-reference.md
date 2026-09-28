@@ -428,8 +428,10 @@ Each row carries the fields for every resource type; the ones that don't apply a
 `static_vm`/`host`/`username` for static-VM bookings. `QUEUED` bookings have no resource fields set.
 
 > **No secrets in the list.** `vm_password` (and static-VM credentials) are **not** included in
-> `GET /api/bookings`. The VM password is returned only on the owner-scoped creation response
-> (`POST /api/bookings`) and the owner/admin-gated single-row view (`GET /bookings/{id}/row`).
+> `GET /api/bookings`, and the list query never reads them from the database (#478). Credentials
+> are returned only on the owner-scoped creation response (`POST /api/bookings`) and, in the
+> browser, by the owner/admin-only fragment `GET /bookings/{id}/credentials` — no booking row
+> (`GET /bookings/{id}/row`, SSE, the bookings pages) embeds them.
 
 **Example:**
 ```bash
@@ -855,6 +857,25 @@ Returns an HTML fragment for a single booking row. Used by **HTMX polling in the
 presentation route, not part of the JSON API (and is omitted from `/docs`).
 
 **Auth:** the booking **owner** or an **admin**. A non-owner gets `403`; an unknown id gets `404`.
+
+---
+
+### `GET /bookings/{booking_id}/credentials`
+
+Returns an HTML fragment with one booking's credentials — the VM password, or a static VM's
+username / password / SSH key — loaded into the row by its **Show credentials** button (#478). This
+is a presentation route, not part of the JSON API (and is omitted from `/docs`); booking rows never
+embed credential values themselves.
+
+**Auth:** the booking **owner** or an **admin** only — narrower than the row's management actions:
+the dispatcher that created the booking on the owner's behalf gets `403`, as does any other user.
+
+**Responses:**
+- `200` — the fragment, with `Cache-Control: no-store`; its root carries `hx-history="false"` so
+  htmx won't save the page to its `localStorage` history cache while it is shown
+- `403` — not the owner or an admin (checked before the status, so it reveals nothing about it)
+- `404` — unknown booking id
+- `409` — the booking is not `READY`
 
 ---
 

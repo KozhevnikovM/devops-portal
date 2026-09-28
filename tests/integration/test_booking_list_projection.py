@@ -1,6 +1,7 @@
 """Integration: the booking list projection (#477) on real PostgreSQL.
 
-The list reads derive `has_provisioning_log` and the ordered `config_role_names` in SQL, and a row
+The list reads derive `has_provisioning_log`, the ordered `config_role_names` and (#478)
+`has_credentials` in SQL — never returning a raw credential value — and a row
 rendered from the list is semantically equal to the same booking's `GET /bookings/{id}/row`
 rendering (spec: "List row matches the refreshed row"). Byte equality is not the contract — the
 list passes `is_first_row`, which only moves the first row's action menu — so rows are compared
@@ -122,7 +123,10 @@ async def seeded(async_session, seed_catalog):
     svm = StaticVMModel(id=uuid4(), name=f"{token}-svm", host="10.9.9.9", username="root",
                         password="svm-pw", ssh_key="ssh-ed25519 AAAA", is_active=True,
                         created_at=datetime.now(timezone.utc))
-    async_session.add_all([owner, admin, other, ns, svm])
+    svm_key_only = StaticVMModel(id=uuid4(), name=f"{token}-svm-key", host="10.9.9.10",
+                                 username="", password=None, ssh_key="ssh-ed25519 KEYONLY",
+                                 is_active=True, created_at=datetime.now(timezone.utc))
+    async_session.add_all([owner, admin, other, ns, svm, svm_key_only])
     await async_session.flush()
 
     # Far-future creation times so the seeded rows sort ahead of anything else in the database.
@@ -144,6 +148,8 @@ async def seeded(async_session, seed_catalog):
                           created_at=base - timedelta(seconds=3)),
         "ns_queued": dict(common, resource_type="NAMESPACE", status="QUEUED",
                           created_at=base - timedelta(seconds=4)),
+        "svm_key_only": dict(common, resource_type="STATIC_VM", status="READY",
+                             static_vm_id=svm_key_only.id, created_at=base - timedelta(seconds=5)),
     }
     ids = {}
     for key, values in rows.items():
@@ -177,21 +183,30 @@ async def test_list_derives_log_flag_and_ordered_role_names(async_session, seede
     by_id = {i.id: i for i in items}
     ids = seeded["ids"]
 
-    assert [i.id for i in items] == [ids[k] for k in
-                                     ("vm_log", "vm_empty_log", "static_vm", "namespace", "ns_queued")]
+    assert [i.id for i in items] == [ids[k] for k in ("vm_log", "vm_empty_log", "static_vm",
+                                                      "namespace", "ns_queued", "svm_key_only")]
     assert by_id[ids["vm_log"]].has_provisioning_log is True
     assert by_id[ids["vm_log"]].config_role_names == ("nginx", "docker")
     assert by_id[ids["vm_empty_log"]].has_provisioning_log is False
     assert by_id[ids["static_vm"]].has_provisioning_log is False  # NULL log
     assert by_id[ids["static_vm"]].config_role_names == ()
-    assert by_id[ids["static_vm"]].static_vm_password == "svm-pw"
+    # #478: credentials reduce to a presence flag; the raw values never reach the application.
+    assert by_id[ids["vm_log"]].has_credentials is True           # VM with a password
+    assert by_id[ids["vm_empty_log"]].has_credentials is False    # VM without one
+    assert by_id[ids["static_vm"]].has_credentials is True
+    assert by_id[ids["svm_key_only"]].has_credentials is True     # SSH key only
+    assert by_id[ids["namespace"]].has_credentials is False
+    for item in items:
+        assert not hasattr(item, "vm_password")
+        assert not hasattr(item, "static_vm_password")
+        assert not hasattr(item, "static_vm_ssh_key")
     assert by_id[ids["namespace"]].api_url == "https://k8s.example:6443"
 
 
 # ── Route: list row ≡ /row, per page and per viewer ─────────────────────────────
 
 _PAGES = {
-    "/book/vm": ("vm_log", "vm_empty_log", "static_vm"),
+    "/book/vm": ("vm_log", "vm_empty_log", "static_vm", "svm_key_only"),
     "/book/namespace": ("namespace", "ns_queued"),
 }
 
@@ -220,20 +235,47 @@ async def test_list_row_shows_log_link_roles_and_queue_position(async_session, s
     vm_text, vm_actions, _ = _summarize(vm_page, ids["vm_log"])
     assert ("a", (("href", f"/bookings/{ids['vm_log']}/log"),), "View full log ↗") in vm_actions
     assert "nginx" in vm_text and "docker" in vm_text
-    assert "vm-pw" in vm_text
+    # #478: the owner gets the on-demand control, never the value inline.
+    assert ("button", (("hx-get", f"/bookings/{ids['vm_log']}/credentials"),), "Show credentials") \
+        in vm_actions
     _, empty_actions, _ = _summarize(vm_page, ids["vm_empty_log"])
     assert not any("/log" in dict(a[1]).get("href", "") for a in empty_actions)
     queued_text, _, _ = _summarize(ns_page, ids["ns_queued"])
     assert re.search(r"Queued — position \d+", queued_text)
 
 
+_SECRETS = ("vm-pw", "svm-pw", "ssh-ed25519")
+
+
 async def test_non_owner_all_list_hides_credentials(async_session, seeded):
     async with _client(async_session, seeded["other"]) as client:
         page = (await client.get("/book/vm", params={"filter": "all", "label": seeded["token"]})).text
-    vm_text, _, _ = _summarize(page, seeded["ids"]["vm_log"])
-    svm_text, _, _ = _summarize(page, seeded["ids"]["static_vm"])
-    assert "vm-pw" not in vm_text
-    assert "svm-pw" not in svm_text and "ssh-ed25519" not in svm_text
+    for key in ("vm_log", "static_vm"):
+        _, actions, _ = _summarize(page, seeded["ids"][key])
+        assert not any("/credentials" in dict(a[1]).get("hx-get", "") for a in actions), key
+    assert not [s for s in _SECRETS if s in page]
+
+
+@pytest.mark.parametrize("viewer,list_filter", [("owner", "mine"), ("admin", "all")])
+async def test_bookings_page_never_embeds_credential_values(async_session, seeded, viewer,
+                                                            list_filter):
+    """#478: even viewers allowed to see credentials get none of them in the page HTML."""
+    async with _client(async_session, seeded[viewer]) as client:
+        page = (await client.get("/book/vm", params={"filter": list_filter,
+                                                     "label": seeded["token"]})).text
+    assert not [s for s in _SECRETS if s in page]
+    assert 'hx-history="false"' not in page
+
+
+async def test_owner_reveals_credentials_on_demand(async_session, seeded):
+    ids = seeded["ids"]
+    async with _client(async_session, seeded["owner"]) as client:
+        vm = await client.get(f"/bookings/{ids['vm_log']}/credentials")
+        svm = await client.get(f"/bookings/{ids['svm_key_only']}/credentials")
+    assert vm.status_code == 200 and "vm-pw" in vm.text
+    assert vm.headers["cache-control"] == "no-store"
+    assert 'hx-history="false"' in vm.text
+    assert svm.status_code == 200 and "ssh-ed25519 KEYONLY" in svm.text
 
 
 # ── JSON list contract ──────────────────────────────────────────────────────────

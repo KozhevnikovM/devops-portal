@@ -146,7 +146,9 @@ def test_post_booking_static_vm_returns_row(client):
     assert resp.status_code == 201
     assert "build-agent-1" in resp.text
     assert "10.0.0.12" in resp.text
-    assert "s3cret" in resp.text  # credentials shown to the owner
+    # #478: the owner gets the "Show credentials" control, never the value inline.
+    assert f'hx-get="/bookings/{booking.id}/credentials"' in resp.text
+    assert "s3cret" not in resp.text
 
 
 def test_post_booking_static_vm_json(client):

@@ -194,6 +194,18 @@ class Booking:
         """Names of the configured roles, in order (same contract as BookingListItem)."""
         return tuple(r.get("name") for r in (self.config_roles or []))
 
+    @property
+    def has_credentials(self) -> bool:
+        """Whether there is anything for the credentials fragment to reveal (#478).
+
+        One rule for every resource type: a VM has no static-VM fields, a static VM has no VM
+        password, and a namespace has neither. Same contract as BookingListItem.
+        """
+        return bool(
+            self.vm_password or self.static_vm_username
+            or self.static_vm_password or self.static_vm_ssh_key
+        )
+
     def transition_to(self, new: BookingStatus) -> None:
         """Enforce the status-transition invariant and advance self.status.
 
