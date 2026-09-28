@@ -102,22 +102,19 @@
         {% endif %}
     </td>
     <td class="px-4 py-3 text-gray-300">
-        {% set is_owner = booking.owner_username == current_user.username %}
-        {% set can_see_creds = is_owner or current_user.role == 'admin' %}
-        {% if booking.resource_type.value == 'STATIC_VM' and booking.status.value == 'READY' and can_see_creds %}
-            <div class="space-y-1">
-                {% if booking.static_vm_username %}
-                <div class="text-xs"><span class="text-gray-500">user</span> <code class="font-mono text-gray-300 select-all">{{ booking.static_vm_username }}</code></div>
-                {% endif %}
-                {% if booking.static_vm_password %}
-                <div class="text-xs"><span class="text-gray-500">pw</span> <code class="font-mono text-yellow-300 bg-gray-800 px-1 py-0.5 rounded select-all">{{ booking.static_vm_password }}</code></div>
-                {% endif %}
-                {% if booking.static_vm_ssh_key %}
-                <div class="text-xs"><span class="text-gray-500">key</span> <code class="font-mono text-yellow-300 bg-gray-800 px-1 py-0.5 rounded select-all inline-block max-w-[12rem] truncate align-bottom" title="{{ booking.static_vm_ssh_key }}">{{ booking.static_vm_ssh_key }}</code></div>
-                {% endif %}
-            </div>
-        {% elif booking.status.value == 'READY' and booking.vm_password and can_see_creds %}
-            <code class="text-xs font-mono text-yellow-300 bg-gray-800 px-1 py-0.5 rounded select-all">{{ booking.vm_password }}</code>
+        {#- Credential values are never embedded in a row (#478): the control fetches them on demand. #}
+        {% if booking.status.value == 'READY' and booking.has_credentials
+              and can_view_credentials(owner_id=booking.user_id, user=current_user) %}
+            <button
+                type="button"
+                class="text-xs px-2 py-1 rounded bg-blue-900 text-blue-300 border border-blue-700 hover:bg-blue-800 transition-colors"
+                hx-get="/bookings/{{ booking.id }}/credentials"
+                hx-target="this"
+                hx-swap="outerHTML"
+                data-show-credentials
+            >
+                Show credentials
+            </button>
         {% else %}
             <span class="text-gray-600">—</span>
         {% endif %}

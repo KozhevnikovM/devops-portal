@@ -1452,14 +1452,36 @@ No rebuild needed — the flag is read at worker startup.
 ## VM Connection Password
 
 When a booking reaches `READY`, the portal generates a 16-character alphanumeric password
-for the VM and stores it on the booking. The password is shown in the **Password** column
-of the Active Bookings table.
+for the VM and stores it on the booking.
 
-- The booking owner always sees their own VM password.
-- Admins can see the password for any booking.
-- Other users see `—` in the Password column.
+### Revealing credentials (VM password, static-VM login)
 
-The password is also returned in the `vm_password` field of the `GET /api/bookings` JSON response.
+Credentials are **never embedded in the bookings table** (#478). A `READY` booking that has
+credentials shows a **Show credentials** button in its Password column instead. Clicking it fetches
+that one booking's credentials (`GET /bookings/{id}/credentials`) and shows them in place:
+
+- the VM password, for a provisioned VM;
+- the username, password and/or SSH key registered for a static VM.
+
+Who sees the button — and who the endpoint serves — is unchanged from the old inline column:
+
+- The booking **owner** always can.
+- **Admins** can for any booking.
+- The **dispatcher** that ordered the booking on someone's behalf **cannot** — it may manage the
+  booking's lifecycle (label, extend, release), but its secrets belong to the owner.
+- Everyone else sees `—`, and calling the endpoint directly returns `403`.
+
+Credentials are only available while the booking is `READY` (otherwise `409`). The response is sent
+with `Cache-Control: no-store` and marked `hx-history="false"`, so the page is not written to the
+browser's htmx history cache while a revealed secret is on screen. Changing the label or extending
+the booking re-renders its row, which collapses the credentials back to the button.
+
+The JSON bookings list (`GET /api/bookings`) never includes the password or static-VM secrets; API
+callers receive them once, in the owner-scoped creation response of `POST /api/bookings`.
+
+> **Upgrading from a version that showed passwords inline:** browsers may still hold older page
+> snapshots containing them in the htmx history cache (`localStorage`). They age out as the cache
+> rolls over; users who want them gone immediately can clear the portal's site data.
 
 ---
 

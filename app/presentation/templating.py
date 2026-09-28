@@ -4,6 +4,8 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import yaml
 from fastapi.templating import Jinja2Templates
 
+from app.application.use_cases._permissions import can_view_credentials
+
 templates = Jinja2Templates(directory="app/presentation/templates")
 
 
@@ -30,3 +32,6 @@ def _toyaml(value: dict | None) -> str:
 
 
 templates.env.filters["toyaml"] = _toyaml
+
+# One owner-or-admin credentials rule (#478), shared by booking_row.html and the credentials route.
+templates.env.globals["can_view_credentials"] = can_view_credentials
