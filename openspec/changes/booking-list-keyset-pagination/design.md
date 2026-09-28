@@ -1,33 +1,45 @@
 ## Context
 
-After #477 and #478, the browser bookings pages call `_render_bookings_page` in `app/presentation/routes/bookings.py`. It calls `BookingRepository.list_all` (All) or `list_by_user` (Mine, `user_id = X OR created_by = X`), passing the page's resource types (`[VM, STATIC_VM]` on `/` and `/book/vm`, `NAMESPACE` on `/book/namespace`), the label (`label ILIKE '%x%'`) and `include_released` (`status != 'RELEASED'` unless shown). Both methods build on `_list_item_stmt()`, which selects the `BookingListItem` projection and orders by `created_at DESC` only. The route then runs `_attach_queue_position`, one `queue_position` query per `QUEUED` row, and renders every row into `<tbody id="bookings-list" sse-connect="/events/stream">` in `index.html`.
+After #477 and #478, the browser bookings pages call `_render_bookings_page` in `app/presentation/routes/bookings.py`. That function calls `BookingRepository.list_all` for All or `list_by_user` for Mine (`user_id = X OR created_by = X`). It passes:
+- the page's resource types: `[VM, STATIC_VM]` on `/` and `/book/vm`, `NAMESPACE` on `/book/namespace`
+- the label, applied as `label ILIKE '%x%'`
+- `include_released`, which adds `status != 'RELEASED'` unless released bookings are shown
 
-- **Adding rows.** The order form prepends a new row into `#bookings-list` with `hx-swap="afterbegin"` and removes `#empty-row`.
+Both methods build on `_list_item_stmt()`, which selects the `BookingListItem` projection with its owner, namespace, static-VM and creator joins. It orders by `created_at DESC` only. The route then runs `_attach_queue_position`: one `_queue_rank_stmt` count per `QUEUED` row, filtering on `resource_type`, `status = :param` and `created_at < :t`. No index covers that count, so each call scans all of `bookings`. The route renders every row into `<tbody id="bookings-list" sse-connect="/events/stream">` in `index.html`.
+
+- **Order form.** It prepends new rows with `hx-swap="afterbegin"` and removes `#empty-row`.
 - **Filter controls.** They re-fetch `page_path` and swap `#bookings-section` with `hx-select` and `hx-push-url`.
 - **JSON list.** `GET /api/v1/bookings` uses the same two repository methods. It is unpaginated and always hides released bookings.
 
-The `bookings` table has two indexes besides its primary key, both on `environment_id` (from `0033`). Neither serves list order. `created_at` is `timestamptz` with a server default, so bookings inserted in one transaction share a timestamp. Environment orders create several bookings in one transaction.
+**Indexes today.** Besides its primary key, `bookings` has only the two `environment_id` indexes from `0033`.
 
-#467 already built the pieces this change needs:
-- `app/domain/pagination.py` has `KeysetCursor` and `EnvironmentPage`.
-- `app/presentation/pagination.py` has `encode_cursor`, a strict `decode_cursor` and `InvalidCursorError`.
-- The environments page has the self-replacing Load more row.
+**Ties.** `created_at` is `timestamptz` with a server default, so bookings inserted in one transaction share a timestamp. Environment orders insert several bookings in one transaction.
 
-The reasoning behind that pattern is in `openspec/changes/archive/2026-09-25-environments-keyset-pagination/design.md`. This design reuses it and records only where bookings differ.
+**How history accumulates.** Two statuses accumulate without bound:
+- `RELEASED` is terminal.
+- `FAILED` is not in `LIVE_STATUSES`, so it holds no quota or pool capacity. `enforce_ttl` only tears down expired `READY` bookings, and a failed teardown (`RELEASING → FAILED`) also lands in `FAILED`. Failed bookings therefore stay until someone releases them by hand.
+
+The hidden-released view hides only `RELEASED`, so it lists `FAILED` bookings.
+
+**What #467 already built.**
+- `app/domain/pagination.py`: `KeysetCursor` and `EnvironmentPage`
+- `app/presentation/pagination.py`: `encode_cursor`, a strict `decode_cursor`, and `InvalidCursorError`
+- the environments page's self-replacing Load more row
+
+Their rationale is in `openspec/changes/archive/2026-09-25-environments-keyset-pagination/design.md`. This design reuses them and records only where bookings differ. The main difference is that PR #484's review asked for the page-size bound #467 left open, and bookings can have it.
 
 ## Goals / Non-Goals
 
 **Goals:**
-- One page query per request that returns at most `limit + 1` `BookingListItem` rows in `(created_at DESC, id DESC)` order, with no OFFSET, for every filter combination the pages offer.
-- Reuse the #467 cursor codec, the Load more row mechanics and the test shape, rather than creating a second variant.
-- Keep the default view (released hidden) from reading released history, since released history is the part that grows without limit.
-- Keep the JSON list's behaviour and fields unchanged.
+- Bound page selection by the page size for every combination of Mine/All, page resource types and Show released: at most `4 × (limit + 1)` index entries read, on the plan the planner chooses by itself. The bound must not depend on how much history other users or other types have, `RELEASED` or `FAILED`.
+- Bound per-row work: rows loaded and rendered at most `limit`, and queue-position lookups that read only `QUEUED` rows.
+- Reuse the #467 cursor codec, the Load more mechanics and the test shape.
+- Leave the JSON list's behaviour and fields unchanged.
 
 **Non-Goals:**
-- Paginating the JSON bookings list. That would break its bare-array contract.
+- Bounding label-filtered page selection. That is tracked by #485 (Decision 6).
+- Paginating the JSON bookings list, which would break its bare-array contract.
 - Backward pagination, page numbers, total counts, or a client-chosen page size.
-- Bounding the read under Show released with a selective filter (Mine, a label, a sparse resource type). That would need per-owner or per-type indexes plus a `UNION ALL` rewrite, or a trigram index that returns rows out of order. The same trade-off was declined for environments (#467, Decision 8).
-- Changing how queue positions are computed. They stay one query per `QUEUED` row, now bounded by the page.
 
 ## Decisions
 
@@ -39,32 +51,75 @@ ORDER BY b.created_at DESC, b.id DESC
 LIMIT :limit + 1
 ```
 
-- **Predicate.** It is built with `tuple_(...) < tuple_(literal(..., type), literal(..., type))`. The typed literals are needed for the same asyncpg UUID reason as in `environment_repo._page_stmt`.
-- **Order.** `id DESC` is added to `_list_item_stmt`'s `ORDER BY`. The JSON list shares that statement, so it becomes deterministic among bookings with equal timestamps, which the spec now requires.
-- **Why the tiebreak matters here.** Environment orders insert sibling bookings with the same `created_at`, so the tie is common in practice.
+The predicate is built with `tuple_(...) < tuple_(literal(..., type), literal(..., type))`. The typed literals are needed for the asyncpg UUID reason noted in `environment_repo._page_stmt`.
+
+`id DESC` is added to `_list_item_stmt`'s `ORDER BY`. The JSON list shares that statement, so it becomes deterministic when timestamps are equal, which the spec now requires. Environment orders make such ties common.
 
 *Alternative:* OFFSET. The issue rules it out.
 
-### 2. Two indexes: a full one and one that excludes released bookings
+### 2. Equality-prefixed indexes, so every walked entry is a match
 
-Migration `0035` adds two indexes. `BookingModel.__table_args__` declares both.
+A walk is bounded by the page size only if every index entry it visits either belongs on the page or ends the walk. With a plain `(created_at, id)` index, an entry that fails a filter gets skipped, and that skipping is where history leaks in. Examples: another user's booking on a Mine page, a VM on the namespace page, a released row when released rows are hidden. The equality filters therefore go in front of the order columns, and the released filter becomes a partial-index predicate.
 
-- `ix_bookings_created_at_id` on `bookings (created_at, id)`. It serves Show released, walked backward for `DESC, DESC`.
-- `ix_bookings_unreleased_created_at_id` on `bookings (created_at, id) WHERE status <> 'RELEASED'`. It serves the default hidden-released views.
+Migration `0035` creates these indexes. `BookingModel.__table_args__` declares all of them.
 
-This is where bookings differ from environments. An environment's released state is derived from its children, and #466 forbids storing it. A booking's `status` is a column, so a partial index can drop released rows from the walk entirely. Released bookings are the only part of the table that grows with history, because live bookings are bounded by quotas and pool sizes. So with this index, the default view walks only non-released bookings, for every filter, including Mine and a label. This bounds the read by the active set. It is stronger than the environments guarantee, and it costs one small index.
+| Index | Columns | Predicate | Serves |
+|---|---|---|---|
+| `ix_bookings_type_page` | `resource_type, created_at, id` | none | All, Show released |
+| `ix_bookings_type_page_unreleased` | `resource_type, created_at, id` | `status <> 'RELEASED'` | All, released hidden |
+| `ix_bookings_owner_page` | `user_id, resource_type, created_at, id` | none | Mine (owner), Show released |
+| `ix_bookings_owner_page_unreleased` | `user_id, resource_type, created_at, id` | `status <> 'RELEASED'` | Mine (owner), released hidden |
+| `ix_bookings_creator_page` | `created_by, resource_type, created_at, id` | `created_by IS NOT NULL` | Mine (dispatcher), Show released |
+| `ix_bookings_creator_page_unreleased` | `created_by, resource_type, created_at, id` | `created_by IS NOT NULL AND status <> 'RELEASED'` | Mine (dispatcher), released hidden |
+| `ix_bookings_queued_rank` | `resource_type, created_at` | `status = 'QUEUED'` | queue position (Decision 5) |
 
-**Keeping the partial index usable.** The planner uses a partial index only when it can prove that the query's predicate implies the index's `WHERE`. `BookingModel.status != :param` is a bound parameter. asyncpg prepares statements, and a generic plan cannot prove the implication. So `list_page` renders the released filter as the literal SQL `status <> 'RELEASED'`, It comes from one shared module-level expression that `BookingModel`'s index declaration also uses. The migration spells the same text, the way `0033`'s partial index does. An integration test pins that the plan uses `ix_bookings_unreleased_created_at_id` with sequential scans disabled, so a regression back to a bind parameter fails.
+**`FAILED` bookings.** The earlier draft said the hidden-released partial index was "bounded by the active set". PR #484's review showed that is false: the index still holds `FAILED` bookings, and those accumulate. The bound now rests on a different property. A hidden-released page lists `FAILED` bookings, so a `FAILED` entry in the branch's range is a match that fills the page, never a skipped row. The walk reads a user's `FAILED` history only as far as the page reaches into it. It never reads other users' or other types' `FAILED` history, because the equality prefix excludes them.
 
-**Why no resource-type column in either index.** The VM page filters `resource_type IN ('VM', 'STATIC_VM')`. A leading `resource_type` column would put the two types into separate ranges, and reading them in page order would need a sort or a two-branch merge. The filter is applied during the walk instead. On the VM page it matches almost every row. On the namespace page it is selective when namespaces are rare, which the spec allows under Show released only (see Decision 6).
+**The partial indexes must stay usable.** The planner uses a partial index only when it can prove that the query's predicate implies the index's `WHERE`. A bound parameter (`status != :p`) cannot be proven under the generic plans that asyncpg prepared statements get. So the repository renders `status <> 'RELEASED'` and `status = 'QUEUED'` as literal SQL. The literals come from shared module-level expressions that `BookingModel`'s index declarations also use. The migration spells the same text, like `0033`. The unforced-plan tests in 4.3 fail if a bound parameter comes back.
 
-**Migration.** Both indexes are built with a plain `CREATE INDEX`, like `0033`, which also indexed `bookings`. The build holds a `SHARE` lock that blocks booking writes for its duration. That is seconds at this table's size. `CONCURRENTLY` would need Alembic's `autocommit_block` and a separate failure mode for an invalid half-built index, which is not worth it here. The downgrade drops both.
+**Write cost.** Seven indexes on `bookings` is a real write cost. Bookings are written at human rates: orders, a handful of status transitions, label and extend edits. Each write touches at most seven small btrees. The partial ones change membership only when status moves into or out of `RELEASED` or `QUEUED`.
 
 *Alternatives:*
-- Only the full index, as for environments. The default view would then walk released history under every selective filter, and that is the history-dependence the issue is about.
-- Only the partial index. Show released would then have no ordered index and would sort all matching rows.
+- One `(created_at, id)` index plus a partial one, as in the first draft. Mine, sparse types and hidden-`FAILED` history all stay history-dependent. That is what the review rejected.
+- An expression column `(…, status = 'RELEASED', created_at, id)` instead of full and partial pairs. Show released would need both values of the boolean, which doubles the branches (Decision 3) and saves only three indexes.
 
-### 3. Repository API: `BookingRepository.list_page(...) -> KeysetPage[BookingListItem]`
+### 3. Page query: per-branch keyset `UNION ALL`, then the projection for the page ids
+
+The planner cannot produce page order from `user_id = X OR created_by = X`, or from `resource_type IN ('VM', 'STATIC_VM')`, with a single index scan. The key query therefore runs one branch per owner column and resource type. Each branch is an equality-prefixed ordered walk.
+
+```sql
+-- phase 1: page keys (Mine on the VM page with released hidden; 4 branches)
+SELECT created_at, id FROM (
+    (SELECT created_at, id FROM bookings
+      WHERE user_id = :u AND resource_type = 'VM' AND status <> 'RELEASED'
+        AND (created_at, id) < (:c, :i)            -- only after a cursor
+      ORDER BY created_at DESC, id DESC LIMIT :n1)
+  UNION ALL (… user_id = :u    AND resource_type = 'STATIC_VM' …)
+  UNION ALL (… created_by = :u AND resource_type = 'VM' …)
+  UNION ALL (… created_by = :u AND resource_type = 'STATIC_VM' …)
+) k
+GROUP BY created_at, id                             -- dedupe owner/creator overlap
+ORDER BY created_at DESC, id DESC LIMIT :n1;        -- :n1 = limit + 1
+
+-- phase 2: the list projection for the ≤ limit kept ids
+<_list_item_stmt()> WHERE b.id IN (:page_ids) ORDER BY created_at DESC, id DESC
+```
+
+**Branch count.** All uses one branch per page type: 2 on the VM page, 1 on the namespace page. Mine uses two per page type, for the owner column and the creator column: 4 on the VM page, 2 on the namespace page. A dispatcher-created booking whose owner is also the viewer appears in both Mine branches, and `GROUP BY` removes the duplicate.
+
+**Correctness.** The top `n` of a union equals the top `n` of the union of each branch's top `n`. Suppose `x` is in the true top `n` and comes from branch `A`. Every element of `A` above `x` is also above `x` in the union, so there are fewer than `n` of them, and `x` is in `A`'s top `n`. Overlap between branches cannot break this. The traversal-equality integration tests pin it.
+
+**The bound.**
+- Each branch reads at most `limit + 1` entries of an index whose every entry in range is a match.
+- The outer sort receives at most `4 × (limit + 1)` rows.
+- Phase 2 reads at most `limit` rows by primary key and joins them to the owner, namespace, static-VM and creator tables by key.
+- Nothing is read before the cursor, because the cursor is each branch's index condition.
+
+**Label.** A label is added to each branch as `label ILIKE …`, a filter on the walk. The branch still reads only its owner, type and released range, but it may skip any number of non-matching labels there (Decision 6).
+
+**Shared filters.** The owner filter, the type filter and the released literal are factored into helpers, so `list_all` and `list_by_user` (JSON) and `list_page` share them.
+
+The method:
 
 ```python
 async def list_page(
@@ -73,66 +128,79 @@ async def list_page(
 ) -> KeysetPage[BookingListItem]
 ```
 
-- **Built on the shared filters.** It builds on `_list_item_stmt()` and on the existing `_apply_resource_type_filter` / `_apply_label_filter`. The owner filter and the released predicate from Decision 2 are factored so that `list_by_user` / `list_all` and `list_page` share them rather than each spelling them out.
-- **Page mechanics.** It adds the keyset predicate when `after` is set, applies `.limit(limit + 1)`, and trims to `limit`. `next_cursor` is the kept last row's `(created_at, id)` only when a probe row existed.
-- **All.** `user_id=None` means All, matching the environments convention.
-- **JSON list.** `list_all` and `list_by_user` stay, unpaginated, for the JSON API.
+It returns the phase-2 items. It sets `next_cursor` to the last kept key only when phase 1 returned a `limit + 1`-th key. `user_id=None` means All.
 
-`app/domain/pagination.py` gets a generic frozen `KeysetPage(Generic[T])` with `items: list[T]` and `next_cursor`. `EnvironmentPage` becomes `KeysetPage[Environment]`, so environment code and tests keep working and there is a single page type. The domain module stays free of framework imports.
+`app/domain/pagination.py` gets a generic frozen `KeysetPage(Generic[T])`. `EnvironmentPage` becomes `KeysetPage[Environment]`, so there is one page type. `list_page` is added to the parametrised projection guard tests in `tests/test_booking_list_projection.py`, the checks for no detail-only columns and no raw secret column. The phase-2 read is the one that selects projection columns, so the #477/#478 guarantees cover it.
 
-The two projection guard tests in `tests/test_booking_list_projection.py`, which check for no detail-only columns and no raw secret column, are parametrised over the list reads. `list_page` is added to them, so the #477/#478 read-model guarantees also cover the paginated read.
+*Alternatives:*
+- A single statement with `OR` and `IN`. The planner falls back to a filtered walk or a bitmap scan plus a full sort, and either one reads history.
+- A lateral join or a recursive CTE merge. These are more complex, and at most four branches of `limit + 1` rows each don't need them.
 
-### 4. Routes: the first page on the existing paths, next pages on `<page_path>/rows`
+### 4. Routes: first page on the existing paths, next pages on `<page_path>/rows`
 
-- **Existing pages.** `GET /`, `GET /book/vm` and `GET /book/namespace` always render the first page (`after=None`) and ignore any `cursor` parameter.
-- **New fragment routes.** `GET /book/vm/rows` and `GET /book/namespace/rows` take `cursor`, `filter`, `show_released` and `label`. They use `require_user` and `include_in_schema=False`, decode the cursor with `decode_cursor`, return `400` on `InvalidCursorError`, and render `partials/booking_rows_page.html`.
-- **Resource type comes from the path.** It is never a query parameter, just as the pages fix it today. A fragment therefore cannot be asked for a type mix that no page shows. `GET /` has no `/rows` of its own. Its Load more URL points at `/book/vm/rows`, since `page_path` is already `/book/vm` there.
-- **Shared code path.** `_render_bookings_page` is split into a helper that resolves `(items, next_cursor)`. It maps the filter to `user_id`, calls `list_page` with `settings.BOOKINGS_PAGE_SIZE`, and attaches queue positions for the kept rows only. The page and the fragment both use this helper, so the visibility and filter logic lives in one place.
-- **No path collisions.** `/book/vm/rows` and `/book/namespace/rows` don't collide with any existing route. The `/bookings/{id}/…` routes live under a different prefix.
+- `GET /`, `GET /book/vm` and `GET /book/namespace` always render the first page (`after=None`) and ignore any `cursor` parameter.
+- `GET /book/vm/rows` and `GET /book/namespace/rows` are new. They take `cursor`, `filter`, `show_released` and `label`, and use `require_user` and `include_in_schema=False`. A cursor that fails `decode_cursor` returns `400`. Otherwise they render `partials/booking_rows_page.html`.
+- The path fixes the resource type, just as it fixes the type on the pages today. There is no type query parameter.
+- `GET /` points its Load more at `/book/vm/rows`, because its `page_path` is `/book/vm`.
+- `_render_bookings_page` is split around one helper. The helper maps `filter` to `user_id`, calls `list_page` with `settings.BOOKINGS_PAGE_SIZE`, attaches queue positions for the kept rows, and builds `load_more_url`. The page and the fragment share it.
+- The new paths collide with nothing. The `/bookings/{id}/…` routes are under a different prefix.
 
-*Alternative:* one `GET /bookings/rows?type=vm|namespace`. This would add a resource-type query parameter that the pages don't have. The path form reuses `page_path`, which the template already carries.
+*Alternative:* `GET /bookings/rows?type=vm|namespace`. It adds a type parameter that the pages don't have.
 
-### 5. Load more: a self-replacing last row, with bookings-specific details
+### 5. Queue position reads only the queue
 
-The mechanics are the environments design (#467, Decision 6). The control is a `<tr id="bookings-load-more">` that is the last child of `#bookings-list`, with `hx-get="{{ load_more_url }}" hx-target="closest tr" hx-swap="outerHTML"`. The response is the next rows plus the next control, or no control on the last page. Rows already rendered, with their `sse-swap` and 60s fallback polls, are left alone. The appended rows are processed by htmx and wired to the tbody's existing `sse-connect`, the same way rows prepended by the form are.
+`_queue_rank_stmt` counts `QUEUED` rows of the same type that are older than the booking, with `status = 'QUEUED'` rendered as the literal from Decision 2. `ix_bookings_queued_rank` serves this as a range scan over queued rows only. The queue length is live state: queued bookings leave the queue on promotion or cancel. It is independent of history. The count runs only for `QUEUED` rows on the page, so a page runs at most `limit` of them. Batching them into one query is not needed for the bound, and is left alone.
+
+### 6. The label exception
+
+`label ILIKE '%x%'` is a substring match. No btree can serve it in page order, and a `pg_trgm` index returns matches without the page order, so the planner would have to sort them all. With a label, each branch walks its owner, type and released range and skips labels that don't match. So the read is bounded by that user's (Mine) or that type's (All) history in the range, not by the page size and not by other users' history.
+
+This relaxes #479's acceptance criterion for label-filtered pages only. The reviewer agreed to that on PR #484, and it was split into #485, which weighs trigram, prefix-match and token-table options. The spec states the exception and pins the part that does hold: a Mine page with a label never reads another user's entries.
+
+### 7. Load more: a self-replacing last row
+
+The mechanics follow #467's Decision 6. `<tr id="bookings-load-more">` is the last child of `#bookings-list`, with `hx-get="{{ load_more_url }}" hx-target="closest tr" hx-swap="outerHTML"`. The response is the next rows plus the next control, or no control on the last page. Rows already on the page keep their `sse-swap` and their 60s fallback polls. Appended rows are wired to the tbody's existing `sse-connect`, just as prepended rows are.
 
 Details specific to bookings:
-- **URL.** `load_more_url` is built server-side with `urlencode` from the filters actually applied: `f"{page_path}/rows?cursor=…&filter=…[&show_released=1][&label=…]"`.
-- **Column span.** The row uses `colspan="9"`, the bookings table's column count.
-- **Adding bookings.** The order form's `afterbegin` prepend keeps the control last. The empty state (`#empty-row`) only renders on a first page with no rows, so a fragment never emits it. A later page that comes back empty, because rows were released in the meantime, just removes the control.
-- **First row.** `is_first_row` (action-menu placement) stays `loop.first` on the first page only. In the fragment it is always false, since those rows are never the first table row.
-- **Filter changes.** The filter controls keep swapping `#bookings-section`, which also replaces the control. A filter change therefore restarts at page one.
-- **Where the URL is built.** `partials/booking_load_more.html` is included by both `index.html` and `booking_rows_page.html`, so the URL is built in one place.
+- **Load more URL.** `load_more_url` is built server-side with `urlencode` from the filters actually applied: `f"{page_path}/rows?cursor=…&filter=…[&show_released=1][&label=…]"`.
+- **Column span.** The control row uses `colspan="9"`.
+- **Order-form prepend.** The form's `afterbegin` prepend keeps the control as the last row.
+- **Empty state.** A fragment never emits `#empty-row`. A later page that turns up empty, for example because its rows were released in the meantime, only removes the control.
+- **First row.** `is_first_row` is `loop.first` on the first page and false in fragments.
+- **Filter changes.** The filter controls keep swapping `#bookings-section`, so any filter change restarts at page one.
+- **One partial.** `partials/booking_load_more.html` is shared by `index.html` and `booking_rows_page.html`.
 
-### 6. Guarantee scope
+### 8. Page size setting
 
-| Cost per request | Bounded? |
-|---|---|
-| Bookings returned or rendered | Yes: at most `limit`, plus one internal probe row that is not rendered |
-| Queue-position lookups | Yes: only for `QUEUED` rows on the page |
-| OFFSET skip | None, ever |
-| Sort, and rows before the cursor, on the index path | None |
-| Hidden released (default), any filter | Walks the partial index, so only non-released bookings. Independent of released history |
-| Show released, All, no label, table dense in the page's types | At most `limit + 1` index entries |
-| Show released with Mine, a label, or a sparse page type | **Not bounded.** On a sparse match it can reach every booking older than the cursor |
+`BOOKINGS_PAGE_SIZE: int = Field(50, gt=0)` goes in `app/config.py`, next to `ENVIRONMENTS_PAGE_SIZE`. It stays separate from the environments setting so each list can be tuned independently.
 
-As with environments, the planner may pick a sequential scan with a top-N sort for selective filters. The spec requires only that the index path be *available*, and that the planner's choice never changes the page. Tests check both, with `enable_seqscan = off` for the plan shape and an unforced-versus-forced traversal comparison. The `EXPLAIN (ANALYZE, BUFFERS)` numbers are recorded in the PR for information and are not a pass/fail gate. They cover All, Mine and the namespace page, each with released hidden and shown, on a committed and vacuumed dataset with a large released history.
+### 9. How the bound is tested
 
-### 7. Page size setting
+The bound is a pass/fail test, not only a PR measurement. The integration dataset is committed and `ANALYZE`d. It includes:
+- thousands of `RELEASED` and `FAILED` bookings, most owned by other users and most of a different type from the page under test
+- a smaller interleaved `FAILED` and `RELEASED` history for the viewing user
+- sparse namespace bookings among VMs
+- dispatcher-created bookings
 
-`BOOKINGS_PAGE_SIZE: int = Field(50, gt=0)` goes in `app/config.py`, next to `ENVIRONMENTS_PAGE_SIZE`. A shared setting was rejected because the two lists have different row weights and may want to be tuned independently.
+For each combination of Mine/All, page type and Show released, with and without a cursor, `EXPLAIN (ANALYZE, FORMAT JSON)` is run on the plan the planner chooses by itself, with no `enable_seqscan` override. The tests assert:
+- the sum of `Actual Rows` over the booking index scan nodes is at most `4 × (limit + 1)`
+- there is no `Seq Scan` on `bookings`
+- the cursor appears as an index condition
+- no `Sort` node receives more than `4 × (limit + 1)` rows
+
+Separate traversals check correctness, with label, against the unpaginated lists. `EXPLAIN (ANALYZE, BUFFERS)` output is still recorded in the PR for information.
 
 ## Risks / Trade-offs
 
-- [The partial index is silently unused if the released predicate is ever bound as a parameter again] → Decision 2 uses one shared literal expression, and an `EXPLAIN` integration test fails if the hidden-released page plan stops using `ix_bookings_unreleased_created_at_id`.
-- [Rows change between pages: a booking is released while released bookings are hidden, or a new one is ordered] → A booking released after page one sorts after the cursor and no longer matches, so it is skipped. A new booking sorts before the cursor, so it causes no duplicate, and the form prepend shows it at the top. The no-gaps guarantee covers only a stable dataset, as for environments.
-- [Live row updates on appended rows] → The rows use the same partial and attributes as first-page rows, the SSE extension picks up new `sse-swap` elements under `sse-connect`, and the same thing already works for environments. Runtime verification (task 5.1) checks it explicitly.
-- [Two more indexes add write cost to `bookings`] → Bookings are written at human rates (orders, status transitions). Each status change touches at most the partial index's membership. The cost is negligible.
-- [Existing unit tests patch `_repo.list_by_user` / `list_all` for the HTML pages] → They move to `list_page`. The JSON-API tests are unaffected.
-- [Show released with a selective filter stays history-dependent] → This is stated in the spec, not hidden. It reads only narrow index entries and heap rows for a history view the user asked for. Bounding it is left to a follow-up if the measurements call for it.
+- [The planner could prefer another plan for a branch on odd statistics] → With an equality prefix and `LIMIT limit + 1`, the prefixed index scan is by far the cheapest plan. The unforced-plan tests run on skewed, `ANALYZE`d data and fail if the planner chooses otherwise, so a regression is caught rather than assumed away.
+- [The partial indexes are silently unused if a status predicate goes back to a bound parameter] → Shared literal expressions, plus the unforced-plan tests.
+- [Seven indexes add write cost and disk space on `bookings`] → Bookings are written at human rates (Decision 2). The indexes are narrow, and the partial ones are small.
+- [Label-filtered pages are not bounded by the page size] → This is stated in the spec and tracked by #485. The Mine-label case is still limited to the user's own range.
+- [Rows change between pages] → A booking released after page one sorts after the cursor and drops out of the filter. A new booking sorts before the cursor, and the form prepend shows it. The no-gaps guarantee covers a stable dataset, as for environments.
+- [Tests that patch `_repo.list_by_user` / `list_all` for the HTML pages] → They move to `list_page`. The JSON-API tests are unaffected.
 
 ## Migration Plan
 
-1. Deploy runs `alembic upgrade head`, which applies `0035` and creates both indexes.
-2. The app code deploys with it. The pages are correct without the indexes, only slower, so the order of the two steps does not matter.
-3. Rollback: revert the app, then run `alembic downgrade 0034` if needed. The previous version depends on neither index.
+1. Deploy runs `alembic upgrade head`, which applies `0035` and creates the seven indexes. The builds are plain `CREATE INDEX`, like `0033`, and briefly block booking writes, for seconds at this table's size. `CONCURRENTLY` would need Alembic's `autocommit_block` and handling for invalid half-built indexes, which isn't worth it at this size.
+2. The app code deploys with it. Without the indexes the pages are still correct, only slower, so the order of the two steps doesn't matter.
+3. Rollback: revert the app, then run `alembic downgrade 0034` if needed. The previous version depends on none of these indexes.

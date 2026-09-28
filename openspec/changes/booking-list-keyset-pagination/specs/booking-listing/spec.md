@@ -94,40 +94,53 @@ The next-page fragment SHALL require an authenticated user. It SHALL apply the s
 
 ### Requirement: Booking page work is bounded per request
 
-Each bookings page request, whether it is a first page or a next page, SHALL be bounded by the page size in three ways: bookings returned to the application, rows rendered, and per-row lookups such as queue positions. A page SHALL NOT be located by skipping a row offset.
+Each bookings page request SHALL be bounded by the page size, whether it is a first page or a next page. This applies to:
+- bookings returned to the application
+- rows rendered
+- per-row lookups
 
-For every filter combination, the database SHALL be able to read bookings in page order through an index, starting at the cursor position. It SHALL do so without sorting the matching bookings and without reading bookings that sort before the cursor.
+A page SHALL NOT be located by skipping a row offset.
 
-When released bookings are hidden, the default, the database SHALL be able to read the page through an index that holds only non-released bookings. The number of released bookings SHALL NOT add to the index entries that such a page read visits.
+Without a label filter, the database work to select a page SHALL be bounded by the page size and not by the number of bookings in the table. This SHALL hold for every combination of Mine or All, the page's resource types, and released bookings hidden or shown. The page selection SHALL read at most four times (the page size plus one) booking index entries. It SHALL read no booking row or index entry that sorts before the cursor. It SHALL sort no more than that bounded number of rows. The bound SHALL hold whatever the history of other users' bookings, other resource types, `RELEASED` bookings or `FAILED` bookings.
 
-When released bookings are shown, the read is bounded by the page size only when no filter narrows the list. That means the All filter, no label, and every booking in the table being of one of the page's resource types. In that case a page read on the index path SHALL read at most one more index entry than the page size. With a selective filter (Mine, a label, or a page's resource types being sparse among newer bookings), the read with released bookings shown is NOT bounded by the page size, and this requirement does not bound it. The database may walk past non-matching bookings, up to every booking older than the cursor.
+The bound SHALL hold on the plan the database chooses by itself. It SHALL NOT depend on disabling sequential scans or any other planner setting.
 
-The planner MAY choose a sequential scan with a top-N sort, keeping only the page size plus one rows, whenever it estimates that as cheaper. The page it returns SHALL be the same page as the index path returns.
+The "bookings" counted here are the bookings the page's filters match. When released bookings are hidden, `FAILED` bookings are still listed, so they count as matches. A user's own `FAILED` history is therefore read only as far as the page reaches into it.
+
+A queue-position lookup SHALL read only `QUEUED` bookings of the booking's resource type. It SHALL NOT read bookings in any other status.
+
+The label filter is the single exception to the page-size bound on page selection, and this requirement does not bound it. With a label filter, the page walk SHALL stay within the bookings that match the owner filter, the page's resource types and the released-state filter. It MAY skip any number of those bookings whose label does not match. Bounding label-filtered reads is tracked by issue #485.
 
 #### Scenario: Queue positions are looked up only for the page
 - **WHEN** a user whose visible bookings include more `QUEUED` bookings than the page size opens a bookings page
 - **THEN** queue positions are looked up only for the `QUEUED` bookings on that page
 
-#### Scenario: Page selection reads bookings in page order through an index
-- **WHEN** the query plan of a page of a bookings list is inspected on PostgreSQL with sequential scans disabled, with and without a cursor, and under each combination of Mine/All, label, Show released and page resource types
-- **THEN** bookings are read through an index on creation time and id in page order, with no separate sort of all matching bookings
-- **AND** when a cursor is given, the cursor position is an index condition, so bookings before it are not read
+#### Scenario: Queue position does not read history
+- **WHEN** a queued booking's position is looked up on PostgreSQL, on a dataset with a large `RELEASED` and `FAILED` history of the same resource type
+- **THEN** the lookup reads only `QUEUED` booking index entries
 
-#### Scenario: Hidden-released page does not read released history
-- **WHEN** a page of a bookings list is fetched with released bookings hidden, on a dataset with many more released bookings than non-released ones, and its query plan is inspected on PostgreSQL with sequential scans disabled
-- **THEN** the page is read through an index that holds only non-released bookings
+#### Scenario: Mine page is bounded despite other users' history
+- **WHEN** a user's visible bookings are older than a large number of bookings owned by others, and the user views the Mine list with and without Show released, with and without a cursor
+- **THEN** the page selection reads at most four times (the page size plus one) booking index entries, on the plan PostgreSQL chooses by itself
 
-#### Scenario: Unfiltered page reads at most one entry past the page
-- **WHEN** a page of the VM bookings list is fetched with All, Show released and no label, on a dataset of only VM and static VM bookings that is larger than two pages, and its execution is inspected on PostgreSQL with sequential scans disabled
-- **THEN** the bookings index scan returns at most the page size plus one row, for both the first page and a page after a cursor
+#### Scenario: Hidden-released page is bounded despite a large FAILED history
+- **WHEN** a dataset has a large `FAILED` history and a large `RELEASED` history, some of it the viewing user's and most of it other users' or other resource types', and a page of the Mine list and of the All list is fetched with released bookings hidden
+- **THEN** each page selection reads at most four times (the page size plus one) booking index entries, on the plan PostgreSQL chooses by itself
+- **AND** the user's `FAILED` bookings are listed in page order like any other listed booking
 
-#### Scenario: Selective filter may read past non-matching history
-- **WHEN** a user's only visible bookings are older than many bookings owned by others, and the user views the Mine list with Show released
-- **THEN** the page contains only the user's bookings, and at most the page size of them
+#### Scenario: Sparse resource type is bounded
+- **WHEN** namespace bookings are rare among many newer VM bookings, and a user opens the namespace bookings page with All and Show released
+- **THEN** the page selection reads at most four times (the page size plus one) booking index entries
 
-#### Scenario: Planner choice does not change the page
-- **WHEN** the same page of a selectively filtered bookings list is fetched once with the planner free to choose, and once with sequential scans disabled
-- **THEN** both return the same bookings in the same order, with the same next-page cursor
+#### Scenario: Page selection does not read before the cursor
+- **WHEN** the plan of a page after a cursor is inspected on PostgreSQL, for each combination of Mine/All, page resource types and Show released
+- **THEN** the cursor position is an index condition on every booking index scan in the plan
+- **AND** no sort in the plan receives more than four times (the page size plus one) rows
+
+#### Scenario: Label filter stays within its branch
+- **WHEN** a user views the Mine list with a label that matches few of their bookings, and many other users' bookings match that label
+- **THEN** the page contains only the user's bookings whose label matches, and at most the page size of them
+- **AND** the page selection reads no booking index entry that belongs to another user and does not name the user as its creator
 
 ## MODIFIED Requirements
 
