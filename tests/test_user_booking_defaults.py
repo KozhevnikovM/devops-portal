@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from fastapi.testclient import TestClient
 
 from app.domain.entities import HWConfig, User, VMImage
+from app.domain.pagination import KeysetPage
 
 
 def _make_image(name="Ubuntu 22.04") -> VMImage:
@@ -171,7 +172,7 @@ def test_booking_form_preselects_user_defaults(setup):
              patch("app.presentation.routes.bookings._namespace_repo") as mock_ns, \
              patch("app.presentation.routes.bookings._static_vm_repo") as mock_svm, \
              patch("app.presentation.routes.bookings._role_repo") as mock_role:
-            mock_repo.list_by_user = AsyncMock(return_value=[])
+            mock_repo.list_page = AsyncMock(return_value=KeysetPage(items=[]))
             mock_img.list_active = AsyncMock(return_value=[image])
             mock_hw.list_active = AsyncMock(return_value=[hw])
             mock_ns.list_available = AsyncMock(return_value=[])
@@ -200,7 +201,7 @@ def test_booking_form_no_default_has_no_selected(setup):
          patch("app.presentation.routes.bookings._namespace_repo") as mock_ns, \
          patch("app.presentation.routes.bookings._static_vm_repo") as mock_svm, \
          patch("app.presentation.routes.bookings._role_repo") as mock_role:
-        mock_repo.list_by_user = AsyncMock(return_value=[])
+        mock_repo.list_page = AsyncMock(return_value=KeysetPage(items=[]))
         mock_img.list_active = AsyncMock(return_value=[image])
         mock_hw.list_active = AsyncMock(return_value=[hw])
         mock_ns.list_available = AsyncMock(return_value=[])

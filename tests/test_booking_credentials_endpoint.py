@@ -13,6 +13,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.domain.entities import Booking, User
+from app.domain.pagination import KeysetPage
 from app.domain.enums import BookingStatus, ResourceType
 from app.domain.exceptions import BookingNotFoundError
 
@@ -180,8 +181,7 @@ def _render_page(user: User, bookings: list[Booking], *, filter: str = "mine") -
          patch(f"{_ROUTES}._namespace_repo") as ns, \
          patch(f"{_ROUTES}._static_vm_repo") as svm, \
          patch(f"{_ROUTES}._role_repo") as role:
-        repo.list_by_user = AsyncMock(return_value=bookings)
-        repo.list_all = AsyncMock(return_value=bookings)
+        repo.list_page = AsyncMock(return_value=KeysetPage(items=bookings))
         repo.queue_position = AsyncMock(return_value=None)
         for r in (img, hw, role):
             r.list_active = AsyncMock(return_value=[])

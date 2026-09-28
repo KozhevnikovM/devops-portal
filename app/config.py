@@ -51,6 +51,8 @@ class Settings(BaseSettings):
     # Environments page: environments per page / per "Load more" (keyset pagination, #467).
     # Server-side only — never a query parameter, so a request can't ask for an unbounded page.
     ENVIRONMENTS_PAGE_SIZE: int = Field(50, gt=0)
+    # Bookings pages: bookings per page / per "Load more" (keyset pagination, #479). Same rule.
+    BOOKINGS_PAGE_SIZE: int = Field(50, gt=0)
 
     # Live row updates (SSE): progress-only row-changed notifications (one per Ansible/script
     # output line) are coalesced per booking to at most one per window, plus a trailing publish

@@ -84,6 +84,7 @@ inspected with `docker inspect <container-id>`.
 | `TF_PG_CONN_STR` | No | PostgreSQL connection string for Terraform state backend. Must use the standard `postgresql://` driver (not `+asyncpg` / `+psycopg2`). Append `?sslmode=disable` for servers without SSL. Default matches the bundled Postgres service. |
 | `STALE_PROVISIONING_THRESHOLD_MINUTES` | No | Minutes after which a booking stuck in PENDING/PROVISIONING/RETRY is marked FAILED by the beat task. Default: `60` |
 | `ENVIRONMENTS_PAGE_SIZE` | No | Environments shown per page on the browser **Environments** page, and appended per **Load more** click (keyset pagination, #467). Must be > 0. Server-side only — it isn't a query parameter. The JSON environments list isn't paginated. Default: `50` |
+| `BOOKINGS_PAGE_SIZE` | No | Bookings shown per page on the browser **VM** and **Namespace** booking pages, and appended per **Load more** click (keyset pagination, #479). Must be > 0. Server-side only — it isn't a query parameter. Each page reads a bounded number of rows regardless of booking history, except when a label filter is applied (#485). The JSON bookings list isn't paginated. Default: `50` |
 | `SSE_PROGRESS_COALESCE_MS` | No | Live-update throttle for provisioning/teardown progress output. A booking's progress lines (Ansible, startup script, SSH wait) produce at most one live row update per this many milliseconds, plus one final update after a burst ends so the last line always shows. Status changes (READY, FAILED, RELEASED, …) are never throttled. Every line is still saved to the provisioning log. `0` disables throttling (one update per line). Read when the worker starts, so restart `worker` after changing it. Default: `750` |
 
 ---
@@ -1902,6 +1903,14 @@ Always commit the generated migration file alongside the model change.
 > already-migrated schema. Any migration shipped in that deploy must be additive/backward
 > compatible (nullable adds only, no drops/renames, no tightened constraints) — see "Migration
 > compatibility" under "Blue-green deployment" above.
+
+> **Migration `0035` (bookings keyset pagination, #479) must be applied before the app version that
+> ships it serves requests.** That version's bookings-page query pins PostgreSQL to index scans, so
+> without `0035`'s page indexes each page falls back to a full scan and sort. The page is still
+> correct, but much slower. Old app + new schema is safe; new app + old schema is not. The `init`
+> container (compose and blue-green) already migrates before `app` starts. If you deploy any other
+> way, run `alembic upgrade head` first. When rolling back, revert the app before running
+> `alembic downgrade 0034`.
 
 ---
 
