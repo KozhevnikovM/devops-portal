@@ -5,6 +5,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.domain.pagination import EnvironmentPage
+from app.domain.pagination import KeysetPage
 
 
 @pytest.fixture
@@ -24,7 +25,7 @@ def booking_client():
 
 # ── HTMX bookings page ──────────────────────────────────────────────────────────
 
-def test_bookings_page_forwards_label_to_list_by_user(booking_client):
+def test_bookings_page_forwards_label_to_list_page(booking_client):
     client, _ = booking_client
     with (
         patch("app.presentation.routes.bookings._repo") as mock_repo,
@@ -34,7 +35,7 @@ def test_bookings_page_forwards_label_to_list_by_user(booking_client):
         patch("app.presentation.routes.bookings._static_vm_repo") as mock_svm,
         patch("app.presentation.routes.bookings._role_repo") as mock_role,
     ):
-        mock_repo.list_by_user = AsyncMock(return_value=[])
+        mock_repo.list_page = AsyncMock(return_value=KeysetPage(items=[]))
         mock_img.list_active = AsyncMock(return_value=[])
         mock_hw.list_active = AsyncMock(return_value=[])
         mock_ns.list_available = AsyncMock(return_value=[])
@@ -44,7 +45,7 @@ def test_bookings_page_forwards_label_to_list_by_user(booking_client):
         resp = client.get("/?label=perf")
 
     assert resp.status_code == 200
-    assert mock_repo.list_by_user.call_args.kwargs["label"] == "perf"
+    assert mock_repo.list_page.call_args.kwargs["label"] == "perf"
 
 
 def test_bookings_page_no_label_defaults_none(booking_client):
@@ -57,7 +58,7 @@ def test_bookings_page_no_label_defaults_none(booking_client):
         patch("app.presentation.routes.bookings._static_vm_repo") as mock_svm,
         patch("app.presentation.routes.bookings._role_repo") as mock_role,
     ):
-        mock_repo.list_by_user = AsyncMock(return_value=[])
+        mock_repo.list_page = AsyncMock(return_value=KeysetPage(items=[]))
         mock_img.list_active = AsyncMock(return_value=[])
         mock_hw.list_active = AsyncMock(return_value=[])
         mock_ns.list_available = AsyncMock(return_value=[])
@@ -67,7 +68,7 @@ def test_bookings_page_no_label_defaults_none(booking_client):
         resp = client.get("/")
 
     assert resp.status_code == 200
-    assert mock_repo.list_by_user.call_args.kwargs["label"] is None
+    assert mock_repo.list_page.call_args.kwargs["label"] is None
 
 
 def test_bookings_page_filter_all_forwards_label(booking_client):
@@ -80,7 +81,7 @@ def test_bookings_page_filter_all_forwards_label(booking_client):
         patch("app.presentation.routes.bookings._static_vm_repo") as mock_svm,
         patch("app.presentation.routes.bookings._role_repo") as mock_role,
     ):
-        mock_repo.list_all = AsyncMock(return_value=[])
+        mock_repo.list_page = AsyncMock(return_value=KeysetPage(items=[]))
         mock_img.list_active = AsyncMock(return_value=[])
         mock_hw.list_active = AsyncMock(return_value=[])
         mock_ns.list_available = AsyncMock(return_value=[])
@@ -90,7 +91,8 @@ def test_bookings_page_filter_all_forwards_label(booking_client):
         resp = client.get("/?filter=all&label=dev")
 
     assert resp.status_code == 200
-    assert mock_repo.list_all.call_args.kwargs["label"] == "dev"
+    assert mock_repo.list_page.call_args.kwargs["label"] == "dev"
+    assert mock_repo.list_page.call_args.kwargs["user_id"] is None
 
 
 def test_mine_all_toggle_preserves_label_filter(booking_client):
@@ -104,7 +106,7 @@ def test_mine_all_toggle_preserves_label_filter(booking_client):
         patch("app.presentation.routes.bookings._static_vm_repo") as mock_svm,
         patch("app.presentation.routes.bookings._role_repo") as mock_role,
     ):
-        mock_repo.list_by_user = AsyncMock(return_value=[])
+        mock_repo.list_page = AsyncMock(return_value=KeysetPage(items=[]))
         mock_img.list_active = AsyncMock(return_value=[])
         mock_hw.list_active = AsyncMock(return_value=[])
         mock_ns.list_available = AsyncMock(return_value=[])

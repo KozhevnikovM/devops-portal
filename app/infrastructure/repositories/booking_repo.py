@@ -2,7 +2,10 @@ import logging
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
-from sqlalchemy import cast, column, Connection, Engine, func, or_, select, String, Text
+from sqlalchemy import (
+    cast, column, Connection, Engine, func, literal, or_, select, String, Text, text, tuple_,
+    union_all,
+)
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, AsyncSession
 from sqlalchemy.orm import Session, aliased
@@ -13,11 +16,13 @@ from app.domain.entities import Booking, BookingAuditEntry
 from app.domain.enums import BookingStatus, ResourceType
 from app.domain.exceptions import BookingNotFoundError, IllegalStatusTransitionError
 from app.domain.lease import Lease
+from app.domain.pagination import KeysetCursor, KeysetPage
 from app.domain.resource_details import (
     NamespaceDetails, ResourceFootprint, StaticVMDetails, VMDetails,
 )
 from app.infrastructure.database.models import (
-    BookingAuditModel, BookingModel, EnvironmentModel, NamespaceModel, StaticVMModel, UserModel,
+    BOOKING_NOT_RELEASED, BOOKING_QUEUED, BookingAuditModel, BookingModel, EnvironmentModel,
+    NamespaceModel, StaticVMModel, UserModel,
 )
 from app.infrastructure.events import (
     Routing,
@@ -306,7 +311,9 @@ def _list_item_stmt():
         .outerjoin(NamespaceModel, NamespaceModel.id == BookingModel.namespace_id)
         .outerjoin(StaticVMModel, StaticVMModel.id == BookingModel.static_vm_id)
         .outerjoin(_CreatorUser, cast(_CreatorUser.id, String) == BookingModel.created_by)
-        .order_by(BookingModel.created_at.desc())
+        # id breaks created_at ties (one transaction's bookings share a timestamp), so the order
+        # is total — keyset pagination relies on it (#479).
+        .order_by(BookingModel.created_at.desc(), BookingModel.id.desc())
     )
 
 
@@ -337,6 +344,104 @@ def _apply_label_filter(stmt, label: str | None):
     if label is None or not label.strip():
         return stmt
     return stmt.where(BookingModel.label.ilike(f"%{label.strip()}%"))
+
+
+def _owner_filter(user_id: str):
+    """"Visible to user" for the Mine list: bookings they own, plus any they dispatched on someone's
+    behalf (created_by). created_by is only ever a dispatcher/admin id, so for an ordinary user
+    this is just their own bookings."""
+    return or_(BookingModel.user_id == user_id, BookingModel.created_by == user_id)
+
+
+def _apply_released_filter(stmt, include_released: bool):
+    """Hide RELEASED bookings unless shown — as a literal, so the partial indexes match (#479)."""
+    return stmt if include_released else stmt.where(BOOKING_NOT_RELEASED)
+
+
+# Pin for the page key query (#479, design.md Decision 10): with bitmap and sequential scans off,
+# the only way to read a branch in page order is its equality-prefixed index walk, which stops
+# after limit + 1 entries. Left free, the planner switches an underestimated branch to bitmap
+# scan + sort, which reads the whole branch. Transaction-local, and restored to the exact previous
+# values right after the key query, so nothing else in the request plans differently.
+_PIN_ORDERED_WALK = text(
+    "WITH prev AS MATERIALIZED ("
+    " SELECT current_setting('enable_bitmapscan') AS bitmapscan,"
+    " current_setting('enable_seqscan') AS seqscan)"
+    " SELECT bitmapscan, seqscan,"
+    " set_config('enable_bitmapscan', 'off', true), set_config('enable_seqscan', 'off', true)"
+    " FROM prev"
+)
+_UNPIN_ORDERED_WALK = text(
+    "SELECT set_config('enable_bitmapscan', :bitmapscan, true),"
+    " set_config('enable_seqscan', :seqscan, true)"
+)
+
+
+class _OrderedWalk:
+    """`async with _OrderedWalk(session):` runs its body under the page key query's plan pin."""
+
+    def __init__(self, session: AsyncSession):
+        self._session = session
+        self._prev: dict | None = None
+
+    async def __aenter__(self):
+        row = (await self._session.execute(_PIN_ORDERED_WALK)).one()
+        self._prev = {"bitmapscan": row.bitmapscan, "seqscan": row.seqscan}
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        # On an error the transaction is aborted and the local settings go with it; restoring
+        # would only fail on the aborted transaction and mask the original error.
+        if exc_type is None:
+            await self._session.execute(_UNPIN_ORDERED_WALK, self._prev)
+        return False
+
+
+def _page_keys_stmt(
+    user_id: str | None, *, resource_types: list[str], label: str | None, include_released: bool,
+    limit: int, after: KeysetCursor | None,
+):
+    """Phase 1 of a bookings page (#479): the (created_at, id) keys of up to `limit + 1` bookings.
+
+    `OR` across owner columns and `IN` across resource types can't be read in page order from
+    one index, so this runs one ordered keyset walk per owner column (Mine: user_id, created_by;
+    All: none) and resource type — each an equality-prefixed ix_bookings_*_page* index scan that
+    stops after `limit + 1` entries — then merges them. The top `limit + 1` of the union is the
+    top `limit + 1` of the branches' tops, so at most 4 × (limit + 1) entries are read and sorted.
+    GROUP BY drops a booking that both Mine branches found (dispatched to oneself).
+    """
+    owner_columns = [BookingModel.user_id, BookingModel.created_by] if user_id is not None else [None]
+    branches = []
+    for owner_column in owner_columns:
+        for resource_type in resource_types:
+            branch = select(BookingModel.created_at, BookingModel.id).where(
+                BookingModel.resource_type == resource_type
+            )
+            if owner_column is not None:
+                branch = branch.where(owner_column == user_id)
+            branch = _apply_released_filter(branch, include_released)
+            branch = _apply_label_filter(branch, label)
+            if after is not None:
+                # A row comparison is an index condition on (created_at, id) after the equality
+                # prefix, so each walk starts at the cursor. Typed binds, as in environment_repo.
+                branch = branch.where(
+                    tuple_(BookingModel.created_at, BookingModel.id)
+                    < tuple_(
+                        literal(after.created_at, BookingModel.created_at.type),
+                        literal(after.id, BookingModel.id.type),
+                    )
+                )
+            branches.append(
+                branch.order_by(BookingModel.created_at.desc(), BookingModel.id.desc())
+                .limit(limit + 1)
+            )
+    keys = union_all(*branches).subquery("page_keys")
+    return (
+        select(keys.c.created_at, keys.c.id)
+        .group_by(keys.c.created_at, keys.c.id)
+        .order_by(keys.c.created_at.desc(), keys.c.id.desc())
+        .limit(limit + 1)
+    )
 
 
 _POOLED_LIVE_STATUSES = [s.value for s in LIVE_STATUSES]
@@ -376,9 +481,11 @@ def _oldest_queued_stmt(resource_type: str):
 
 
 def _queue_rank_stmt(resource_type: str, created_at: datetime):
+    """Bookings of the type queued ahead of `created_at`. The literal QUEUED predicate lets
+    ix_bookings_queued_rank serve it, so it reads only the queue, never history (#479)."""
     return select(func.count(BookingModel.id)).where(
         BookingModel.resource_type == resource_type,
-        BookingModel.status == BookingStatus.QUEUED.value,
+        BOOKING_QUEUED,
         BookingModel.created_at < created_at,
     )
 
@@ -500,9 +607,7 @@ class BookingRepository:
         resource_type: str | list[str] | None = None,
         label: str | None = None,
     ) -> list[BookingListItem]:
-        stmt = _list_item_stmt()
-        if not include_released:
-            stmt = stmt.where(BookingModel.status != BookingStatus.RELEASED.value)
+        stmt = _apply_released_filter(_list_item_stmt(), include_released)
         stmt = _apply_resource_type_filter(stmt, resource_type)
         stmt = _apply_label_filter(stmt, label)
         result = await session.execute(stmt)
@@ -516,18 +621,48 @@ class BookingRepository:
         resource_type: str | list[str] | None = None,
         label: str | None = None,
     ) -> list[BookingListItem]:
-        # "Visible to user": bookings they own, plus any they dispatched on someone's behalf
-        # (created_by). created_by is only ever a dispatcher/admin id, so for an ordinary user
-        # this is just their own bookings.
-        stmt = _list_item_stmt().where(
-            or_(BookingModel.user_id == user_id, BookingModel.created_by == user_id)
-        )
-        if not include_released:
-            stmt = stmt.where(BookingModel.status != BookingStatus.RELEASED.value)
+        stmt = _apply_released_filter(_list_item_stmt().where(_owner_filter(user_id)), include_released)
         stmt = _apply_resource_type_filter(stmt, resource_type)
         stmt = _apply_label_filter(stmt, label)
         result = await session.execute(stmt)
         return [_to_list_item(row) for row in result.all()]
+
+    async def list_page(
+        self,
+        session: AsyncSession,
+        *,
+        user_id: str | None,
+        resource_types: list[str],
+        label: str | None,
+        include_released: bool,
+        limit: int,
+        after: KeysetCursor | None,
+    ) -> KeysetPage[BookingListItem]:
+        """One keyset page of a bookings list, newest first (#479).
+
+        `user_id=None` lists everyone's bookings, otherwise the Mine list. The page starts strictly
+        after `after`; one extra key is fetched only to tell whether another page exists. Two
+        phases: the bounded key walk (`_page_keys_stmt`, pinned to ordered index walks), then the
+        list projection for the kept ids alone.
+        """
+        async with _OrderedWalk(session):
+            keys = (await session.execute(_page_keys_stmt(
+                user_id, resource_types=resource_types, label=label,
+                include_released=include_released, limit=limit, after=after,
+            ))).all()
+        has_more = len(keys) > limit
+        keys = keys[:limit]
+        items: list[BookingListItem] = []
+        if keys:
+            rows = await session.execute(
+                _list_item_stmt().where(BookingModel.id.in_([k.id for k in keys]))
+            )
+            items = [_to_list_item(row) for row in rows.all()]
+        next_cursor = None
+        if has_more:
+            last = keys[-1]
+            next_cursor = KeysetCursor(created_at=last.created_at, id=last.id)
+        return KeysetPage(items=items, next_cursor=next_cursor)
 
     async def list_audit(self, session: AsyncSession, booking_id: UUID) -> list[BookingAuditEntry]:
         result = await session.execute(

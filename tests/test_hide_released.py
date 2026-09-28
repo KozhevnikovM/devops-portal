@@ -3,6 +3,8 @@ from unittest.mock import AsyncMock, patch
 
 from fastapi.testclient import TestClient
 
+from app.domain.pagination import KeysetPage
+
 
 @pytest.fixture
 def setup():
@@ -22,7 +24,7 @@ def setup():
 # ── Route: default hides released, ?show_released=1 includes them ──────────────
 
 def test_default_excludes_released(setup):
-    """GET / (default) calls list_by_user with include_released=False."""
+    """GET / (default) lists Mine with include_released=False."""
     client, _ = setup
 
     with patch("app.presentation.routes.bookings._repo") as mock_repo, \
@@ -31,7 +33,7 @@ def test_default_excludes_released(setup):
          patch("app.presentation.routes.bookings._namespace_repo") as mock_ns, \
          patch("app.presentation.routes.bookings._static_vm_repo") as mock_svm, \
          patch("app.presentation.routes.bookings._role_repo") as mock_role:
-        mock_repo.list_by_user = AsyncMock(return_value=[])
+        mock_repo.list_page = AsyncMock(return_value=KeysetPage(items=[]))
         mock_img.list_active = AsyncMock(return_value=[])
         mock_hw.list_active = AsyncMock(return_value=[])
         mock_ns.list_available = AsyncMock(return_value=[])
@@ -41,11 +43,12 @@ def test_default_excludes_released(setup):
         resp = client.get("/")
 
     assert resp.status_code == 200
-    assert mock_repo.list_by_user.call_args.kwargs["include_released"] is False
+    assert mock_repo.list_page.call_args.kwargs["user_id"] is not None
+    assert mock_repo.list_page.call_args.kwargs["include_released"] is False
 
 
 def test_show_released_includes_them(setup):
-    """GET /?show_released=1 calls list_by_user with include_released=True."""
+    """GET /?show_released=1 lists Mine with include_released=True."""
     client, _ = setup
 
     with patch("app.presentation.routes.bookings._repo") as mock_repo, \
@@ -54,7 +57,7 @@ def test_show_released_includes_them(setup):
          patch("app.presentation.routes.bookings._namespace_repo") as mock_ns, \
          patch("app.presentation.routes.bookings._static_vm_repo") as mock_svm, \
          patch("app.presentation.routes.bookings._role_repo") as mock_role:
-        mock_repo.list_by_user = AsyncMock(return_value=[])
+        mock_repo.list_page = AsyncMock(return_value=KeysetPage(items=[]))
         mock_img.list_active = AsyncMock(return_value=[])
         mock_hw.list_active = AsyncMock(return_value=[])
         mock_ns.list_available = AsyncMock(return_value=[])
@@ -64,11 +67,12 @@ def test_show_released_includes_them(setup):
         resp = client.get("/?show_released=1")
 
     assert resp.status_code == 200
-    assert mock_repo.list_by_user.call_args.kwargs["include_released"] is True
+    assert mock_repo.list_page.call_args.kwargs["user_id"] is not None
+    assert mock_repo.list_page.call_args.kwargs["include_released"] is True
 
 
 def test_filter_all_default_excludes_released(setup):
-    """GET /?filter=all (default) calls list_all with include_released=False."""
+    """GET /?filter=all (default) lists All with include_released=False."""
     client, _ = setup
 
     with patch("app.presentation.routes.bookings._repo") as mock_repo, \
@@ -77,7 +81,7 @@ def test_filter_all_default_excludes_released(setup):
          patch("app.presentation.routes.bookings._namespace_repo") as mock_ns, \
          patch("app.presentation.routes.bookings._static_vm_repo") as mock_svm, \
          patch("app.presentation.routes.bookings._role_repo") as mock_role:
-        mock_repo.list_all = AsyncMock(return_value=[])
+        mock_repo.list_page = AsyncMock(return_value=KeysetPage(items=[]))
         mock_img.list_active = AsyncMock(return_value=[])
         mock_hw.list_active = AsyncMock(return_value=[])
         mock_ns.list_available = AsyncMock(return_value=[])
@@ -87,11 +91,12 @@ def test_filter_all_default_excludes_released(setup):
         resp = client.get("/?filter=all")
 
     assert resp.status_code == 200
-    assert mock_repo.list_all.call_args.kwargs["include_released"] is False
+    assert mock_repo.list_page.call_args.kwargs["user_id"] is None
+    assert mock_repo.list_page.call_args.kwargs["include_released"] is False
 
 
 def test_filter_all_show_released_includes_them(setup):
-    """GET /?filter=all&show_released=1 calls list_all with include_released=True."""
+    """GET /?filter=all&show_released=1 lists All with include_released=True."""
     client, _ = setup
 
     with patch("app.presentation.routes.bookings._repo") as mock_repo, \
@@ -100,7 +105,7 @@ def test_filter_all_show_released_includes_them(setup):
          patch("app.presentation.routes.bookings._namespace_repo") as mock_ns, \
          patch("app.presentation.routes.bookings._static_vm_repo") as mock_svm, \
          patch("app.presentation.routes.bookings._role_repo") as mock_role:
-        mock_repo.list_all = AsyncMock(return_value=[])
+        mock_repo.list_page = AsyncMock(return_value=KeysetPage(items=[]))
         mock_img.list_active = AsyncMock(return_value=[])
         mock_hw.list_active = AsyncMock(return_value=[])
         mock_ns.list_available = AsyncMock(return_value=[])
@@ -110,7 +115,8 @@ def test_filter_all_show_released_includes_them(setup):
         resp = client.get("/?filter=all&show_released=1")
 
     assert resp.status_code == 200
-    assert mock_repo.list_all.call_args.kwargs["include_released"] is True
+    assert mock_repo.list_page.call_args.kwargs["user_id"] is None
+    assert mock_repo.list_page.call_args.kwargs["include_released"] is True
 
 
 def test_toggle_button_preserves_owner_filter(setup):
@@ -123,7 +129,7 @@ def test_toggle_button_preserves_owner_filter(setup):
          patch("app.presentation.routes.bookings._namespace_repo") as mock_ns, \
          patch("app.presentation.routes.bookings._static_vm_repo") as mock_svm, \
          patch("app.presentation.routes.bookings._role_repo") as mock_role:
-        mock_repo.list_all = AsyncMock(return_value=[])
+        mock_repo.list_page = AsyncMock(return_value=KeysetPage(items=[]))
         mock_img.list_active = AsyncMock(return_value=[])
         mock_hw.list_active = AsyncMock(return_value=[])
         mock_ns.list_available = AsyncMock(return_value=[])

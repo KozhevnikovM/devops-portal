@@ -1,3 +1,4 @@
+from urllib.parse import urlencode
 from uuid import UUID
 
 import yaml
@@ -7,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.use_cases._permissions import can_manage, can_view_credentials
 from app.application.use_cases._roles import resolve_config_roles
+from app.config import settings
 from app.domain.booking_list import BookingListItem
 from app.domain.entities import Booking, User
 from app.domain.enums import BookingStatus, ResourceType
@@ -19,6 +21,7 @@ from app.infrastructure.auth import require_user
 from app.infrastructure.database.session import get_async_session
 from app.presentation import deps
 from app.presentation.middleware.correlation_id import get_request_id
+from app.presentation.pagination import InvalidCursorError, decode_cursor, encode_cursor
 from app.presentation.templating import templates
 
 router = APIRouter()
@@ -63,6 +66,7 @@ def _parse_vars_yaml(raw: str) -> dict:
 
 # Resource types listed on each booking page.
 _VM_PAGE_TYPES = [ResourceType.VM.value, ResourceType.STATIC_VM.value]
+_NAMESPACE_PAGE_TYPES = [ResourceType.NAMESPACE.value]
 
 
 async def _attach_queue_position(session, booking: BookingListItem | Booking) -> None:
@@ -73,24 +77,52 @@ async def _attach_queue_position(session, booking: BookingListItem | Booking) ->
         )
 
 
+async def _list_page(
+    session, current_user, *, resource_types, page_path, filter, show_released, label, after=None,
+):
+    """One keyset page of a bookings list (#479) → template context for its rows and Load more.
+
+    Shared by the page (first page) and the Load more fragment (later pages), so both apply the
+    same visibility and filters. Queue positions are looked up for the page's rows only.
+    """
+    page = await _repo.list_page(
+        session,
+        user_id=None if filter == "all" else str(current_user.id),
+        resource_types=resource_types, label=label, include_released=show_released,
+        limit=settings.BOOKINGS_PAGE_SIZE, after=after,
+    )
+    for b in page.items:
+        await _attach_queue_position(session, b)
+    # The Load more URL echoes the filters in effect, so every page matches the first one.
+    load_more_url = None
+    if page.next_cursor:
+        query = {"cursor": encode_cursor(page.next_cursor), "filter": filter}
+        if show_released:
+            query["show_released"] = "1"
+        if label:
+            query["label"] = label
+        load_more_url = f"{page_path}/rows?{urlencode(query)}"
+    return {
+        "bookings": page.items,
+        "current_user": current_user,
+        "active_filter": filter,
+        "show_released": show_released,
+        "label_filter": label,
+        "load_more_url": load_more_url,
+    }
+
+
 async def _render_bookings_page(
     request, session, current_user, *, booking_type, page_path, active_nav, filter, show_released,
     label=None,
 ):
     # The VM page lists both provisioned and static VMs; other pages list their one type.
-    query_types = _VM_PAGE_TYPES if booking_type == "VM" else booking_type
-
-    if filter == "all":
-        bookings = await _repo.list_all(
-            session, include_released=show_released, resource_type=query_types, label=label,
-        )
-    else:
-        bookings = await _repo.list_by_user(
-            session, str(current_user.id), include_released=show_released,
-            resource_type=query_types, label=label,
-        )
-    for b in bookings:
-        await _attach_queue_position(session, b)
+    # Always the first page — a bookmarked or pushed URL opens at the top (#479).
+    list_context = await _list_page(
+        session, current_user,
+        resource_types=_VM_PAGE_TYPES if booking_type == "VM" else _NAMESPACE_PAGE_TYPES,
+        page_path=page_path, filter=filter, show_released=show_released, label=label,
+    )
     vm_images = await _image_repo.list_active(session)
     hw_configs = await _hw_config_repo.list_active(session)
     available_namespaces = await _namespace_repo.list_available(session)
@@ -103,21 +135,33 @@ async def _render_bookings_page(
     return templates.TemplateResponse(
         request, "index.html",
         {
-            "bookings": bookings,
             "vm_images": vm_images,
             "hw_configs": hw_configs,
             "available_namespaces": available_namespaces,
             "available_static_vms": available_static_vms,
             "roles": roles,
-            "current_user": current_user,
-            "active_filter": filter,
-            "show_released": show_released,
-            "label_filter": label,
             "booking_type": booking_type,
             "page_path": page_path,
             "active_nav": active_nav,
+            **list_context,
         },
     )
+
+
+async def _render_rows_page(
+    request, session, current_user, *, resource_types, page_path, cursor, filter, show_released,
+    label,
+):
+    """The next page of rows for "Load more" (#479): rows + the next control, appended in place."""
+    try:
+        after = decode_cursor(cursor)
+    except InvalidCursorError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    list_context = await _list_page(
+        session, current_user, resource_types=resource_types, page_path=page_path,
+        filter=filter, show_released=show_released, label=label, after=after,
+    )
+    return templates.TemplateResponse(request, "partials/booking_rows_page.html", list_context)
 
 
 @router.get("/", response_class=HTMLResponse)
@@ -137,6 +181,22 @@ async def vm_bookings_page(
     )
 
 
+@router.get("/book/vm/rows", response_class=HTMLResponse, include_in_schema=False)
+async def vm_booking_rows_page(
+    request: Request,
+    cursor: str | None = None,
+    filter: str = "mine",
+    show_released: bool = False,
+    label: str | None = None,
+    session: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(require_user),
+):
+    return await _render_rows_page(
+        request, session, current_user, resource_types=_VM_PAGE_TYPES, page_path="/book/vm",
+        cursor=cursor, filter=filter, show_released=show_released, label=label,
+    )
+
+
 @router.get("/book/namespace", response_class=HTMLResponse)
 async def namespace_bookings_page(
     request: Request,
@@ -150,6 +210,23 @@ async def namespace_bookings_page(
         request, session, current_user,
         booking_type="NAMESPACE", page_path="/book/namespace", active_nav="namespace",
         filter=filter, show_released=show_released, label=label,
+    )
+
+
+@router.get("/book/namespace/rows", response_class=HTMLResponse, include_in_schema=False)
+async def namespace_booking_rows_page(
+    request: Request,
+    cursor: str | None = None,
+    filter: str = "mine",
+    show_released: bool = False,
+    label: str | None = None,
+    session: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(require_user),
+):
+    return await _render_rows_page(
+        request, session, current_user, resource_types=_NAMESPACE_PAGE_TYPES,
+        page_path="/book/namespace",
+        cursor=cursor, filter=filter, show_released=show_released, label=label,
     )
 
 

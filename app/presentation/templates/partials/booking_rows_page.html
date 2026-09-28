@@ -1,0 +1,6 @@
+{# The next page of a bookings list (#479): its rows, then the next "Load more" row, if any. Never
+   the empty-state row, and never the first table row (is_first_row stays unset). #}
+{% for booking in bookings %}
+{% include "partials/booking_row.html" %}
+{% endfor %}
+{% include "partials/booking_load_more.html" %}

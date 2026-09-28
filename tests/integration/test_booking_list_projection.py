@@ -18,6 +18,7 @@ import pytest_asyncio
 from sqlalchemy import insert
 
 from app.domain.entities import User
+from app.domain.pagination import KeysetCursor
 from app.infrastructure.auth import require_user
 from app.infrastructure.database.models import (
     BookingModel,
@@ -28,6 +29,7 @@ from app.infrastructure.database.models import (
 from app.infrastructure.database.session import get_async_session
 from app.infrastructure.repositories.booking_repo import BookingRepository
 from app.main import app
+from app.presentation.pagination import encode_cursor
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio(loop_scope="session")]
 
@@ -224,6 +226,27 @@ async def test_list_row_semantically_matches_refreshed_row(async_session, seeded
             row = await client.get(f"/bookings/{booking_id}/row")
             assert row.status_code == 200
             assert _summarize(listing.text, booking_id) == _summarize(row.text, booking_id), key
+
+
+# A cursor after every seeded booking, so a Load more fragment returns them as its page (#479).
+_TOP_CURSOR = encode_cursor(KeysetCursor(datetime(9999, 1, 1, tzinfo=timezone.utc), UUID(int=2**128 - 1)))
+
+
+@pytest.mark.parametrize("viewer,list_filter", [("owner", "mine"), ("admin", "all")])
+@pytest.mark.parametrize("page", list(_PAGES))
+async def test_load_more_row_semantically_matches_refreshed_row(async_session, seeded, viewer,
+                                                                list_filter, page):
+    """#479: a row appended by Load more is the same row the page and /row render."""
+    user = seeded[viewer]
+    async with _client(async_session, user) as client:
+        fragment = await client.get(f"{page}/rows", params={
+            "cursor": _TOP_CURSOR, "filter": list_filter, "label": seeded["token"],
+        })
+        assert fragment.status_code == 200
+        for key in _PAGES[page]:
+            booking_id = seeded["ids"][key]
+            row = await client.get(f"/bookings/{booking_id}/row")
+            assert _summarize(fragment.text, booking_id) == _summarize(row.text, booking_id), key
 
 
 async def test_list_row_shows_log_link_roles_and_queue_position(async_session, seeded):

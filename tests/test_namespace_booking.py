@@ -7,6 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.domain.entities import Booking
+from app.domain.pagination import KeysetPage
 from app.domain.enums import BookingStatus, ResourceType
 from app.domain.exceptions import NamespaceUnavailableError
 
@@ -220,7 +221,7 @@ def test_namespace_page_renders_namespace_form(client):
          patch("app.presentation.routes.bookings._namespace_repo") as mock_ns, \
          patch("app.presentation.routes.bookings._static_vm_repo") as mock_svm, \
          patch("app.presentation.routes.bookings._role_repo") as mock_role:
-        mock_repo.list_by_user = AsyncMock(return_value=[])
+        mock_repo.list_page = AsyncMock(return_value=KeysetPage(items=[]))
         mock_img.list_active = AsyncMock(return_value=[])
         mock_hw.list_active = AsyncMock(return_value=[])
         mock_ns.list_available = AsyncMock(return_value=[ns])
@@ -235,7 +236,7 @@ def test_namespace_page_renders_namespace_form(client):
     # VM-only fields are not on the namespace page.
     assert 'name="image_id"' not in resp.text
     # Lists only namespace bookings.
-    assert mock_repo.list_by_user.call_args.kwargs["resource_type"] == "NAMESPACE"
+    assert mock_repo.list_page.call_args.kwargs["resource_types"] == ["NAMESPACE"]
 
 
 def test_vm_page_lists_only_vm_bookings(client):
@@ -246,7 +247,7 @@ def test_vm_page_lists_only_vm_bookings(client):
          patch("app.presentation.routes.bookings._namespace_repo") as mock_ns, \
          patch("app.presentation.routes.bookings._static_vm_repo") as mock_svm, \
          patch("app.presentation.routes.bookings._role_repo") as mock_role:
-        mock_repo.list_by_user = AsyncMock(return_value=[])
+        mock_repo.list_page = AsyncMock(return_value=KeysetPage(items=[]))
         mock_img.list_active = AsyncMock(return_value=[])
         mock_hw.list_active = AsyncMock(return_value=[])
         mock_ns.list_available = AsyncMock(return_value=[])
@@ -257,7 +258,7 @@ def test_vm_page_lists_only_vm_bookings(client):
     assert resp.status_code == 200
     assert 'name="image_id"' in resp.text
     # VM page lists both provisioned and static VMs.
-    assert mock_repo.list_by_user.call_args.kwargs["resource_type"] == ["VM", "STATIC_VM"]
+    assert mock_repo.list_page.call_args.kwargs["resource_types"] == ["VM", "STATIC_VM"]
 
 
 def test_action_menu_not_clipped_by_table_wrapper(client):
@@ -285,7 +286,7 @@ def test_action_menu_not_clipped_by_table_wrapper(client):
          patch("app.presentation.routes.bookings._namespace_repo") as mock_ns, \
          patch("app.presentation.routes.bookings._static_vm_repo") as mock_svm, \
          patch("app.presentation.routes.bookings._role_repo") as mock_role:
-        mock_repo.list_by_user = AsyncMock(return_value=[booking])
+        mock_repo.list_page = AsyncMock(return_value=KeysetPage(items=[booking]))
         mock_img.list_active = AsyncMock(return_value=[])
         mock_hw.list_active = AsyncMock(return_value=[])
         mock_ns.list_available = AsyncMock(return_value=[])
@@ -310,7 +311,7 @@ def test_header_nav_shows_booking_types(client):
          patch("app.presentation.routes.bookings._namespace_repo") as mock_ns, \
          patch("app.presentation.routes.bookings._static_vm_repo") as mock_svm, \
          patch("app.presentation.routes.bookings._role_repo") as mock_role:
-        mock_repo.list_by_user = AsyncMock(return_value=[])
+        mock_repo.list_page = AsyncMock(return_value=KeysetPage(items=[]))
         mock_img.list_active = AsyncMock(return_value=[])
         mock_hw.list_active = AsyncMock(return_value=[])
         mock_ns.list_available = AsyncMock(return_value=[])

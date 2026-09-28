@@ -103,7 +103,7 @@ A page SHALL NOT be located by skipping a row offset.
 
 Without a label filter, the database work to select a page SHALL be bounded by the page size and not by the number of bookings in the table. This SHALL hold for every combination of Mine or All, the page's resource types, and released bookings hidden or shown. The page selection SHALL read at most four times (the page size plus one) booking index entries. It SHALL read no booking row or index entry that sorts before the cursor. It SHALL sort no more than that bounded number of rows. The bound SHALL hold whatever the history of other users' bookings, other resource types, `RELEASED` bookings or `FAILED` bookings.
 
-The bound SHALL hold on the plan the database chooses by itself. It SHALL NOT depend on disabling sequential scans or any other planner setting.
+The bound SHALL hold on the plan that the page request actually runs. The system MAY constrain the database's choice of plan for the page selection, so that the ordered walk is the only plan available. Any such constraint SHALL apply to the page selection alone. Every other read in the same request SHALL run with the database's settings as they were before the page selection. The bound SHALL NOT depend on any setting that a test or an operator applies outside the system.
 
 The "bookings" counted here are the bookings the page's filters match. When released bookings are hidden, `FAILED` bookings are still listed, so they count as matches. A user's own `FAILED` history is therefore read only as far as the page reaches into it.
 
@@ -121,12 +121,20 @@ The label filter is the single exception to the page-size bound on page selectio
 
 #### Scenario: Mine page is bounded despite other users' history
 - **WHEN** a user's visible bookings are older than a large number of bookings owned by others, and the user views the Mine list with and without Show released, with and without a cursor
-- **THEN** the page selection reads at most four times (the page size plus one) booking index entries, on the plan PostgreSQL chooses by itself
+- **THEN** the page selection reads at most four times (the page size plus one) booking index entries, on the plan the page request runs
 
 #### Scenario: Hidden-released page is bounded despite a large FAILED history
 - **WHEN** a dataset has a large `FAILED` history and a large `RELEASED` history, some of it the viewing user's and most of it other users' or other resource types', and a page of the Mine list and of the All list is fetched with released bookings hidden
-- **THEN** each page selection reads at most four times (the page size plus one) booking index entries, on the plan PostgreSQL chooses by itself
+- **THEN** each page selection reads at most four times (the page size plus one) booking index entries, on the plan the page request runs
 - **AND** the user's `FAILED` bookings are listed in page order like any other listed booking
+
+#### Scenario: Bound holds when the database underestimates a branch
+- **WHEN** the database's statistics estimate that a viewer has only a few matching bookings of a type, and the viewer actually has many more than a page of them
+- **THEN** the Mine page selection still reads at most four times (the page size plus one) booking index entries
+
+#### Scenario: Plan constraints do not outlive the page selection
+- **WHEN** a bookings page request has selected its page
+- **THEN** every later read in the same request, such as the list projection, queue positions and the form catalogs, runs with the database's planner settings as they were before the page selection
 
 #### Scenario: Sparse resource type is bounded
 - **WHEN** namespace bookings are rare among many newer VM bookings, and a user opens the namespace bookings page with All and Show released

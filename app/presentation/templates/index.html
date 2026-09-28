@@ -74,6 +74,7 @@
                             <td colspan="9" class="px-4 py-6 text-center text-gray-600">No {{ type_label.lower() }} bookings yet.</td>
                         </tr>
                     {% endfor %}
+                    {% include "partials/booking_load_more.html" %}
                 </tbody>
             </table>
         </div>

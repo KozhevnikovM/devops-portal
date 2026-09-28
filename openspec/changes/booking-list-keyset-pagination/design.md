@@ -31,7 +31,7 @@ Their rationale is in `openspec/changes/archive/2026-09-25-environments-keyset-p
 ## Goals / Non-Goals
 
 **Goals:**
-- Bound page selection by the page size for every combination of Mine/All, page resource types and Show released: at most `4 × (limit + 1)` index entries read, on the plan the planner chooses by itself. The bound must not depend on how much history other users or other types have, `RELEASED` or `FAILED`.
+- Bound page selection by the page size for every combination of Mine/All, page resource types and Show released: at most `4 × (limit + 1)` index entries read, on the plan the page query actually runs (Decision 10). The bound must not depend on how much history other users or other types have, `RELEASED` or `FAILED`.
 - Bound per-row work: rows loaded and rendered at most `limit`, and queue-position lookups that read only `QUEUED` rows.
 - Reuse the #467 cursor codec, the Load more mechanics and the test shape.
 - Leave the JSON list's behaviour and fields unchanged.
@@ -182,18 +182,47 @@ The bound is a pass/fail test, not only a PR measurement. The integration datase
 - sparse namespace bookings among VMs
 - dispatcher-created bookings
 
-For each combination of Mine/All, page type and Show released, with and without a cursor, `EXPLAIN (ANALYZE, FORMAT JSON)` is run on the plan the planner chooses by itself, with no `enable_seqscan` override. The tests assert:
+For each combination of Mine/All, page type and Show released, with and without a cursor, `EXPLAIN (ANALYZE, FORMAT JSON)` is run inside the same plan pin that `list_page` applies (Decision 10), and never under a setting of the test's own. The tests assert:
 - the sum of `Actual Rows` over the booking index scan nodes is at most `4 × (limit + 1)`
-- there is no `Seq Scan` on `bookings`
+- there is no `Seq Scan` or bitmap scan on `bookings`
 - the cursor appears as an index condition
 - no `Sort` node receives more than `4 × (limit + 1)` rows
 
-Separate traversals check correctness, with label, against the unpaginated lists. `EXPLAIN (ANALYZE, BUFFERS)` output is still recorded in the PR for information.
+Other tests cover the rest:
+- **Misestimated branch.** A dataset where the statistics understate a viewer's branch. This was the case that produced Bitmap Heap Scan + sort during implementation.
+- **Generic plan.** A plan under `plan_cache_mode = force_generic_plan`, to check that the literal released predicate still matches the partial indexes.
+- **Settings restored.** `list_page` puts the previous planner settings back.
+- **Correctness.** Traversals, with label, compared against the unpaginated lists. `EXPLAIN (ANALYZE, BUFFERS)` output is still recorded in the PR for information.
+
+### 10. Pin the key query to the ordered walks
+
+During implementation, the planner sometimes chose a **Bitmap Heap Scan + sort** for a Mine branch. On the same data, it alternated between that plan and the ordered backward index-only walk from one run to the next. It picks the bitmap plan when it estimates that a branch matches only a few rows. In one measured case it estimated 7 and there were 45. Because of the `LIMIT`, it assumes it will read the whole branch anyway, and a bitmap scan reads that faster. That plan reads every booking in the branch, which is the viewer's whole matching history of that type, before sorting. That breaks the page-size bound. It never reads other users' or `RELEASED` rows, but the viewer's own `FAILED` history is exactly what the review said must not be walked.
+
+`list_page` therefore pins the phase-1 key query:
+
+```python
+# one round trip: remember the settings, then pin them for this transaction only
+prev = SELECT current_setting('enable_bitmapscan'), current_setting('enable_seqscan'),
+              set_config('enable_bitmapscan', 'off', true), set_config('enable_seqscan', 'off', true)
+keys = <phase-1 key query>
+SELECT set_config('enable_bitmapscan', prev.bitmap, true), set_config('enable_seqscan', prev.seq, true)
+```
+
+- **Why this works.** With both off, the only remaining access paths for a branch are index scans. The only index scan that yields the branch's order without a sort is the equality-prefixed walk. So the walk is the plan, whatever the statistics say. The outer merge of at most four branches may still sort, but at most `4 × (limit + 1)` rows. `enable_sort` stays on.
+- **Scope.** `set_config(..., true)` is transaction-local. The restore puts back the exact previous values, not the defaults, so an operator's session setting survives. Phase 2 (the projection), queue positions, the form catalogs and everything else in the request plan normally. If the key query fails, the transaction aborts and the local settings go with it. No `finally` is needed, and one would fail on the aborted transaction anyway.
+- **Cost.** Two extra round trips per page. The first merges the read and the pin into one statement, with the read done in a `MATERIALIZED` CTE so it runs first.
+- **What the tests run.** The same pin/unpin helper wraps the `EXPLAIN` in the tests (Decision 9). The tests measure the plan the application runs, with no settings of their own.
+
+*Alternatives:*
+- Extended statistics (`CREATE STATISTICS` on `user_id, resource_type, status`). Estimates get better, but the bound stays probabilistic.
+- Relaxing the bound to "the viewer's own matching set". That weakens the guarantee #479 agreed to for Mine.
+- `pg_hint_plan`. It is an extension the deployment doesn't have.
 
 ## Risks / Trade-offs
 
-- [The planner could prefer another plan for a branch on odd statistics] → With an equality prefix and `LIMIT limit + 1`, the prefixed index scan is by far the cheapest plan. The unforced-plan tests run on skewed, `ANALYZE`d data and fail if the planner chooses otherwise, so a regression is caught rather than assumed away.
-- [The partial indexes are silently unused if a status predicate goes back to a bound parameter] → Shared literal expressions, plus the unforced-plan tests.
+- [The planner prefers another plan for a branch it underestimates] → This happened during implementation. Decision 10 pins the key query to ordered index walks, so the bound doesn't depend on statistics.
+- [The pin leaks into later reads in the request, or overrides an operator's session setting] → The pin is transaction-local, is scoped to the key query, and restores the exact previous values. A test checks the restore.
+- [The partial indexes are silently unused if a status predicate goes back to a bound parameter] → Shared literal expressions, plus the plan tests, including one under a forced generic plan. With seq and bitmap scans off, a regression would show up as a full-index walk that reads `RELEASED` rows, and the read-count assertion fails.
 - [Seven indexes add write cost and disk space on `bookings`] → Bookings are written at human rates (Decision 2). The indexes are narrow, and the partial ones are small.
 - [Label-filtered pages are not bounded by the page size] → This is stated in the spec and tracked by #485. The Mine-label case is still limited to the user's own range.
 - [Rows change between pages] → A booking released after page one sorts after the cursor and drops out of the filter. A new booking sorts before the cursor, and the form prepend shows it. The no-gaps guarantee covers a stable dataset, as for environments.

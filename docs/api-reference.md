@@ -376,6 +376,16 @@ Returns the main HTML page with the booking form and active bookings table.
 The three filters are independent and compose, e.g. `/?filter=all&show_released=1&label=perf`.
 Also accepted on the same-shaped `/book/vm` and `/book/namespace` pages.
 
+**Pagination (#479).**
+- **Page size and order.** The table shows the newest `BOOKINGS_PAGE_SIZE` bookings (default 50), ordered by creation time and then by id, newest first. The page always opens at the first page. A `cursor` parameter on the page URL is ignored.
+- **Load more.** When more bookings exist, a **Load more** row fetches `GET /book/vm/rows?cursor=…` or `GET /book/namespace/rows?cursor=…`. `GET /` uses `/book/vm/rows`. The request carries the same `filter`/`show_released`/`label`, and the resource types come from the path. The response is an HTML fragment: the next page's rows, plus a new **Load more** row if there is a further page. It replaces only the **Load more** row, so rows already shown aren't re-rendered.
+- **Cursor.** The `cursor` is an opaque token the server issues. A missing or malformed one returns `400`. Filters and visibility are re-applied on every request, so a hand-made cursor can't widen what you see.
+- **Filters.** Changing a filter starts again from the first page.
+- **Bounded reads.** Each page reads a bounded number of rows, whatever the size of the booking history. The one exception is the `label` filter, which may scan past non-matching bookings in the user's (Mine) or the page type's (All) range (#485).
+- **JSON list.** `GET /api/bookings` is not paginated. Its order only gains the same id tiebreak for bookings created at the same instant.
+
+These `/book/*/rows` routes return HTML fragments and are absent from the schema.
+
 ---
 
 > **Bookings: API vs browser.** The programmatic booking API lives under **`/api/bookings`** and

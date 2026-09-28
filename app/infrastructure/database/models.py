@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, false, func, text
+from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, false, func, literal_column, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -133,15 +133,51 @@ class StaticVMModel(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
+# Status predicates of the bookings partial indexes. Queries must spell them as literals too
+# (BOOKING_NOT_RELEASED / BOOKING_QUEUED below): the planner uses a partial index only when it can
+# prove the query's predicate implies the index's, which a bound parameter under a generic plan
+# can't (#479). tests/test_booking_pagination.py pins the two spellings together.
+BOOKING_NOT_RELEASED_SQL = "status <> 'RELEASED'"
+BOOKING_QUEUED_SQL = "status = 'QUEUED'"
+_CREATOR_SQL = "created_by IS NOT NULL"
+
+
 class BookingModel(Base):
     __tablename__ = "bookings"
-    # Child lookups by environment, and the "has a non-RELEASED child" probe of the environments
-    # list (#466). Kept in step with migration 0033.
     __table_args__ = (
+        # Child lookups by environment, and the "has a non-RELEASED child" probe of the
+        # environments list (#466). Kept in step with migration 0033.
         Index("ix_bookings_environment_id", "environment_id"),
         Index(
             "ix_bookings_environment_id_unreleased", "environment_id",
-            postgresql_where=text("status <> 'RELEASED'"),
+            postgresql_where=text(BOOKING_NOT_RELEASED_SQL),
+        ),
+        # Bookings-page keyset walks (#479): equality filters (owner column, resource type) ahead
+        # of the (created_at, id) page order, so every entry a walk visits matches the page's
+        # filters. Each comes full (Show released) and without RELEASED rows (the default view).
+        # Kept in step with migration 0035.
+        Index("ix_bookings_type_page", "resource_type", "created_at", "id"),
+        Index(
+            "ix_bookings_type_page_unreleased", "resource_type", "created_at", "id",
+            postgresql_where=text(BOOKING_NOT_RELEASED_SQL),
+        ),
+        Index("ix_bookings_owner_page", "user_id", "resource_type", "created_at", "id"),
+        Index(
+            "ix_bookings_owner_page_unreleased", "user_id", "resource_type", "created_at", "id",
+            postgresql_where=text(BOOKING_NOT_RELEASED_SQL),
+        ),
+        Index(
+            "ix_bookings_creator_page", "created_by", "resource_type", "created_at", "id",
+            postgresql_where=text(_CREATOR_SQL),
+        ),
+        Index(
+            "ix_bookings_creator_page_unreleased", "created_by", "resource_type", "created_at", "id",
+            postgresql_where=text(f"{_CREATOR_SQL} AND {BOOKING_NOT_RELEASED_SQL}"),
+        ),
+        # FIFO queue rank: reads only the queue, never history (#479).
+        Index(
+            "ix_bookings_queued_rank", "resource_type", "created_at",
+            postgresql_where=text(BOOKING_QUEUED_SQL),
         ),
     )
 
@@ -178,6 +214,11 @@ class BookingModel(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     vms: Mapped[list["VMModel"]] = relationship("VMModel", back_populates="booking", cascade="all, delete-orphan")
+
+
+# The partial-index predicates above as column-qualified SQL literals, for queries (#479).
+BOOKING_NOT_RELEASED = BookingModel.status != literal_column("'RELEASED'")
+BOOKING_QUEUED = BookingModel.status == literal_column("'QUEUED'")
 
 
 class VMModel(Base):
