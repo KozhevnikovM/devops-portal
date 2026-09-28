@@ -145,7 +145,8 @@ async def _captured_list_stmt(call: str):
         return await _captured_stmt(getattr(repo, call), *args)
     pin, keys, unpin, items = MagicMock(), MagicMock(), MagicMock(), MagicMock()
     pin.one.return_value = SimpleNamespace(
-        _mapping={"enable_bitmapscan": "on", "enable_seqscan": "on", "enable_indexscan": "on"}
+        _mapping={"enable_bitmapscan": "on", "enable_seqscan": "on", "enable_sort": "on",
+                  "enable_indexscan": "on", "jit": "on"}
     )
     keys.all.return_value = [
         SimpleNamespace(created_at=datetime.now(timezone.utc), id=uuid4(), is_window_end=False)

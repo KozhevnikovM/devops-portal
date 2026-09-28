@@ -365,18 +365,27 @@ def _apply_released_filter(stmt, include_released: bool):
     return stmt if include_released else stmt.where(BOOKING_NOT_RELEASED)
 
 
-# Pin for the page key query (#479, design.md Decision 10). A branch's page key leaves its own
-# index as the only one with usable conditions. With bitmap and sequential scans off and index
-# scans on, reading that index in page order (a walk that stops after limit + 1 entries) is then
-# always cheaper than the only alternatives left, which read the branch or the table whole and
-# sort. Left free, the planner switches an underestimated branch to bitmap scan + sort; and if an
-# operator had turned index scans off, disabling the other two would leave only a sequential scan.
+# Pin for the page key query (#479, design.md Decision 10; #485). A branch's page key leaves its
+# own index as the only one with usable conditions, and the only one read in page order, so that
+# walk needs no sort. Every other path for a branch sorts: a bitmap or sequential scan, or a full
+# scan of another page index whose partial predicate the branch implies (e.g. a creator branch's
+# `created_by IS NOT NULL` makes ix_bookings_creator_page a candidate). Such a full scan is cheap
+# when that index is empty or its statistics are stale, and then reads the index whole with the
+# page key as a mere filter (review of #488). With bitmap scans, sequential scans and sorts off
+# and index scans on, the sort-free page-key walk is the one plan left that no disabled step
+# penalises, whatever the statistics. The label window's own sorts, of at most S + 1 rows, still
+# run: a disabled step is only penalised, and those sorts have no alternative. If an operator
+# had turned index scans off, disabling the rest would leave only a sequential scan, hence "on".
+# Those penalised label-window sorts inflate the plan's estimated cost past jit_above_cost, which
+# would JIT-compile a millisecond query for most of a second — so JIT is off here too.
 # Transaction-local, and restored to the exact previous values right after the key query, so
 # nothing else in the request plans differently.
 _ORDERED_WALK_SETTINGS = {
     "enable_bitmapscan": "off",
     "enable_seqscan": "off",
+    "enable_sort": "off",
     "enable_indexscan": "on",
+    "jit": "off",
 }
 _PIN_ORDERED_WALK = text(
     "WITH prev AS MATERIALIZED (SELECT "

@@ -40,6 +40,11 @@
   Verify with `pytest -m integration`.
 - [x] 4.6 Record `EXPLAIN (ANALYZE, BUFFERS)` of a sparse-label page before the change (on `main`) and after it, on the integration dataset, for the code PR description (#485's acceptance criterion).
 
+## 4b. Deterministic branch walks (review of #488)
+
+- [x] 4.7 Add adversarial integration tests covering a viewer with zero creator bookings among 5,000 bookings created by other dispatchers, analysed both before and after that history grows. Run them on the VM and namespace pages, with released hidden and shown, with and without a cursor, for both the label and the unlabelled key queries. Add a no-one-dispatched case. Each must assert that every walk is on its own page-key index, with the key (and cursor) as `Index Cond`, no `Filter`, and within the bound. Verify that they fail on the previous pin: they did, reproducing the full creator-index walk.
+- [x] 4.8 Add `enable_sort = off` and `jit = off` to the key-query pin (design Decision 6). Update the pin and restore unit tests, and extend the integration restore tests to cover `enable_sort`. Verify: the adversarial tests pass on repeated runs, a new test asserts that the pinned label query isn't JIT-compiled, and `pytest -m integration` passes.
+
 ## 5. Docs and quality gate
 
 - [x] 5.1 Document `BOOKINGS_LABEL_SCAN_SIZE` in `docs/admin-guide.md` (its meaning, its default, that it must exceed the page size, and the clicks-versus-work trade-off). Also document the "Search older bookings" behaviour wherever the bookings list's label filter is described. Verify by reviewing the rendered docs.

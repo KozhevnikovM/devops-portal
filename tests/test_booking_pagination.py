@@ -230,7 +230,8 @@ def test_queue_rank_uses_the_literal_queued_predicate():
     assert "bookings.status = 'QUEUED'" in sql
 
 
-_PREVIOUS = {"enable_bitmapscan": "on", "enable_seqscan": "off", "enable_indexscan": "off"}
+_PREVIOUS = {"enable_bitmapscan": "on", "enable_seqscan": "off", "enable_sort": "on",
+             "enable_indexscan": "off", "jit": "on"}
 
 
 @pytest.mark.asyncio
@@ -255,15 +256,19 @@ async def test_key_query_runs_pinned_and_the_previous_settings_are_restored_befo
     assert len(calls) == 4   # then phase 2, unpinned
 
 
-def test_pin_leaves_only_index_scans_and_is_transaction_local():
+def test_pin_leaves_only_the_sort_free_page_key_walk_and_is_transaction_local():
     """Review of #486: bitmap and seq scans off is not enough on its own — index scans are forced
-    on too, or an operator's enable_indexscan = off would leave only a sequential scan."""
+    on too, or an operator's enable_indexscan = off would leave only a sequential scan. Review of
+    #488: sorts are off too, so a full scan of another page index (which needs a sort to give page
+    order) can't tie with the page-key walk when that index is empty or its statistics are stale.
+    JIT is off because the penalised label-window sorts inflate the estimated cost past its
+    threshold."""
     sql = str(_PIN_ORDERED_WALK)
-    for name, value in (("enable_bitmapscan", "off"), ("enable_seqscan", "off"), ("enable_indexscan", "on")):
+    for name, value in (("enable_bitmapscan", "off"), ("enable_seqscan", "off"),
+                        ("enable_sort", "off"), ("enable_indexscan", "on"), ("jit", "off")):
         assert f"current_setting('{name}')" in sql
         assert f"set_config('{name}', '{value}', true)" in sql
         assert f"set_config('{name}', :{name}, true)" in str(_UNPIN_ORDERED_WALK)
-    assert "enable_sort" not in sql
 
 
 # ── Label scan window (#485) ─────────────────────────────────────────────────

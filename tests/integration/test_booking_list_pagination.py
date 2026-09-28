@@ -446,9 +446,9 @@ async def test_list_page_restores_the_previous_planner_settings(async_session):
     assert len(page.items) == 2
     settings = (await async_session.execute(text(
         "SELECT current_setting('enable_bitmapscan'), current_setting('enable_seqscan'),"
-        " current_setting('enable_indexscan')"
+        " current_setting('enable_indexscan'), current_setting('enable_sort')"
     ))).one()
-    assert tuple(settings) == ("on", "off", "off")
+    assert tuple(settings) == ("on", "off", "off", "on")   # sorts, off in the pin, are back on
 
 
 async def test_partial_index_is_used_under_a_generic_plan(async_session):
@@ -799,9 +799,9 @@ async def test_labelled_list_page_restores_the_previous_planner_settings(async_s
     assert [b.id for b in page.items] == [rows[4]["id"]]
     settings = (await async_session.execute(text(
         "SELECT current_setting('enable_bitmapscan'), current_setting('enable_seqscan'),"
-        " current_setting('enable_indexscan')"
+        " current_setting('enable_indexscan'), current_setting('enable_sort')"
     ))).one()
-    assert tuple(settings) == ("on", "off", "off")
+    assert tuple(settings) == ("on", "off", "off", "on")   # sorts, off in the pin, are back on
 
 
 @pytest.mark.parametrize("mine", [True, False], ids=["mine", "all"])
@@ -871,3 +871,123 @@ async def test_window_edges(async_session, remaining, oldest_matches):
     assert [b.id for b in second.items] == [ids[10]]
     assert second.next_cursor is None
     assert len(set(shown + [ids[10]])) == len(matching)
+
+
+# ── Review of #488: a viewer with no creator bookings among other dispatchers' history ──────
+
+async def _seed_other_dispatchers(session, *, analyze_before_growth: bool) -> str:
+    """The viewer owns a sparse-label history but dispatched nothing; other dispatchers created
+    thousands of same-type bookings (RELEASED and not), so the creator page indexes are large while
+    the viewer's creator branches are empty. With `analyze_before_growth`, statistics are taken
+    while the creator indexes are still empty and the dispatchers' history grows unanalyzed."""
+    viewer = f"inttest-{uuid4()}"
+    own = [_row(viewer, _BASE - timedelta(hours=1, seconds=i),
+                status=(S.READY, S.FAILED, S.RELEASED)[i % 3],
+                rtype=("VM", "STATIC_VM", "NAMESPACE")[i % 3],
+                label="needle-own" if i in (150, 290) else "other") for i in range(300)]
+    dispatched = [_row(f"inttest-crowd-{i % 97}", _BASE - timedelta(milliseconds=i),
+                       status=(S.READY, S.FAILED, S.RELEASED)[i % 3],
+                       rtype=("VM", "STATIC_VM", "NAMESPACE")[i % 3],
+                       created_by=f"inttest-dispatcher-{i % 5}", label="needle-crowd")
+                  for i in range(5000)]
+    if analyze_before_growth:
+        await _seed(session, own)
+        await session.execute(text("ANALYZE bookings"))
+        await _seed(session, dispatched)
+    else:
+        await _seed(session, own + dispatched)
+        await session.execute(text("ANALYZE bookings"))
+    return viewer
+
+
+def _assert_walks_use_own_index_conditions(plan: dict, *, include_released: bool, after,
+                                           bound: int, types) -> None:
+    """Every Mine branch walk — creator branches included — is an Index Cond walk of its own
+    page-key index: the key (and the cursor) as index conditions, no Filter, and at most `bound`
+    entries visited in total."""
+    nodes = list(_nodes(plan))
+    walks = [n for n in nodes
+             if n.get("Relation Name") == "bookings" and n.get("Index Name") != "bookings_pkey"]
+    assert all(n["Node Type"] in ("Index Scan", "Index Only Scan") for n in walks), plan
+    assert not [n for n in nodes if n["Node Type"].startswith("Bitmap")], plan
+    assert len(walks) == 2 * len(types), plan
+    assert {n["Index Name"] for n in walks} == _expected_indexes(
+        mine=True, include_released=include_released), plan
+    for walk in walks:
+        tag = walk["Index Name"].removeprefix("ix_bookings_").split("_page")[0][0] + (
+            "" if include_released else "l")
+        assert f"'{tag}:'::text" in walk.get("Index Cond", ""), walk
+        assert "Filter" not in walk and walk.get("Rows Removed by Filter", 0) == 0, walk
+        if after is not None:
+            assert "ROW(created_at, id) < ROW(" in walk["Index Cond"], walk
+    assert sum(_visited(n) for n in walks) <= bound, plan
+
+
+@pytest.mark.parametrize("analyze_before_growth", [False, True], ids=["analyzed", "stale-stats"])
+@pytest.mark.parametrize("resource_types", [_VM_TYPES, _NS_TYPES], ids=["vm-page", "namespace-page"])
+@pytest.mark.parametrize("include_released", [False, True], ids=["hide-released", "show-released"])
+async def test_creator_walks_stay_on_their_own_index_without_creator_bookings(
+    async_session, analyze_before_growth, resource_types, include_released,
+):
+    viewer = await _seed_other_dispatchers(async_session, analyze_before_growth=analyze_before_growth)
+    cursor = KeysetCursor(_BASE - timedelta(minutes=30), UUID(int=0))
+    for after in (None, cursor):
+        label_stmt = _label_page_keys_stmt(
+            viewer, resource_types=resource_types, label="needle", include_released=include_released,
+            limit=_LABEL_LIMIT, scan_size=_LABEL_SCAN, after=after,
+        )
+        _assert_walks_use_own_index_conditions(
+            await _page_plan(async_session, label_stmt), include_released=include_released,
+            after=after, bound=_LABEL_BOUND, types=resource_types,
+        )
+        page_stmt = _page_keys_stmt(viewer, resource_types=resource_types,
+                                    include_released=include_released, limit=_LIMIT, after=after)
+        _assert_walks_use_own_index_conditions(
+            await _page_plan(async_session, page_stmt), include_released=include_released,
+            after=after, bound=_BOUND, types=resource_types,
+        )
+
+
+@pytest.mark.parametrize("include_released", [False, True], ids=["hide-released", "show-released"])
+async def test_creator_walks_stay_on_their_own_index_when_no_one_dispatched(
+    async_session, include_released,
+):
+    """The #488 observation: no one has dispatched anything, so the creator page indexes are
+    empty, and a full scan of one of them costs the planner as little as the correct walk."""
+    viewer = f"inttest-{uuid4()}"
+    await _seed(async_session, [
+        _row(viewer, _BASE - timedelta(seconds=i), status=(S.READY, S.FAILED, S.RELEASED)[i % 3],
+             rtype=("VM", "STATIC_VM")[i % 2], label="needle" if i % 97 == 0 else "other")
+        for i in range(2000)
+    ])
+    await async_session.execute(text("ANALYZE bookings"))
+    for stmt, bound in (
+        (_label_page_keys_stmt(viewer, resource_types=_VM_TYPES, label="needle",
+                               include_released=include_released, limit=_LABEL_LIMIT,
+                               scan_size=_LABEL_SCAN, after=None), _LABEL_BOUND),
+        (_page_keys_stmt(viewer, resource_types=_VM_TYPES, include_released=include_released,
+                         limit=_LIMIT, after=None), _BOUND),
+    ):
+        _assert_walks_use_own_index_conditions(
+            await _page_plan(async_session, stmt), include_released=include_released, after=None,
+            bound=bound, types=_VM_TYPES,
+        )
+
+
+async def test_pinned_label_query_is_not_jit_compiled(async_session):
+    """With sorts disabled, the label window's own small sorts carry the planner's disable
+    penalty, which lifts the estimated cost past jit_above_cost; the pin turns JIT off so a
+    millisecond query isn't compiled for most of a second."""
+    owner = f"inttest-{uuid4()}"
+    await _seed(async_session, _spaced(owner, 30, label="other"))
+    await async_session.execute(text("SET LOCAL jit = on"))
+    await async_session.execute(text("SET LOCAL jit_above_cost = 100000"))
+    stmt = _label_page_keys_stmt(owner, resource_types=_VM_TYPES, label="needle", include_released=True,
+                                 limit=3, scan_size=10, after=None)
+    async with _OrderedWalk(async_session):
+        [plan] = (await async_session.execute(
+            text(f"EXPLAIN (ANALYZE, FORMAT JSON) {_sql(stmt)}"))).scalars()
+    plan = (json.loads(plan) if isinstance(plan, str) else plan)[0]
+    assert plan["Plan"]["Total Cost"] > 100000   # the penalty is there…
+    assert "JIT" not in plan                     # …but nothing is compiled
+    assert (await async_session.execute(text("SELECT current_setting('jit')"))).scalar_one() == "on"
