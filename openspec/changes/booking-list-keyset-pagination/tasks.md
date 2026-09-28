@@ -17,7 +17,7 @@
   - **Phase 1.** One keyset branch per owner column and resource type (All: one per type; Mine: `user_id` and `created_by` per type). Each branch applies the equality prefix, the literal released predicate when released bookings are hidden, the label filter, and the typed-literal `tuple_(created_at, id) < tuple_(...)` predicate, ordered `created_at DESC, id DESC` with `LIMIT limit + 1`. The branches are `UNION ALL`ed, grouped on `(created_at, id)` to dedupe, then ordered and limited to `limit + 1`.
   - **Phase 2.** `_list_item_stmt()` restricted to the kept ids, in page order.
   - **Cursor.** Set `next_cursor` only when phase 1 returned a probe key.
-  - **Pin.** Run phase 1 inside the plan pin from design.md Decision 10: one statement reads the previous `enable_bitmapscan` / `enable_seqscan` values and sets both off with `set_config(..., true)`, then the previous values are restored right after the key query. Unit-test that the pin runs before the key query and the restore right after it, before phase 2.
+  - **Pin.** Run phase 1 inside the plan pin from design.md Decision 10: one statement reads the previous `enable_bitmapscan` / `enable_seqscan` / `enable_indexscan` values, sets the first two off and `enable_indexscan` on with `set_config(..., true)`, and the exact previous values are restored right after the key query. Unit-test that the pin runs before the key query and the restore right after it, before phase 2.
 
   Add `list_page` to the parametrised guard tests in `tests/test_booking_list_projection.py`, the checks for no detail-only columns and no raw secret column. Verify that those guard tests pass, and with the integration tests in 4.x.
 
@@ -73,6 +73,7 @@
   - a misestimated-branch case, where the statistics understate a viewer's branch and the page selection is still bounded
   - a forced-generic-plan case (`plan_cache_mode = force_generic_plan`) that still uses the `_unreleased` indexes
   - a check that `list_page` restores the previous planner settings, including a non-default session value
+  - a regression case for PR #486's review: with `enable_indexscan` (and `enable_indexonlyscan`) off beforehand, the pin still has index scans on, the key plan is the bounded ordered walk, and the previous values come back after `list_page`
 
   Verify with `pytest -m integration`.
 - [x] 4.4 Add the queue-position and label-exception tests on the same dataset:

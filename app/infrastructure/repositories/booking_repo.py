@@ -358,22 +358,29 @@ def _apply_released_filter(stmt, include_released: bool):
     return stmt if include_released else stmt.where(BOOKING_NOT_RELEASED)
 
 
-# Pin for the page key query (#479, design.md Decision 10): with bitmap and sequential scans off,
-# the only way to read a branch in page order is its equality-prefixed index walk, which stops
-# after limit + 1 entries. Left free, the planner switches an underestimated branch to bitmap
-# scan + sort, which reads the whole branch. Transaction-local, and restored to the exact previous
-# values right after the key query, so nothing else in the request plans differently.
+# Pin for the page key query (#479, design.md Decision 10): with bitmap and sequential scans off
+# and index scans on, the only way to read a branch in page order is its equality-prefixed index
+# walk, which stops after limit + 1 entries. Left free, the planner switches an underestimated
+# branch to bitmap scan + sort, which reads the whole branch; and if an operator had turned index
+# scans off, disabling the other two would leave it only a sequential scan. Transaction-local, and
+# restored to the exact previous values right after the key query, so nothing else in the request
+# plans differently.
+_ORDERED_WALK_SETTINGS = {
+    "enable_bitmapscan": "off",
+    "enable_seqscan": "off",
+    "enable_indexscan": "on",
+}
 _PIN_ORDERED_WALK = text(
-    "WITH prev AS MATERIALIZED ("
-    " SELECT current_setting('enable_bitmapscan') AS bitmapscan,"
-    " current_setting('enable_seqscan') AS seqscan)"
-    " SELECT bitmapscan, seqscan,"
-    " set_config('enable_bitmapscan', 'off', true), set_config('enable_seqscan', 'off', true)"
-    " FROM prev"
+    "WITH prev AS MATERIALIZED (SELECT "
+    + ", ".join(f"current_setting('{name}') AS {name}" for name in _ORDERED_WALK_SETTINGS)
+    + ") SELECT "
+    + ", ".join(_ORDERED_WALK_SETTINGS)
+    + ", "
+    + ", ".join(f"set_config('{name}', '{value}', true)" for name, value in _ORDERED_WALK_SETTINGS.items())
+    + " FROM prev"
 )
 _UNPIN_ORDERED_WALK = text(
-    "SELECT set_config('enable_bitmapscan', :bitmapscan, true),"
-    " set_config('enable_seqscan', :seqscan, true)"
+    "SELECT " + ", ".join(f"set_config('{name}', :{name}, true)" for name in _ORDERED_WALK_SETTINGS)
 )
 
 
@@ -386,7 +393,7 @@ class _OrderedWalk:
 
     async def __aenter__(self):
         row = (await self._session.execute(_PIN_ORDERED_WALK)).one()
-        self._prev = {"bitmapscan": row.bitmapscan, "seqscan": row.seqscan}
+        self._prev = {name: row._mapping[name] for name in _ORDERED_WALK_SETTINGS}
         return self
 
     async def __aexit__(self, exc_type, exc, tb):

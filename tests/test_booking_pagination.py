@@ -193,11 +193,14 @@ def test_queue_rank_uses_the_literal_queued_predicate():
     assert "bookings.status = 'QUEUED'" in sql
 
 
+_PREVIOUS = {"enable_bitmapscan": "on", "enable_seqscan": "off", "enable_indexscan": "off"}
+
+
 @pytest.mark.asyncio
 async def test_key_query_runs_pinned_and_the_previous_settings_are_restored_before_phase_2():
     """Design Decision 10: pin → key query → restore (the exact previous values) → projection."""
     pin, keys, unpin, items = MagicMock(), MagicMock(), MagicMock(), MagicMock()
-    pin.one.return_value = SimpleNamespace(bitmapscan="on", seqscan="off")   # operator's value
+    pin.one.return_value = SimpleNamespace(_mapping=_PREVIOUS)   # an operator's non-default values
     keys.all.return_value = [SimpleNamespace(created_at=_CURSOR.created_at, id=_CURSOR.id)]
     items.all.return_value = []
     session = AsyncMock()
@@ -211,16 +214,19 @@ async def test_key_query_runs_pinned_and_the_previous_settings_are_restored_befo
     calls = session.execute.await_args_list
     assert calls[0].args[0] is _PIN_ORDERED_WALK
     assert "UNION ALL" in str(calls[1].args[0].compile(dialect=postgresql.dialect()))
-    assert calls[2].args == (_UNPIN_ORDERED_WALK, {"bitmapscan": "on", "seqscan": "off"})
+    assert calls[2].args == (_UNPIN_ORDERED_WALK, _PREVIOUS)
     assert len(calls) == 4   # then phase 2, unpinned
 
 
-def test_pin_is_transaction_local_and_switches_off_bitmap_and_seq_scans():
+def test_pin_leaves_only_index_scans_and_is_transaction_local():
+    """Review of #486: bitmap and seq scans off is not enough on its own — index scans are forced
+    on too, or an operator's enable_indexscan = off would leave only a sequential scan."""
     sql = str(_PIN_ORDERED_WALK)
-    assert "set_config('enable_bitmapscan', 'off', true)" in sql
-    assert "set_config('enable_seqscan', 'off', true)" in sql
+    for name, value in (("enable_bitmapscan", "off"), ("enable_seqscan", "off"), ("enable_indexscan", "on")):
+        assert f"current_setting('{name}')" in sql
+        assert f"set_config('{name}', '{value}', true)" in sql
+        assert f"set_config('{name}', :{name}, true)" in str(_UNPIN_ORDERED_WALK)
     assert "enable_sort" not in sql
-    assert str(_UNPIN_ORDERED_WALK).count(", true)") == 2
 
 
 # ── First page: GET / , /book/vm, /book/namespace ────────────────────────────

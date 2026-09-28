@@ -203,12 +203,14 @@ During implementation, the planner sometimes chose a **Bitmap Heap Scan + sort**
 ```python
 # one round trip: remember the settings, then pin them for this transaction only
 prev = SELECT current_setting('enable_bitmapscan'), current_setting('enable_seqscan'),
-              set_config('enable_bitmapscan', 'off', true), set_config('enable_seqscan', 'off', true)
+              current_setting('enable_indexscan'),
+              set_config('enable_bitmapscan', 'off', true), set_config('enable_seqscan', 'off', true),
+              set_config('enable_indexscan', 'on', true)
 keys = <phase-1 key query>
-SELECT set_config('enable_bitmapscan', prev.bitmap, true), set_config('enable_seqscan', prev.seq, true)
+SELECT set_config(<each setting>, <its value in prev>, true)
 ```
 
-- **Why this works.** With both off, the only remaining access paths for a branch are index scans. The only index scan that yields the branch's order without a sort is the equality-prefixed walk. So the walk is the plan, whatever the statistics say. The outer merge of at most four branches may still sort, but at most `4 × (limit + 1)` rows. `enable_sort` stays on.
+- **Why this works.** With bitmap and sequential scans off and index scans forced on, the only remaining access paths for a branch are index scans. Forcing index scans on matters. PR #486's review pointed out that an operator's `enable_indexscan = off` would otherwise leave every path disabled, and the planner might then fall back to a sequential scan. The only index scan that yields the branch's order without a sort is the equality-prefixed walk. So the walk is the plan, whatever the statistics say. The outer merge of at most four branches may still sort, but at most `4 × (limit + 1)` rows. `enable_sort` stays on.
 - **Scope.** `set_config(..., true)` is transaction-local. The restore puts back the exact previous values, not the defaults, so an operator's session setting survives. Phase 2 (the projection), queue positions, the form catalogs and everything else in the request plan normally. If the key query fails, the transaction aborts and the local settings go with it. No `finally` is needed, and one would fail on the aborted transaction anyway.
 - **Cost.** Two extra round trips per page. The first merges the read and the pin into one statement, with the read done in a `MATERIALIZED` CTE so it runs first.
 - **What the tests run.** The same pin/unpin helper wraps the `EXPLAIN` in the tests (Decision 9). The tests measure the plan the application runs, with no settings of their own.

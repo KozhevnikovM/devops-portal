@@ -143,7 +143,9 @@ async def _captured_list_stmt(call: str):
         args = ("uid-1",) if call == "list_by_user" else ()
         return await _captured_stmt(getattr(repo, call), *args)
     pin, keys, unpin, items = MagicMock(), MagicMock(), MagicMock(), MagicMock()
-    pin.one.return_value = SimpleNamespace(bitmapscan="on", seqscan="on")
+    pin.one.return_value = SimpleNamespace(
+        _mapping={"enable_bitmapscan": "on", "enable_seqscan": "on", "enable_indexscan": "on"}
+    )
     keys.all.return_value = [SimpleNamespace(created_at=datetime.now(timezone.utc), id=uuid4())]
     items.all.return_value = []
     session = AsyncMock()

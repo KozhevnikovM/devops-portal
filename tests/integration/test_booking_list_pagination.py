@@ -372,6 +372,39 @@ async def test_bound_holds_when_statistics_underestimate_the_branch(async_sessio
     _assert_bounded(plan, include_released=include_released, mine=True, after=None)
 
 
+async def test_bound_holds_when_an_operator_disabled_index_scans(async_session):
+    """Review of #486: with enable_indexscan (and enable_indexonlyscan) off beforehand, turning
+    bitmap and seq scans off would leave only a sequential scan. The pin forces index scans on, so
+    the key query is still the ordered prefixed walk, and the operator's values come back after."""
+    data = await _seed_history(async_session)
+    await async_session.execute(text("SET LOCAL enable_indexscan = off"))
+    await async_session.execute(text("SET LOCAL enable_indexonlyscan = off"))
+
+    async with _OrderedWalk(async_session):
+        pinned = (await async_session.execute(text(
+            "SELECT current_setting('enable_indexscan'), current_setting('enable_seqscan'),"
+            " current_setting('enable_bitmapscan')"
+        ))).one()
+    # Index scans are guaranteed, not left to how the planner ranks all-disabled alternatives.
+    assert tuple(pinned) == ("on", "off", "off")
+
+    for mine in (True, False):
+        stmt = _page_keys_stmt(data["viewer"] if mine else None, resource_types=_VM_TYPES, label=None,
+                               include_released=False, limit=_LIMIT, after=None)
+        plan = await _page_plan(async_session, stmt)
+        _assert_bounded(plan, include_released=False, mine=mine, after=None)
+
+    page = await _repo.list_page(
+        async_session, user_id=data["viewer"], resource_types=_VM_TYPES, label=None,
+        include_released=False, limit=_LIMIT, after=None,
+    )
+    assert len(page.items) == _LIMIT
+    settings = (await async_session.execute(text(
+        "SELECT current_setting('enable_indexscan'), current_setting('enable_indexonlyscan')"
+    ))).one()
+    assert tuple(settings) == ("off", "off")
+
+
 async def test_list_page_restores_the_previous_planner_settings(async_session):
     """The pin is scoped to the key query: afterwards the request plans as before — including an
     operator's non-default value, which is restored rather than reset to the default."""
@@ -379,6 +412,7 @@ async def test_list_page_restores_the_previous_planner_settings(async_session):
     await _seed(async_session, _spaced(owner, 3))
     await async_session.execute(text("SET LOCAL enable_seqscan = off"))
     await async_session.execute(text("SET LOCAL enable_bitmapscan = on"))
+    await async_session.execute(text("SET LOCAL enable_indexscan = off"))
 
     page = await _repo.list_page(
         async_session, user_id=owner, resource_types=_VM_TYPES, label=None,
@@ -387,9 +421,10 @@ async def test_list_page_restores_the_previous_planner_settings(async_session):
 
     assert len(page.items) == 2
     settings = (await async_session.execute(text(
-        "SELECT current_setting('enable_bitmapscan'), current_setting('enable_seqscan')"
+        "SELECT current_setting('enable_bitmapscan'), current_setting('enable_seqscan'),"
+        " current_setting('enable_indexscan')"
     ))).one()
-    assert tuple(settings) == ("on", "off")
+    assert tuple(settings) == ("on", "off", "off")
 
 
 async def test_partial_index_is_used_under_a_generic_plan(async_session):
