@@ -428,7 +428,8 @@ Each row carries the fields for every resource type; the ones that don't apply a
 `static_vm`/`host`/`username` for static-VM bookings. `QUEUED` bookings have no resource fields set.
 
 > **No secrets in the list.** `vm_password` (and static-VM credentials) are **not** included in
-> `GET /api/bookings`, and the list query never reads them from the database (#478). Credentials
+> `GET /api/bookings`, and the list query never returns raw credential values to the application
+> — the database evaluates them only to derive a `has_credentials` presence flag (#478). Credentials
 > are returned only on the owner-scoped creation response (`POST /api/bookings`) and, in the
 > browser, by the owner/admin-only fragment `GET /bookings/{id}/credentials` — no booking row
 > (`GET /bookings/{id}/row`, SSE, the bookings pages) embeds them.
