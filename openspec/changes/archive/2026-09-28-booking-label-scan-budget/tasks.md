@@ -49,4 +49,4 @@
 
 - [x] 5.1 Document `BOOKINGS_LABEL_SCAN_SIZE` in `docs/admin-guide.md` (its meaning, its default, that it must exceed the page size, and the clicks-versus-work trade-off). Also document the "Search older bookings" behaviour wherever the bookings list's label filter is described. Verify by reviewing the rendered docs.
 - [x] 5.2 Run `pytest tests/ -m "not integration"` and the `py-review` skill on the changed Python. Verify that both are clean.
-- [ ] 5.3 At sync time (after code-PR approval), update the Purpose of `openspec/specs/booking-listing/spec.md`. It should no longer say label page selection is tracked by #485; it should state that label-filtered page selection is bounded by the label scan size. Verify with `openspec validate --specs --strict`.
+- [x] 5.3 At sync time (after code-PR approval), update the Purpose of `openspec/specs/booking-listing/spec.md`. It should no longer say label page selection is tracked by #485; it should state that label-filtered page selection is bounded by the label scan size. Verify with `openspec validate --specs --strict`.
