@@ -9,10 +9,11 @@ The bookings table puts credential values into every row's HTML. That covers the
   - A dispatcher who ordered the booking on someone's behalf, and any unrelated user, get `403`. An unknown id gets `404`.
   - A booking that is not `READY` gets `409`.
   - The response is marked `Cache-Control: no-store`. The route is an HTML route, so it stays out of the OpenAPI schema.
+  - The fragment carries `hx-history="false"`. While a secret is on the page, htmx does not snapshot the page into its `localStorage` history cache when a filter pushes a new URL.
 - **The booking row no longer embeds credential values**, whatever renders it: the bookings page, the single-row refresh, SSE updates or action responses.
   - Where the table used to show credentials, the row shows a "Show credentials" control. It loads the fragment into that cell on click.
   - The control appears exactly when the old row would have shown credentials: the booking is `READY`, it has credentials, and the viewer is the owner or an admin. Otherwise the cell shows `—`, as before.
-- **The bulk list projection drops credential columns**.
+- **The bulk list projection drops credential columns** from its result. SQL may still evaluate them to derive a presence flag, the same way the log is reduced to `has_provisioning_log`.
   - `BookingListItem` loses `vm_password`, `static_vm_password` and `static_vm_ssh_key`.
   - It gains a SQL-derived `has_credentials` flag.
   - `Booking` gains the same derived property, so the one row partial still renders either type.
@@ -28,7 +29,7 @@ The bookings table puts credential values into every row's HTML. That covers the
 
 ### Modified Capabilities
 - `booking-listing`:
-  - The bulk-read requirement adds the VM password, static-VM password and static-VM SSH key to the fields a bulk list read must not fetch, and adds the `has_credentials` flag.
+  - The bulk-read requirement adds the VM password, static-VM password and static-VM SSH key to the values a bulk list read must never return to the application. It states that SQL may evaluate detail-only fields only to derive presence flags and role names, and it adds the `has_credentials` flag.
   - The table requirement replaces "the credentials the table shows today" with "a Show credentials control under the same visibility rules".
   - The row-parity scenario no longer compares credential values.
 

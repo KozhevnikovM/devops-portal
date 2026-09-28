@@ -2,7 +2,7 @@
 
 ### Requirement: Bulk booking list reads exclude detail-only payloads
 
-When the system reads bookings in bulk for a list, it SHALL fetch only the fields that a list row displays or needs to decide its actions. The browser bookings pages (`GET /`, `GET /book/vm`, `GET /book/namespace`) and the JSON bookings list (`GET /api/v1/bookings` and the legacy `GET /api/bookings`) are such lists. A bulk list read SHALL NOT read these detail-only fields:
+When the system reads bookings in bulk for a list, it SHALL fetch only the fields that a list row displays or needs to decide its actions. The browser bookings pages (`GET /`, `GET /book/vm`, `GET /book/namespace`) and the JSON bookings list (`GET /api/v1/bookings` and the legacy `GET /api/bookings`) are such lists. A bulk list read SHALL NOT return the values of these detail-only fields to the application. None of them may appear in the read's result, whole or in part:
 - the booking's provisioning log
 - its startup script
 - its Ansible extra-vars
@@ -11,26 +11,29 @@ When the system reads bookings in bulk for a list, it SHALL fetch only the field
 - its static VM's password
 - its static VM's SSH key
 
-Instead of the provisioning log, a bulk list read SHALL fetch only whether a non-empty provisioning log exists. Instead of the configured roles, it SHALL fetch only their names. Instead of the credentials, it SHALL fetch only whether the booking has credentials. A booking has credentials when it has a non-empty VM password, or when at least one of its static VM's username, password or SSH key is non-empty.
+The database MAY evaluate these fields inside the read, but only to derive the values below. Only those derived values SHALL be returned:
+- Instead of the provisioning log, whether a non-empty provisioning log exists.
+- Instead of the configured roles, only their names.
+- Instead of the credentials, only whether the booking has credentials. A booking has credentials when it has a non-empty VM password, or when at least one of its static VM's username, password or SSH key is non-empty.
 
 This requirement covers only bulk list reads. Paths that show or act on one booking keep reading the full booking. These include the single-row refresh, live row updates, booking actions, the full-log page and the credentials fragment.
 
 #### Scenario: List read omits detail-only fields
 - **WHEN** a user opens a bookings page and one of the listed bookings has a long provisioning log, a startup script, extra-vars and roles with vars
-- **THEN** the read that fetches the listed bookings does not fetch the provisioning log, the startup script, the extra-vars or the roles' vars and secret vars
-- **AND** it fetches whether that booking has a provisioning log, and the names of its roles
+- **THEN** the result of the read that fetches the listed bookings contains none of the provisioning log, the startup script, the extra-vars or the roles' vars and secret vars
+- **AND** it contains whether that booking has a provisioning log, and the names of its roles
 
 #### Scenario: List read omits credentials
 - **WHEN** a user opens the VM bookings page and it lists a `READY` VM booking with a password and a `READY` static-VM booking whose static VM has a password and an SSH key
-- **THEN** the read that fetches the listed bookings does not fetch the VM password, the static VM's password or its SSH key
-- **AND** it fetches, for each booking, whether that booking has credentials
+- **THEN** the result of the read that fetches the listed bookings contains none of the VM password, the static VM's password or its SSH key
+- **AND** it contains, for each booking, whether that booking has credentials
 
 #### Scenario: JSON list read omits detail-only fields
 - **WHEN** a user calls `GET /api/v1/bookings`
-- **THEN** the read that fetches the listed bookings does not fetch the provisioning log, the startup script, the extra-vars, the roles' vars and secret vars, the VM password, or the static VM's password or SSH key
+- **THEN** the result of the read that fetches the listed bookings contains none of the provisioning log, the startup script, the extra-vars, the roles' vars and secret vars, the VM password, or the static VM's password or SSH key
 
 #### Scenario: Adding a detail-only field back is caught
-- **WHEN** a change makes a bulk booking list read fetch the provisioning log, the startup script, the extra-vars, the full configured roles, the VM password, or the static VM's password or SSH key again
+- **WHEN** a change makes a bulk booking list read return the provisioning log, the startup script, the extra-vars, the full configured roles, the VM password, or the static VM's password or SSH key to the application again
 - **THEN** the automated test suite fails
 
 #### Scenario: Full-log page still shows the full log

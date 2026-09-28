@@ -21,7 +21,7 @@
 
 ## 3. Presentation
 
-- [ ] 3.1 Create `partials/booking_credentials.html`. It holds the credential markup moved from `booking_row.html`: static VM `user`/`pw`/`key` lines, or the VM password. Verify through the endpoint tests in 4.2.
+- [ ] 3.1 Create `partials/booking_credentials.html`. It holds the credential markup moved from `booking_row.html`: static VM `user`/`pw`/`key` lines, or the VM password. Wrap it in a single root element carrying `hx-history="false"` (design D6). Verify through the endpoint tests in 4.2.
 - [ ] 3.2 Add `GET /bookings/{booking_id}/credentials` to `routes/bookings.py` with `response_class=HTMLResponse`. It follows design D3:
   - `404` for an unknown id
   - `403` when `can_view_credentials` fails, checked before the status
@@ -40,7 +40,7 @@
 
   Verify that the test fails if one is re-added, then passes.
 - [ ] 4.2 Add `tests/test_booking_credentials_endpoint.py` with a patched `_repo.get`. It covers:
-  - owner: `200` with the values and `Cache-Control: no-store`, for both a VM and a static VM
+  - owner: `200` with the values, `Cache-Control: no-store`, and a fragment root element with `hx-history="false"`, for both a VM and a static VM
   - admin: `200`
   - creating dispatcher: `403`, with no values in the body
   - unrelated user: `403`, with no values in the body
@@ -56,7 +56,12 @@
   - a label-change response
   - the SSE `_render_booking_event` output
 
-  On the page, also assert the control is present for the owner and for an admin, and absent for a non-admin viewer of another user's booking and for the creating dispatcher. Verify with `pytest -m "not integration"`.
+  On the page, also assert:
+  - the control is present for the owner and for an admin
+  - the control is absent for a non-admin viewer of another user's booking and for the creating dispatcher
+  - the page contains no `hx-history="false"` element before any reveal
+
+  Verify with `pytest -m "not integration"`.
 - [ ] 4.4 Extend `tests/test_openapi_hides_html.py` to assert that `/bookings/{booking_id}/credentials` is absent from the schema. Verify that the test passes.
 - [ ] 4.5 Update `tests/integration/test_booking_list_projection.py`:
   - Assert `has_credentials` from `list_by_user` against real Postgres for a VM with a password, a VM without one, a static VM with only an SSH key, and a namespace.
@@ -73,3 +78,4 @@
   - As the owner, a `READY` VM row shows "Show credentials", and clicking it reveals the password.
   - View-source of the bookings page contains no password.
   - As another non-admin user, the All view shows `—`.
+  - As the owner, reveal a password, switch the Mine/All filter, then inspect `localStorage["htmx-history-cache"]` in devtools. It must not contain the password. Pressing Back re-fetches the page instead of restoring the revealed fragment.

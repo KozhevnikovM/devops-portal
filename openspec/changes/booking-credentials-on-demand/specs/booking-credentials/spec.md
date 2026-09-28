@@ -70,6 +70,26 @@ The credentials endpoint SHALL return credentials only for a booking in `READY` 
 - **WHEN** the owner requests the credentials of a `PROVISIONING` booking
 - **THEN** the response is `409`
 
+### Requirement: Revealed credentials are never saved to the client-side history cache
+
+The browser UI keeps a client-side history cache: page snapshots saved to browser storage when filters or navigation push a new URL. The credentials fragment SHALL mark itself as excluded from that cache with `hx-history="false"` on its root element.
+
+While a revealed fragment is in the page, a history push SHALL NOT save a snapshot of the page, so no credential value reaches browser storage. The HTTP `Cache-Control: no-store` header does not cover this client-side cache.
+
+After the fragment leaves the page, for example when an action re-renders the row with the "Show credentials" control, history snapshots SHALL resume as before.
+
+#### Scenario: Fragment opts out of history caching
+- **WHEN** the owner requests the credentials fragment of a `READY` booking
+- **THEN** the fragment's root element carries `hx-history="false"`
+
+#### Scenario: Filter navigation after a reveal stores no secret
+- **WHEN** the owner reveals a VM password on the bookings page and then changes the Mine/All filter, which pushes a new URL
+- **THEN** the browser's HTMX history cache in local storage does not contain the password
+
+#### Scenario: Unrevealed rows do not block history caching
+- **WHEN** a bookings page is rendered and no credentials fragment has been loaded
+- **THEN** the page contains no element with `hx-history="false"`
+
 ### Requirement: Booking rows never embed credential values
 
 A booking row SHALL NOT contain any credential value, whichever path renders it:
