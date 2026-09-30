@@ -7,9 +7,9 @@
 - Add one infrastructure module, `app/infrastructure/passwords.py`, that owns all bcrypt use: async `hash_password` / `verify_password` that run bcrypt off the event loop, a blocking `hash_password_blocking` for the one startup-only caller, and the timing-equalizer dummy hash. No other module imports `bcrypt`.
 - Run request-time bcrypt work on a **dedicated, bounded** thread pool sized by a new setting `BCRYPT_MAX_CONCURRENCY` (default: the process's CPU count). It does not use the shared default `asyncio.to_thread` executor. Work beyond the bound waits in the queue. This change does not claim unbounded capacity.
 - Switch every request-time call site in `routes/auth.py` (7 calls across 6 handlers) to the async helpers. Switch `app/main.py` admin seeding and the dummy hash to the module's blocking helper.
-- `login` and `change_password` end their read-only DB transaction before awaiting bcrypt verification. The pooled connection then goes back to the pool during the wait instead of being held for the whole hash.
+- Every handler that does password work ends any open transaction on its request DB session right before it awaits a hash or verify. That includes the transaction opened by the auth dependency (`require_user` / `require_admin`) on the same session. The pooled connection then goes back to the pool during the wait instead of being held for the whole hash.
 - Behaviour is unchanged: the same success and failure responses, the dummy-hash comparison on unknown usernames (timing oracle #146), the 8-character minimum, and session invalidation on reset and change.
-- Regression tests: round-trip, the event loop keeps progressing during both hash and verify, the concurrency cap is honoured, the connection is released before verify, and an unrelated request completes while a login is in flight.
+- Regression tests: round-trip, the event loop keeps progressing during both hash and verify, the concurrency cap is honoured, no transaction is open at entry to any password operation on every password path, and an unrelated request completes while a login is in flight.
 - A reproducible before/after login-burst measurement on the local stub stack, recording concurrency, error rate, p95 latency and pool-timeout count.
 - This change supersedes PR #410, which is closed once the code PR lands.
 
@@ -25,7 +25,7 @@ Out of scope: brute-force and rate-limit policy (#425), production load testing,
 
 ## Impact
 
-- **Code**: new `app/infrastructure/passwords.py`; `app/presentation/routes/auth.py` (call sites, dummy hash, transaction boundary in `login`/`change_password`); `app/main.py` (admin seeding import); `app/config.py` (`BCRYPT_MAX_CONCURRENCY`).
+- **Code**: new `app/infrastructure/passwords.py`; `app/presentation/routes/auth.py` (call sites, dummy hash, transaction boundary before every password await); `app/main.py` (admin seeding import); `app/config.py` (`BCRYPT_MAX_CONCURRENCY`).
 - **Config**: a new optional env var `BCRYPT_MAX_CONCURRENCY`. It is per app process, so the total bound is this value × the number of uvicorn workers.
 - **APIs**: no change to request or response shapes, status codes or messages.
 - **Dependencies**: none added. `bcrypt` stays.

@@ -37,17 +37,25 @@ The number of password hash or verification operations that run at the same time
 - **WHEN** `BCRYPT_MAX_CONCURRENCY` is configured as zero or a negative number
 - **THEN** the application refuses to start, reporting a configuration error
 
-### Requirement: No database connection is held while waiting on password verification
+### Requirement: No database connection is held while waiting on password work
 
-Login and profile password change SHALL end their read-only database transaction before they wait on password verification. The pooled connection is then available to other requests for the whole verification.
+Every request path that hashes or verifies a password SHALL end any open transaction on its request database session before it waits on that password operation. This covers login, profile password change, user creation (JSON API and admin UI) and admin password reset (JSON API and admin UI). It includes transactions opened before the handler body runs, such as the one the authentication dependency opens when it looks up the current user on the same session. The pooled connection is then available to other requests for the whole password operation.
 
 #### Scenario: Login releases its connection before verifying
 - **WHEN** a login has looked up the user and begins password verification
 - **THEN** the request's database session holds no open transaction or checked-out connection while verification is in flight
 
-#### Scenario: Password change releases its connection before verifying
-- **WHEN** a profile password change has loaded the user and begins verifying the current password
-- **THEN** the request's database session holds no open transaction or checked-out connection while verification is in flight
+#### Scenario: Password change releases its connection before verifying and hashing
+- **WHEN** a cookie-authenticated profile password change has loaded the user and begins verifying the current password, and later begins hashing the new password
+- **THEN** the request's database session holds no open transaction or checked-out connection while either operation is in flight
+
+#### Scenario: Authenticated user creation releases the auth lookup's connection before hashing
+- **WHEN** an admin, authenticated by session cookie or API key, creates a user through the JSON API or the admin UI, and the authentication dependency has already queried the database on the request session
+- **THEN** that transaction has ended, and the session holds no checked-out connection, before the new password hash begins
+
+#### Scenario: Admin password reset releases its connection before hashing
+- **WHEN** an admin resets a user's password through the JSON API or the admin UI and the target user has been looked up
+- **THEN** the request's database session holds no open transaction or checked-out connection while the new password is being hashed
 
 ### Requirement: Login and password-management behaviour is preserved
 
