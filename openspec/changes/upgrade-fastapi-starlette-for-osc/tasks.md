@@ -12,5 +12,5 @@
 
 ## 3. Verification
 
-- [ ] 3.1 The fast backend suite passes (1,160 tests); PostgreSQL integration tests are pending PR CI.
+- [x] 3.1 The fast backend suite (1,160 tests) and PostgreSQL integration suite both pass in PR CI.
 - [ ] 3.2 The clean Docker image build remains pending because this environment has no Docker engine or socket.
