@@ -34,4 +34,4 @@
 - [x] 5.3 Run `pytest tests/ -m "not integration"` and verify it passes.
 - [x] 5.4 Run the PostgreSQL integration suite (`TEST_POSTGRES_URL=... pytest -m integration`) and verify it passes.
 - [x] 5.5 Re-run the task 1.2 burst with identical parameters on the same stub stack at the branch. Record the "after" numbers (concurrency, error rate, p95, pool timeouts) next to "before" in the code PR. Use `--since` scoping, as in 1.1. Verify pool timeouts are 0 and the error rate is not worse.
-- [ ] 5.6 After the code PR merges, close PR #410 as superseded, with a link. Verify #410 is closed.
+- [x] 5.6 Follow-up, tracked outside this change: once #500 merges, close PR #410 as superseded, with a link to #500. Verify #410 is closed. (Archiving happens before the merge, so this step runs after the archive.)
