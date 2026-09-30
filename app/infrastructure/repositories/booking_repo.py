@@ -1,10 +1,11 @@
 import logging
 from datetime import datetime, timedelta, timezone
+from typing import cast as type_cast
 from uuid import UUID
 
 from sqlalchemy import (
-    cast, column, Connection, Engine, false, func, literal, or_, select, String, Text, text, true,
-    tuple_, union_all,
+    CursorResult, case, cast, column, Connection, Engine, false, func, literal, or_, select, String, Text, text, true,
+    tuple_, union_all, update,
 )
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, AsyncSession
@@ -12,6 +13,7 @@ from sqlalchemy.orm import Session, aliased
 
 from app.domain.booking_list import BookingListItem
 from app.domain.booking_status import LIVE_STATUSES, can_transition
+from app.domain.constants import PROVISIONING_LOG_MAX_CHARS
 from app.domain.entities import Booking, BookingAuditEntry
 from app.domain.enums import BookingStatus, ResourceType
 from app.domain.exceptions import BookingNotFoundError, IllegalStatusTransitionError
@@ -938,32 +940,85 @@ class BookingRepository:
         _publish_lifecycle(session, model)
 
     def sync_set_status_message(
-        self, session: Session, booking_id: UUID, message: str | None
-    ) -> None:
-        model = session.get(BookingModel, booking_id)
-        if model is None:
-            raise BookingNotFoundError(booking_id)
-        model.status_message = message
-        session.commit()
-        _publish_lifecycle(session, model)
+        self,
+        session: Session,
+        booking_id: UUID,
+        message: str | None,
+        if_status_in: frozenset[BookingStatus] | None = None,
+    ) -> bool:
+        """Set (or clear) the status message; return whether it was written.
 
-    def sync_record_progress(self, session: Session, booking_id: UUID, message: str) -> None:
-        """Set the compact status_message (unchanged) and append to the capped provisioning_log,
-        in one commit rather than two — this fires on every Ansible/script output line (#378).
-
-        Every line is committed, but its row-changed notification is coalesced per booking (#440).
+        With ``if_status_in``, the write is conditional on the booking's status being one of those,
+        evaluated atomically in the UPDATE itself (#444 review): the provisioning task uses it so a
+        release that lands between its own read and write can't have teardown's message erased.
         """
+        if if_status_in is None:
+            model = session.get(BookingModel, booking_id)
+            if model is None:
+                raise BookingNotFoundError(booking_id)
+            model.status_message = message
+            session.commit()
+            _publish_lifecycle(session, model)
+            return True
+        # An UPDATE returns a CursorResult (with rowcount), though typed as the generic Result.
+        result = type_cast(CursorResult, session.execute(
+            update(BookingModel)
+            .where(BookingModel.id == booking_id, BookingModel.status.in_([s.value for s in if_status_in]))
+            .values(status_message=message)
+            .execution_options(synchronize_session=False)
+        ))
+        if result.rowcount == 0:
+            if session.get(BookingModel, booking_id) is None:
+                raise BookingNotFoundError(booking_id)
+            return False  # status no longer owned by the caller — leave the message alone
+        session.commit()
         model = session.get(BookingModel, booking_id)
-        if model is None:
+        if model is not None:  # deleted in between: nothing left to announce
+            _publish_lifecycle(session, model)
+        return True
+
+    def sync_append_progress(
+        self,
+        session: Session,
+        booking_id: UUID,
+        chunk: str,
+        last_message: str,
+        accepting: frozenset[BookingStatus],
+    ) -> None:
+        """Persist one batch of progress output in a single atomic UPDATE (#444).
+
+        Appends ``chunk`` (already newline-terminated lines) to the capped provisioning_log and sets
+        status_message to ``last_message`` — but only while the booking's status is in
+        ``accepting``, so a late batch can never overwrite a lifecycle outcome (READY/FAILED/RETRY,
+        a config-error message, or teardown's own progress after a release). Appending in SQL
+        rather than load-modify-commit means overlapping producers can't lose each other's lines.
+
+        One progress notification follows the commit; it is coalesced per booking (#440).
+        """
+        stmt = (
+            update(BookingModel)
+            .where(BookingModel.id == booking_id)
+            .values(
+                provisioning_log=func.right(
+                    func.coalesce(BookingModel.provisioning_log, "") + chunk, PROVISIONING_LOG_MAX_CHARS,
+                ),
+                status_message=case(
+                    (BookingModel.status.in_([s.value for s in accepting]), last_message),
+                    else_=BookingModel.status_message,
+                ),
+            )
+            .returning(BookingModel.user_id, BookingModel.created_by, BookingModel.environment_id)
+            .execution_options(synchronize_session=False)
+        )
+        row = session.execute(stmt).one_or_none()
+        if row is None:
             raise BookingNotFoundError(booking_id)
-        model.status_message = message
-        combined = (model.provisioning_log or "") + message + "\n"
-        model.provisioning_log = combined[-50_000:]
         session.commit()
         # No environment routing: a progress notification never refreshes the environment row.
         publish_progress_changed(
-            booking_id=booking_id, booking_routing=_routing(model),
-            environment_id=getattr(model, "environment_id", None),
+            booking_id=booking_id,
+            booking_routing=Routing(owner_id=row.user_id, created_by=row.created_by),
+            environment_id=row.environment_id,
         )
 
     def sync_list_expired(self, session: Session) -> list[Booking]:
