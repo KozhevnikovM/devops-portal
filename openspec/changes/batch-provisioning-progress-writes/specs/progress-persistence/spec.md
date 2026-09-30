@@ -16,7 +16,12 @@ The leading-edge and threshold rules apply only while the producer is not in ret
 
 The flush interval SHALL be configurable (`PROGRESS_FLUSH_INTERVAL_MS`, default 500 ms). The message flush threshold SHALL be configurable (`PROGRESS_FLUSH_MESSAGE_THRESHOLD`, default 50). The character flush threshold SHALL be configurable (`PROGRESS_FLUSH_CHAR_THRESHOLD`, default 16,384). An interval of 0 SHALL persist every message as it arrives.
 
-The two thresholds trigger flushes. They are not limits on the buffer's size. The only hard bound on the buffer is that its log text SHALL never exceed the 50,000-character provisioning-log cap. That bound holds in every mode, including retry backoff. Because each buffered message adds at least one newline to the log text, the cap also bounds how many messages the buffer can hold. There is no separate message-count maximum. The one item held outside that text is the pending status message, which is the single most recently recorded message.
+The two thresholds trigger flushes. They are not limits on the buffer's size. The buffer has two hard bounds, and both hold in every mode, including retry backoff:
+
+- Its log text SHALL never exceed the 50,000-character provisioning-log cap. Because each buffered message adds at least one newline to the log text, this cap also bounds how many messages the buffer can hold, so there is no separate message-count maximum.
+- Its pending status message SHALL never exceed 50,000 characters. The pending status message is the most recently recorded message, cut to its last 50,000 characters when it is recorded.
+
+A producer's buffered progress is therefore at most 100,000 characters, however large a single callback is and however long flushes keep failing. The buffer SHALL NOT retain a message beyond those tails. The full text of an oversized message is not kept in the buffer after it has been recorded, including when its flush fails and it is retained for retry.
 
 #### Scenario: Burst of many lines under a deterministic clock
 - **WHEN** a producer records N progress messages of at most 100 characters each over T seconds of clock time, with the default settings
@@ -49,7 +54,7 @@ In normal operation (database reachable), a recorded progress message SHALL be p
 Persisting a batch SHALL leave the booking's provisioning log and status message exactly as persisting each message individually would have left them:
 
 - The provisioning log SHALL be the previous log followed by each message and a newline, in recording order, keeping only the last 50,000 characters.
-- The status message SHALL be the last message in the batch.
+- The status message SHALL be the last message in the batch, keeping only its last 50,000 characters. This cap applies whether or not batching is enabled, so the result does not depend on the flush mode. Messages up to 50,000 characters, which covers all normal output, are stored unchanged as today. Only a single message longer than that is shortened, where today it would be stored in full.
 
 Messages SHALL NOT be de-duplicated, merged, split or reordered. A message that contains several lines (a multi-line output snapshot) SHALL be kept as-is. The characters buffered for the log SHALL never exceed the 50,000-character cap, since older buffered text could never survive the cap.
 
@@ -64,7 +69,8 @@ Messages SHALL NOT be de-duplicated, merged, split or reordered. A message that 
 #### Scenario: Single message larger than the log cap
 - **WHEN** a producer records one message longer than 50,000 characters
 - **THEN** it is persisted immediately, and the provisioning log equals the last 50,000 characters of that message followed by its newline, i.e. the final 49,999 characters of the message and then the newline, exactly as a per-line append of `message + "\n"` followed by the tail cap would leave it
-- **AND** no more than 50,000 log characters were buffered for it
+- **AND** the status message equals the last 50,000 characters of that message
+- **AND** no more than 50,000 log characters and 50,000 status-message characters were buffered for it
 
 #### Scenario: Continuous output over the cap
 - **WHEN** a producer records far more than 50,000 characters of output
@@ -140,6 +146,11 @@ Publishing the progress notification SHALL happen only after a successful flush.
 - **WHEN** the first message after a quiet period is persisted immediately and that persist fails
 - **THEN** the message is kept in the buffer rather than dropped, the error is logged, and it is retried by a trailing flush one flush interval later, together with any messages recorded meanwhile, in order
 
+#### Scenario: Oversized message whose in-run flush fails
+- **WHEN** a producer records one message of several megabytes as the first message after a quiet period, and that leading-edge persist fails
+- **THEN** the retained buffer holds at most 50,000 characters of log text and a pending status message of at most 50,000 characters, not the full message
+- **AND** when the trailing flush succeeds one interval later, the provisioning log and status message equal what persisting that message on its own would produce under the caps
+
 #### Scenario: Database stays unavailable during continuous output
 - **WHEN** in-run flushes keep failing while a producer records output well beyond the flush thresholds
 - **THEN** persist attempts happen at most once per flush interval, and the buffered log text never exceeds 50,000 characters
@@ -158,7 +169,7 @@ Publishing the progress notification SHALL happen only after a successful flush.
 A handled exception inside an attempt SHALL pass through the pre-lifecycle flush. If the worker is killed without running handlers (SIGKILL, out-of-memory kill, container or host loss), only progress recorded since the producer's last successful commit MAY be lost. The loss bound depends on how the producer was operating:
 
 - **Normal operation**, where the producer's in-run flushes are succeeding: the lost tail SHALL be at most the output recorded within one flush interval, and below the message and character flush thresholds, since reaching either triggers a flush. The one exception is a single message larger than the character flush threshold, which is being flushed on its own and is itself capped at 50,000 characters.
-- **Degraded operation**, after one or more in-run flushes have failed and their batches are being retained for retry: the lost tail is not bounded in time. It SHALL be at most 50,000 characters of provisioning-log text (the log cap that bounds the buffer), plus the pending status message.
+- **Degraded operation**, after one or more in-run flushes have failed and their batches are being retained for retry: the lost tail is not bounded in time. It SHALL be at most 50,000 characters of provisioning-log text plus a pending status message of at most 50,000 characters, which are the buffer's two hard bounds.
 
 The system SHALL NOT claim that buffered progress survives a hard kill. Both bounds SHALL be documented in the administrator guide.
 

@@ -31,7 +31,7 @@ See proposal.md for why. Current shape of the code:
 
 `ProgressRecorder(persist, *, interval_s, message_threshold, char_threshold, log_cap, clock=time.monotonic, timer_factory=threading.Timer)`. `persist(chunk: str, last_message: str) -> None` is supplied by the task. The API:
 
-- `record(msg)` appends `msg + "\n"` to the buffered chunk, trims the chunk to its last `log_cap` characters, remembers `msg` as the last message, and bumps the message count. It then either flushes (leading edge or threshold reached) or arms a single trailing timer for `last_flush + interval`. While the recorder is in retry backoff after a failed in-run flush (D5), neither the leading edge nor a threshold triggers a flush; only the trailing timer does.
+- `record(msg)` appends `msg + "\n"` to the buffered chunk, trims the chunk to its last `log_cap` characters, and remembers `msg[-log_cap:]` as the last message. Keeping only this slice means the recorder never holds a reference to the caller's full string, so an oversized callback is bounded as soon as `record` returns. It also bumps the message count, then either flushes (leading edge or threshold reached) or arms a single trailing timer for `last_flush + interval`. While the recorder is in retry backoff after a failed in-run flush (D5), neither the leading edge nor a threshold triggers a flush; only the trailing timer does.
 - `flush()` is the barrier: synchronous, one attempt. On failure it drops the buffer and logs a warning.
 - `close()` cancels the timer, performs a barrier flush, and marks the recorder closed. Later `record` calls are no-ops. The timer callback also checks `closed`.
 
@@ -52,7 +52,9 @@ This mirrors the coalescer. An isolated line commits at once, so there is no fre
 - `PROGRESS_FLUSH_MESSAGE_THRESHOLD=50`
 - `PROGRESS_FLUSH_CHAR_THRESHOLD=16384`
 
-These two are *flush thresholds*, not buffer limits. They are named that way so they are not mistaken for maxima. The recorder's single hard bound is `log_cap` (`PROVISIONING_LOG_MAX_CHARS`) on the buffered log text. The message count has no cap of its own: every buffered message adds at least a newline, so `log_cap` bounds it too.
+These two are *flush thresholds*, not buffer limits. They are named that way so they are not mistaken for maxima. The recorder has two hard bounds, both `PROVISIONING_LOG_MAX_CHARS` (50,000): one on the buffered log text and one on the pending last message. Per attempt that is at most 100,000 characters in every mode. The message count has no cap of its own: every buffered message adds at least a newline, so the log-text cap bounds it too.
+
+The status-message cap reuses the log cap rather than adding a new setting. It has to hold in normal operation too, not only after a failure, otherwise the stored status message would depend on whether a flush happened to fail. For messages of normal size nothing changes; the booking row only ever shows a few lines anyway.
 
 The worst-case freshness delay in normal operation is one interval plus the flush time. In normal operation the buffer stays below `char_threshold` characters and `message_threshold` messages, apart from one oversized message that is flushed at once. In degraded operation (D5) the thresholds do not trigger flushes, so it can grow past both, up to `log_cap` characters of log text and no further. Outside backoff, any message that brings the buffer to either threshold triggers an immediate flush, and the buffered log text is cut to `log_cap` characters, because suffix truncation composes: `((a+b)[-N:] + c)[-N:] == (a+b+c)[-N:]`. `interval=0` short-circuits to persist on every `record`.
 
@@ -120,7 +122,7 @@ A new recorder is created per task execution, and Celery retries are new executi
 `finally` does not run on SIGKILL, OOM kills or host loss. What is lost is exactly the output recorded since the last successful commit, which means the buffer plus any batch whose commit was in flight. Two bounds apply:
 
 - **Normal operation** (in-run flushes succeeding): by D2, at most one interval of output and below the flush thresholds. The exception is a single oversized message, which is flushed on its own at once and is itself tail-capped at 50,000 characters.
-- **Degraded operation** (one or more in-run flushes failed and are being retained): the buffer can hold output from many intervals, so no time bound applies. The hard bound is the buffer's tail cap: at most 50,000 characters of log text, plus the pending status message. Anything older would have been cut from the log by the cap anyway.
+- **Degraded operation** (one or more in-run flushes failed and are being retained): the buffer can hold output from many intervals, so no time bound applies. The hard bound is the buffer's tail cap: at most 50,000 characters of log text plus a pending status message of at most 50,000 characters. Anything older would have been cut from the log by the cap anyway.
 
 The spec, proposal and admin guide state both bounds with the same wording. Celery's `SoftTimeLimitExceeded` is an ordinary exception and passes through the barrier. This is documented in `docs/admin-guide.md`.
 
