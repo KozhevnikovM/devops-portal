@@ -19,13 +19,11 @@ def _run_seed(admin_password: str, use_stub: bool, has_users: bool = False):
         patch("app.main.settings") as s,
         patch("app.main.UserRepository", return_value=repo_mock),
         patch("app.main.SyncSessionLocal", return_value=session_cm),
-        patch("app.main.bcrypt") as mock_bcrypt,
+        patch("app.main.hash_password_blocking", return_value="$2b$12$fakehash"),
     ):
         s.ADMIN_PASSWORD = admin_password
         s.USE_STUB_TERRAFORM = use_stub
         s.ADMIN_USERNAME = "admin"
-        mock_bcrypt.hashpw.return_value = b"$2b$12$fakehash"
-        mock_bcrypt.gensalt.return_value = b"$2b$12$fakesalt"
 
         from app.main import _seed_admin_user
         _seed_admin_user()
@@ -46,7 +44,7 @@ def test_dev_stub_mode_empty_password_uses_changeme():
         patch("app.main.settings") as s,
         patch("app.main.UserRepository") as repo_cls,
         patch("app.main.SyncSessionLocal") as session_factory,
-        patch("app.main.bcrypt") as mock_bcrypt,
+        patch("app.main.hash_password_blocking", return_value="$2b$12$fakehash") as mock_hash,
     ):
         s.ADMIN_PASSWORD = ""
         s.USE_STUB_TERRAFORM = True
@@ -58,15 +56,13 @@ def test_dev_stub_mode_empty_password_uses_changeme():
         session_cm.__enter__ = MagicMock(return_value=MagicMock())
         session_cm.__exit__ = MagicMock(return_value=False)
         session_factory.return_value = session_cm
-        mock_bcrypt.hashpw.return_value = b"$2b$12$fakehash"
-        mock_bcrypt.gensalt.return_value = b"$2b$12$fakesalt"
 
         from app.main import _seed_admin_user
         _seed_admin_user()  # must not raise
 
-    mock_bcrypt.hashpw.assert_called_once()
-    call_pw = mock_bcrypt.hashpw.call_args[0][0]
-    assert call_pw == b"changeme"
+    mock_hash.assert_called_once()
+    call_pw = mock_hash.call_args[0][0]
+    assert call_pw == "changeme"
 
 
 def test_set_password_seeds_correctly():
@@ -75,7 +71,7 @@ def test_set_password_seeds_correctly():
         patch("app.main.settings") as s,
         patch("app.main.UserRepository") as repo_cls,
         patch("app.main.SyncSessionLocal") as session_factory,
-        patch("app.main.bcrypt") as mock_bcrypt,
+        patch("app.main.hash_password_blocking", return_value="$2b$12$fakehash") as mock_hash,
     ):
         s.ADMIN_PASSWORD = "supersecret99"
         s.USE_STUB_TERRAFORM = False
@@ -87,14 +83,12 @@ def test_set_password_seeds_correctly():
         session_cm.__enter__ = MagicMock(return_value=MagicMock())
         session_cm.__exit__ = MagicMock(return_value=False)
         session_factory.return_value = session_cm
-        mock_bcrypt.hashpw.return_value = b"$2b$12$fakehash"
-        mock_bcrypt.gensalt.return_value = b"$2b$12$fakesalt"
 
         from app.main import _seed_admin_user
         _seed_admin_user()
 
-    call_pw = mock_bcrypt.hashpw.call_args[0][0]
-    assert call_pw == b"supersecret99"
+    call_pw = mock_hash.call_args[0][0]
+    assert call_pw == "supersecret99"
 
 
 def test_already_seeded_skips_password_check():
@@ -103,7 +97,7 @@ def test_already_seeded_skips_password_check():
         patch("app.main.settings") as s,
         patch("app.main.UserRepository") as repo_cls,
         patch("app.main.SyncSessionLocal") as session_factory,
-        patch("app.main.bcrypt") as mock_bcrypt,
+        patch("app.main.hash_password_blocking", return_value="$2b$12$fakehash") as mock_hash,
     ):
         s.ADMIN_PASSWORD = ""
         s.USE_STUB_TERRAFORM = False  # production mode
@@ -119,4 +113,4 @@ def test_already_seeded_skips_password_check():
         from app.main import _seed_admin_user
         _seed_admin_user()  # must not raise even in prod with empty password
 
-    mock_bcrypt.hashpw.assert_not_called()
+    mock_hash.assert_not_called()

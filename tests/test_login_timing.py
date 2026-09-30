@@ -35,10 +35,12 @@ def _client(get_by_username_return):
 
 
 def test_unknown_user_still_runs_bcrypt_once():
+    from app.infrastructure.passwords import DUMMY_PASSWORD_HASH, verify_password
+
     mock_repo, client = _client(None)
     with (
         patch("app.presentation.routes.auth._user_repo", mock_repo),
-        patch("app.presentation.routes.auth.bcrypt.checkpw", wraps=bcrypt.checkpw) as spy,
+        patch("app.presentation.routes.auth.verify_password", wraps=verify_password) as spy,
     ):
         resp = client.post(
             "/auth/login", data={"username": "ghost", "password": "whatever"},
@@ -46,8 +48,26 @@ def test_unknown_user_still_runs_bcrypt_once():
         )
 
     assert resp.status_code == 401
-    # The timing-equalizing comparison ran exactly once on the miss path.
-    spy.assert_called_once()
+    # The timing-equalizing comparison ran exactly once on the miss path, against the dummy hash.
+    spy.assert_called_once_with("whatever", DUMMY_PASSWORD_HASH)
+
+
+def test_known_user_runs_bcrypt_once():
+    from app.infrastructure.passwords import verify_password
+
+    user = _make_user()
+    mock_repo, client = _client(user)
+    with (
+        patch("app.presentation.routes.auth._user_repo", mock_repo),
+        patch("app.presentation.routes.auth.verify_password", wraps=verify_password) as spy,
+    ):
+        resp = client.post(
+            "/auth/login", data={"username": "alice", "password": "wrong"},
+            follow_redirects=False,
+        )
+
+    assert resp.status_code == 401
+    spy.assert_called_once_with("wrong", user.password_hash)
 
 
 def test_wrong_password_returns_401():
