@@ -14,7 +14,7 @@ A progress producer is one provisioning or teardown task execution (one attempt)
 
 The leading-edge and threshold rules apply only while the producer is not in retry backoff after a failed in-run flush. See "Progress persistence failures do not fail the task".
 
-The flush interval SHALL be configurable (`PROGRESS_FLUSH_INTERVAL_MS`, default 500 ms). The message flush threshold SHALL be configurable (`PROGRESS_FLUSH_MESSAGE_THRESHOLD`, default 50). The character flush threshold SHALL be configurable (`PROGRESS_FLUSH_CHAR_THRESHOLD`, default 16,384). An interval of 0 SHALL persist every message as it arrives.
+The flush interval SHALL be configurable (`PROGRESS_FLUSH_INTERVAL_MS`, default 500 ms). The message flush threshold SHALL be configurable (`PROGRESS_FLUSH_MESSAGE_THRESHOLD`, default 50). The character flush threshold SHALL be configurable (`PROGRESS_FLUSH_CHAR_THRESHOLD`, default 16,384). An interval of 0 SHALL persist every message as it arrives, except while the producer is in retry backoff.
 
 The two thresholds trigger flushes. They are not limits on the buffer's size. The buffer has two hard bounds, and both hold in every mode, including retry backoff:
 
@@ -133,7 +133,7 @@ Each task execution SHALL start with an empty progress buffer. When an attempt e
 
 A failure to persist a progress batch SHALL be logged and SHALL NOT raise into the Terraform, SSH, startup-script or Ansible work that produced it, nor fail the attempt. Flushes fall into two classes with different failure handling:
 
-- **In-run flushes** are the leading-edge flush of the first message after a quiet period, the trailing (interval) flush, and the threshold-triggered flush. When one of these fails, the batch SHALL remain buffered in recording order. Messages recorded afterwards SHALL be appended behind it, and the buffered log text SHALL stay bounded by the 50,000-character log cap. The retained batch SHALL be retried by a trailing flush no sooner than one flush interval after the failure, even if no further message arrives. Reaching a flush threshold SHALL NOT trigger an extra attempt before then, so an unavailable database is retried at most once per flush interval per producer.
+- **In-run flushes** are the leading-edge flush of the first message after a quiet period, the trailing (interval) flush, and the threshold-triggered flush. When one of these fails, the batch SHALL remain buffered in recording order. Messages recorded afterwards SHALL be appended behind it, and the buffered log text SHALL stay bounded by the 50,000-character log cap. The retained batch SHALL be retried by a trailing flush after the **retry delay**, even if no further message arrives. The retry delay is the longer of the flush interval and a fixed minimum of 500 ms. While the retry is pending, the producer is in retry backoff. Messages recorded during backoff SHALL only be buffered: neither the leading-edge rule, nor a flush threshold, nor an interval of 0 SHALL trigger an attempt before the retry delay has elapsed. An unavailable database is therefore retried at most once per retry delay per producer, never more than twice per second, whatever the configured interval. Backoff ends with the first successful flush, after which the normal rules apply again.
 - **Barrier flushes** are the flush before a lifecycle write and the flush at attempt end. When one of these fails, the buffered batch SHALL be discarded with a logged warning, and the lifecycle write SHALL still be attempted, so a failed flush can never be applied after the lifecycle outcome.
 
 Publishing the progress notification SHALL happen only after a successful flush.
@@ -144,17 +144,24 @@ Publishing the progress notification SHALL happen only after a successful flush.
 
 #### Scenario: Leading-edge flush fails
 - **WHEN** the first message after a quiet period is persisted immediately and that persist fails
-- **THEN** the message is kept in the buffer rather than dropped, the error is logged, and it is retried by a trailing flush one flush interval later, together with any messages recorded meanwhile, in order
+- **THEN** the message is kept in the buffer rather than dropped, the error is logged, and it is retried by a trailing flush one retry delay later, together with any messages recorded meanwhile, in order
 
 #### Scenario: Oversized message whose in-run flush fails
 - **WHEN** a producer records one message of several megabytes as the first message after a quiet period, and that leading-edge persist fails
 - **THEN** the retained buffer holds at most 50,000 characters of log text and a pending status message of at most 50,000 characters, not the full message
-- **AND** when the trailing flush succeeds one interval later, the provisioning log and status message equal what persisting that message on its own would produce under the caps
+- **AND** when the trailing flush succeeds one retry delay later, the provisioning log and status message equal what persisting that message on its own would produce under the caps
 
 #### Scenario: Database stays unavailable during continuous output
 - **WHEN** in-run flushes keep failing while a producer records output well beyond the flush thresholds
-- **THEN** persist attempts happen at most once per flush interval, and the buffered log text never exceeds 50,000 characters
+- **THEN** persist attempts happen at most once per retry delay, and the buffered log text never exceeds 50,000 characters
 - **AND** the buffer may hold more than 50 messages and more than 16,384 characters, since the thresholds are not buffer limits
+
+#### Scenario: Persist failure with an interval of 0
+- **WHEN** the flush interval is configured as 0 and persisting a message fails because the database is unavailable
+- **THEN** the message is retained and the next attempt is made by a trailing flush no sooner than 500 ms later, not immediately
+- **AND** messages recorded in the meantime are buffered behind it, without triggering their own attempts
+- **AND** while the database stays unavailable, attempts continue at most once per 500 ms, with no tight retry loop
+- **AND** once a flush succeeds, every later message is again persisted as it arrives
 
 #### Scenario: Barrier flush fails
 - **WHEN** the flush before a READY transition fails

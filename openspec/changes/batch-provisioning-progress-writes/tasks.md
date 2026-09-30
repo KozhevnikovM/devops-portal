@@ -9,7 +9,7 @@
 
 ## 3. ProgressRecorder
 
-- [ ] 3.1 Implement `app/infrastructure/progress_recorder.py` per design D1/D2: `record`/`flush`/`close`, one lock, leading-edge plus trailing timer, message/char thresholds, buffered text tail-capped at `PROVISIONING_LOG_MAX_CHARS`, `interval=0` pass-through, injectable `clock`/`timer_factory`. Verify: the unit tests in 3.2 pass.
+- [ ] 3.1 Implement `app/infrastructure/progress_recorder.py` per design D1/D2: `record`/`flush`/`close`, one lock, leading-edge plus trailing timer, message/char thresholds, buffered text tail-capped at `PROVISIONING_LOG_MAX_CHARS`, `interval=0` pass-through, retry backoff of `max(interval, 0.5 s)` that also gates the `interval=0` pass-through, injectable `clock`/`timer_factory`. Verify: the unit tests in 3.2 pass.
 - [ ] 3.2 Add `tests/test_progress_recorder.py` with a fake clock and a manually fired fake timer, covering:
   - an isolated line persists immediately;
   - a burst of N lines over T commits at most `ceil(T/0.5)+ceil(N/50)+1` times, and 1,000 lines with the clock frozen commit at most 21 times including the final flush;
@@ -23,8 +23,9 @@
 - [ ] 3.3 Add failure and isolation tests to the same file:
   - a trailing or threshold flush failure retains the buffer, and the next flush persists the retained and new messages in order;
   - an oversized message (e.g. 5 MB) whose leading-edge persist fails: the retained log text and pending status message are each at most 50,000 characters, and the retry persists exactly the capped tails;
-  - a failed leading-edge persist keeps the first message (it is not dropped), and the trailing timer retries it one interval later together with the messages recorded meanwhile;
-  - during retry backoff, records past the flush thresholds trigger no extra persist attempts (at most one per interval, checked with the fake clock); the buffer may exceed 50 messages and 16,384 characters, but its log text never exceeds 50,000 characters;
+  - a failed leading-edge persist keeps the first message (it is not dropped), and the trailing timer retries it one retry delay later together with the messages recorded meanwhile;
+  - `interval=0` with a persist that keeps failing: after the first failure, the timer is armed for 0.5 s (not 0), records during backoff make no persist calls, repeated failures cause at most one attempt per 0.5 s of fake-clock time, and after a success each record persists immediately again;
+  - during retry backoff, records past the flush thresholds trigger no extra persist attempts (at most one per retry delay, checked with the fake clock); the buffer may exceed 50 messages and 16,384 characters, but its log text never exceeds 50,000 characters;
   - a barrier `flush()` failure drops the buffer and logs a warning, and nothing from it is persisted later;
   - `record` never raises when `persist` raises;
   - after `close()`, `record` is a no-op and a timer that fires late persists nothing;
@@ -71,7 +72,7 @@
 
 - [ ] 6.1 Point the amplification test from 1.1 at the new path. Run it with `PROGRESS_FLUSH_INTERVAL_MS=0` and with the defaults on the same burst, assert that the batched commits are at most `ceil(10/0.5)+ceil(2000/50)+2` and that the final logs are identical, and record the before/after commits and DB time in the code PR description and in a table in `design.md` (D8). Verify: `pytest -m integration tests/integration/test_progress_write_amplification.py -s` prints both runs.
 - [ ] 6.2 Update `docs/admin-guide.md`:
-  - document the three new settings with defaults (calling the two count settings flush thresholds, not buffer limits, and naming the two 50,000-character hard bounds, on buffered log text and on the status message; also note that a single progress message longer than 50,000 characters now has its status message cut to its tail), freshness and crash-loss implications, and the `PROGRESS_FLUSH_INTERVAL_MS=0` rollback lever;
+  - document the three new settings with defaults (calling the two count settings flush thresholds, not buffer limits, and naming the two 50,000-character hard bounds, on buffered log text and on the status message; also note that a single progress message longer than 50,000 characters now has its status message cut to its tail), freshness and crash-loss implications, and the `PROGRESS_FLUSH_INTERVAL_MS=0` rollback lever (one commit per callback while the database is healthy, with retries at most every 500 ms after a failure);
   - correct the `SSE_PROGRESS_COALESCE_MS` row ("every line is still saved", now in batched commits);
   - state both SIGKILL loss bounds, using the spec's wording: at most one flush interval of output (below the flush thresholds) in normal operation, and at most 50,000 log characters while flushes are failing.
 
