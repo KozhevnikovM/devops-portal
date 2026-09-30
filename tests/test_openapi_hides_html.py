@@ -5,6 +5,7 @@ response_class=HTMLResponse). The schema at /openapi.json should expose only the
 surface, so a central filter in app/main.py sets include_in_schema=False on every HTMLResponse
 route.
 """
+
 from fastapi.responses import HTMLResponse
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
@@ -54,3 +55,36 @@ def test_every_html_route_is_marked_out_of_schema():
         and route.include_in_schema
     ]
     assert leaked == [], leaked
+
+
+def test_framework_route_representation_preserves_router_and_openapi_behavior():
+    """FastAPI upgrades must keep included API routes inspectable by the HTML filter."""
+    from fastapi.routing import APIRoute
+
+    api_route_paths = {
+        route.path
+        for route in app.routes
+        if isinstance(route, APIRoute) and route.path.startswith("/api/v1/")
+    }
+    assert "/api/v1/bookings" in api_route_paths
+
+    schema = app.openapi()
+    assert "/api/v1/bookings" in schema["paths"]
+    assert "/bookings" not in schema["paths"]
+    assert schema["security"] == [{"BearerAuth": []}]
+    assert schema["components"]["securitySchemes"]["BearerAuth"]["scheme"] == "bearer"
+
+
+def test_application_lifespan_starts_and_health_endpoint_responds(monkeypatch):
+    from app import main
+
+    # Startup's database recovery is covered separately; isolate the ASGI lifespan contract.
+    monkeypatch.setattr(main, "_seed_admin_user", lambda: None)
+    monkeypatch.setattr(main, "_recover_in_progress_bookings", lambda: None)
+    monkeypatch.setattr(main, "_recover_stuck_releases", lambda: None)
+
+    with TestClient(app) as client:
+        response = client.get("/health")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ok"

@@ -1,16 +1,16 @@
 ## 1. Dependency selection and update
 
-- [ ] 1.1 Determine an OSC-accepted Starlette release and select a FastAPI release whose declared Starlette constraints include it; verify package metadata and avoid `starlette==0.46.2`.
-- [ ] 1.2 Update the FastAPI constraint in `requirements.txt`; remove or revise the old compatibility comment based on the verified route representation.
-- [ ] 1.3 Re-resolve or regenerate the repository's Python dependency artifacts, if maintained, and confirm a clean install has no resolver conflicts.
+- [ ] 1.1 FastAPI 0.116.2 resolves to Starlette 0.48.0, within its published `>=0.40,<0.49` range and excluding `0.46.2`; OSC acceptance still needs confirmation from the OSC environment.
+- [x] 1.2 Updated the FastAPI constraint and replaced the obsolete route-representation comment.
+- [x] 1.3 No Python lock or generated dependency artifact is maintained. A clean `requirements-dev.txt` install resolves without conflicts.
 
 ## 2. Compatibility regression coverage
 
-- [ ] 2.1 Add or update tests for application startup and included API routers.
-- [ ] 2.2 Add or update tests for generated OpenAPI and custom filtering/visibility rules.
-- [ ] 2.3 Validate representative request/response handling and test client behavior; fix only upgrade-caused incompatibilities.
+- [x] 2.1 Added application lifespan startup and health endpoint coverage; verified included API router registration.
+- [x] 2.2 Extended OpenAPI coverage for router visibility, hidden HTML routes, and the custom bearer security scheme.
+- [x] 2.3 Representative API route and health requests pass with the upgraded framework pair.
 
 ## 3. Verification
 
-- [ ] 3.1 Run existing backend tests and the new compatibility tests.
-- [ ] 3.2 Build the backend/Docker image from a clean dependency environment and confirm the resolved Starlette version is not `0.46.2`.
+- [ ] 3.1 The fast backend suite passes (1,160 tests); PostgreSQL integration tests are pending PR CI.
+- [ ] 3.2 The clean Docker image build remains pending because this environment has no Docker engine or socket.
