@@ -5,7 +5,7 @@
 ## 2. Domain constants and settings
 
 - [ ] 2.1 Add `PROVISIONING_LOG_MAX_CHARS = 50_000` to `app/domain/constants.py`. Add `PROVISIONING_PROGRESS_STATUSES = {PROVISIONING, CONFIGURING}` and `TEARDOWN_PROGRESS_STATUSES = {RELEASING}` frozensets to `app/domain/booking_status.py`. Verify: a domain unit test asserts their contents and that the domain layer still has no framework imports.
-- [ ] 2.2 Add `PROGRESS_FLUSH_INTERVAL_MS=500`, `PROGRESS_FLUSH_MAX_MESSAGES=50` and `PROGRESS_FLUSH_MAX_CHARS=16384` to `app/config.py`, validated as non-negative (message/char maximums ≥ 1). Verify: a settings test covers the defaults and rejects negative values.
+- [ ] 2.2 Add `PROGRESS_FLUSH_INTERVAL_MS=500`, `PROGRESS_FLUSH_MESSAGE_THRESHOLD=50` and `PROGRESS_FLUSH_CHAR_THRESHOLD=16384` to `app/config.py`, validated as non-negative, with both flush thresholds ≥ 1. Verify: a settings test covers the defaults and rejects negative values.
 
 ## 3. ProgressRecorder
 
@@ -23,7 +23,7 @@
 - [ ] 3.3 Add failure and isolation tests to the same file:
   - a trailing or threshold flush failure retains the buffer, and the next flush persists the retained and new messages in order;
   - a failed leading-edge persist keeps the first message (it is not dropped), and the trailing timer retries it one interval later together with the messages recorded meanwhile;
-  - during retry backoff, records past the size thresholds trigger no extra persist attempts (at most one per interval, checked with the fake clock), and the buffered log text never exceeds 50,000 characters;
+  - during retry backoff, records past the flush thresholds trigger no extra persist attempts (at most one per interval, checked with the fake clock); the buffer may exceed 50 messages and 16,384 characters, but its log text never exceeds 50,000 characters;
   - a barrier `flush()` failure drops the buffer and logs a warning, and nothing from it is persisted later;
   - `record` never raises when `persist` raises;
   - after `close()`, `record` is a no-op and a timer that fires late persists nothing;
@@ -70,9 +70,9 @@
 
 - [ ] 6.1 Point the amplification test from 1.1 at the new path. Run it with `PROGRESS_FLUSH_INTERVAL_MS=0` and with the defaults on the same burst, assert that the batched commits are at most `ceil(10/0.5)+ceil(2000/50)+2` and that the final logs are identical, and record the before/after commits and DB time in the code PR description and in a table in `design.md` (D8). Verify: `pytest -m integration tests/integration/test_progress_write_amplification.py -s` prints both runs.
 - [ ] 6.2 Update `docs/admin-guide.md`:
-  - document the three new settings with defaults, freshness and crash-loss implications, and the `PROGRESS_FLUSH_INTERVAL_MS=0` rollback lever;
+  - document the three new settings with defaults (calling the two count settings flush thresholds, not buffer limits, and naming the 50,000-character log cap as the only hard buffer bound), freshness and crash-loss implications, and the `PROGRESS_FLUSH_INTERVAL_MS=0` rollback lever;
   - correct the `SSE_PROGRESS_COALESCE_MS` row ("every line is still saved", now in batched commits);
-  - state both SIGKILL loss bounds, using the spec's wording: at most one flush interval of output (within the size thresholds) in normal operation, and at most 50,000 log characters while flushes are failing.
+  - state both SIGKILL loss bounds, using the spec's wording: at most one flush interval of output (below the flush thresholds) in normal operation, and at most 50,000 log characters while flushes are failing.
 
   Check `docs/api-reference.md` for any mention of per-line progress persistence. Verify: the docs diff is reviewed in the PR.
 - [ ] 6.3 Run the `py-review` skill (ruff, mypy, bandit) on the changed Python files and fix any findings. Verify: a clean `py-review` report.

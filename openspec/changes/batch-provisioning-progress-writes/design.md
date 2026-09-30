@@ -16,7 +16,7 @@ See proposal.md for why. Current shape of the code:
 ## Goals / Non-Goals
 
 **Goals:**
-- Commits proportional to elapsed flush intervals plus size thresholds, not to line count, and verifiable with a fake clock.
+- Commits proportional to elapsed flush intervals plus flush thresholds, not to line count, and verifiable with a fake clock.
 - The batched result is exactly equal to per-line persistence (spec: *Batching preserves log content, order and the log cap*).
 - No ordering hazard between buffered progress and lifecycle writes, both on the task thread and against the timer thread.
 
@@ -29,7 +29,7 @@ See proposal.md for why. Current shape of the code:
 
 ### D1. A DB-agnostic `ProgressRecorder` in `app/infrastructure/progress_recorder.py`
 
-`ProgressRecorder(persist, *, interval_s, max_messages, max_chars, log_cap, clock=time.monotonic, timer_factory=threading.Timer)`. `persist(chunk: str, last_message: str) -> None` is supplied by the task. The API:
+`ProgressRecorder(persist, *, interval_s, message_threshold, char_threshold, log_cap, clock=time.monotonic, timer_factory=threading.Timer)`. `persist(chunk: str, last_message: str) -> None` is supplied by the task. The API:
 
 - `record(msg)` appends `msg + "\n"` to the buffered chunk, trims the chunk to its last `log_cap` characters, remembers `msg` as the last message, and bumps the message count. It then either flushes (leading edge or threshold reached) or arms a single trailing timer for `last_flush + interval`. While the recorder is in retry backoff after a failed in-run flush (D5), neither the leading edge nor a threshold triggers a flush; only the trailing timer does.
 - `flush()` is the barrier: synchronous, one attempt. On failure it drops the buffer and logs a warning.
@@ -44,15 +44,17 @@ The recorder lives in infrastructure, not the domain, because it owns threads an
 - **Flush only when the next callback arrives, with no timer.** Simpler, but it breaks idle freshness: a long quiet Ansible task would leave its last line buffered indefinitely, which the issue explicitly forbids.
 - **One background flusher thread per worker process.** It would outlive attempts and needs cross-attempt bookkeeping. A timer per recorder, armed only while something is buffered, is enough. The #440 coalescer already uses `threading.Timer` in the worker.
 
-### D2. Leading edge plus trailing flush, with size thresholds
+### D2. Leading edge plus trailing flush, with flush thresholds
 
 This mirrors the coalescer. An isolated line commits at once, so there is no freshness regression for SSH-wait or Terraform messages, which are already sparse. A burst commits at most once per 500 ms plus once per 50 messages or 16 KiB. Defaults:
 
 - `PROGRESS_FLUSH_INTERVAL_MS=500`. This is below the 750 ms SSE window, so every coalesced notification finds fresh data.
-- `PROGRESS_FLUSH_MAX_MESSAGES=50`
-- `PROGRESS_FLUSH_MAX_CHARS=16384`
+- `PROGRESS_FLUSH_MESSAGE_THRESHOLD=50`
+- `PROGRESS_FLUSH_CHAR_THRESHOLD=16384`
 
-The worst-case freshness delay in normal operation is one interval plus the flush time. In normal operation the buffer stays below `max_chars` characters of log text, apart from one oversized message that is flushed at once. In degraded operation (D5) it can grow to `log_cap` characters but no further. Any message that pushes the buffer over `max_chars` triggers an immediate flush, and the buffered log text is cut to `log_cap` characters, because suffix truncation composes: `((a+b)[-N:] + c)[-N:] == (a+b+c)[-N:]`. `interval=0` short-circuits to persist on every `record`.
+These two are *flush thresholds*, not buffer limits. They are named that way so they are not mistaken for maxima. The recorder's single hard bound is `log_cap` (`PROVISIONING_LOG_MAX_CHARS`) on the buffered log text. The message count has no cap of its own: every buffered message adds at least a newline, so `log_cap` bounds it too.
+
+The worst-case freshness delay in normal operation is one interval plus the flush time. In normal operation the buffer stays below `char_threshold` characters and `message_threshold` messages, apart from one oversized message that is flushed at once. In degraded operation (D5) the thresholds do not trigger flushes, so it can grow past both, up to `log_cap` characters of log text and no further. Outside backoff, any message that brings the buffer to either threshold triggers an immediate flush, and the buffered log text is cut to `log_cap` characters, because suffix truncation composes: `((a+b)[-N:] + c)[-N:] == (a+b+c)[-N:]`. `interval=0` short-circuits to persist on every `record`.
 
 ### D3. One atomic UPDATE with a status guard
 
@@ -117,7 +119,7 @@ A new recorder is created per task execution, and Celery retries are new executi
 
 `finally` does not run on SIGKILL, OOM kills or host loss. What is lost is exactly the output recorded since the last successful commit, which means the buffer plus any batch whose commit was in flight. Two bounds apply:
 
-- **Normal operation** (in-run flushes succeeding): by D2, at most one interval of output and below the size thresholds. The exception is a single oversized message, which is flushed on its own at once and is itself tail-capped at 50,000 characters.
+- **Normal operation** (in-run flushes succeeding): by D2, at most one interval of output and below the flush thresholds. The exception is a single oversized message, which is flushed on its own at once and is itself tail-capped at 50,000 characters.
 - **Degraded operation** (one or more in-run flushes failed and are being retained): the buffer can hold output from many intervals, so no time bound applies. The hard bound is the buffer's tail cap: at most 50,000 characters of log text, plus the pending status message. Anything older would have been cut from the log by the cap anyway.
 
 The spec, proposal and admin guide state both bounds with the same wording. Celery's `SoftTimeLimitExceeded` is an ordinary exception and passes through the barrier. This is documented in `docs/admin-guide.md`.

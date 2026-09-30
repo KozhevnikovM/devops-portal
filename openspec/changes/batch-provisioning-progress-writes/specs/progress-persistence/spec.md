@@ -9,10 +9,14 @@ Defines how progress output from provisioning and teardown tasks (Terraform, SSH
 A progress producer is one provisioning or teardown task execution (one attempt) for a booking. A producer SHALL persist its progress output in batched commits, not one commit per output line. It SHALL follow these rules:
 
 - The first progress message after a period with no persist in the last flush interval SHALL be persisted immediately.
-- Messages that arrive within the flush interval after a persist SHALL be buffered and persisted together, at most once per flush interval, apart from the size-triggered flushes below.
-- When the buffer reaches the maximum message count or the maximum character count, it SHALL be persisted immediately, whatever the interval.
+- Messages that arrive within the flush interval after a persist SHALL be buffered and persisted together, at most once per flush interval, apart from the threshold-triggered flushes below.
+- When the buffer reaches the message flush threshold or the character flush threshold, it SHALL be persisted immediately, whatever the interval.
 
-The flush interval SHALL be configurable (`PROGRESS_FLUSH_INTERVAL_MS`, default 500 ms). The maximum buffered message count SHALL be configurable (`PROGRESS_FLUSH_MAX_MESSAGES`, default 50). The maximum buffered character count SHALL be configurable (`PROGRESS_FLUSH_MAX_CHARS`, default 16,384). An interval of 0 SHALL persist every message as it arrives.
+The leading-edge and threshold rules apply only while the producer is not in retry backoff after a failed in-run flush. See "Progress persistence failures do not fail the task".
+
+The flush interval SHALL be configurable (`PROGRESS_FLUSH_INTERVAL_MS`, default 500 ms). The message flush threshold SHALL be configurable (`PROGRESS_FLUSH_MESSAGE_THRESHOLD`, default 50). The character flush threshold SHALL be configurable (`PROGRESS_FLUSH_CHAR_THRESHOLD`, default 16,384). An interval of 0 SHALL persist every message as it arrives.
+
+The two thresholds trigger flushes. They are not limits on the buffer's size. The only hard bound on the buffer is that its log text SHALL never exceed the 50,000-character provisioning-log cap. That bound holds in every mode, including retry backoff. Because each buffered message adds at least one newline to the log text, the cap also bounds how many messages the buffer can hold. There is no separate message-count maximum. The one item held outside that text is the pending status message, which is the single most recently recorded message.
 
 #### Scenario: Burst of many lines under a deterministic clock
 - **WHEN** a producer records N progress messages of at most 100 characters each over T seconds of clock time, with the default settings
@@ -123,7 +127,7 @@ Each task execution SHALL start with an empty progress buffer. When an attempt e
 
 A failure to persist a progress batch SHALL be logged and SHALL NOT raise into the Terraform, SSH, startup-script or Ansible work that produced it, nor fail the attempt. Flushes fall into two classes with different failure handling:
 
-- **In-run flushes** are the leading-edge flush of the first message after a quiet period, the trailing (interval) flush, and the size-triggered flush. When one of these fails, the batch SHALL remain buffered in recording order. Messages recorded afterwards SHALL be appended behind it, and the buffered log text SHALL stay bounded by the 50,000-character log cap. The retained batch SHALL be retried by a trailing flush no sooner than one flush interval after the failure, even if no further message arrives. Reaching a size threshold SHALL NOT trigger an extra attempt before then, so an unavailable database is retried at most once per flush interval per producer.
+- **In-run flushes** are the leading-edge flush of the first message after a quiet period, the trailing (interval) flush, and the threshold-triggered flush. When one of these fails, the batch SHALL remain buffered in recording order. Messages recorded afterwards SHALL be appended behind it, and the buffered log text SHALL stay bounded by the 50,000-character log cap. The retained batch SHALL be retried by a trailing flush no sooner than one flush interval after the failure, even if no further message arrives. Reaching a flush threshold SHALL NOT trigger an extra attempt before then, so an unavailable database is retried at most once per flush interval per producer.
 - **Barrier flushes** are the flush before a lifecycle write and the flush at attempt end. When one of these fails, the buffered batch SHALL be discarded with a logged warning, and the lifecycle write SHALL still be attempted, so a failed flush can never be applied after the lifecycle outcome.
 
 Publishing the progress notification SHALL happen only after a successful flush.
@@ -137,8 +141,9 @@ Publishing the progress notification SHALL happen only after a successful flush.
 - **THEN** the message is kept in the buffer rather than dropped, the error is logged, and it is retried by a trailing flush one flush interval later, together with any messages recorded meanwhile, in order
 
 #### Scenario: Database stays unavailable during continuous output
-- **WHEN** in-run flushes keep failing while a producer records output well beyond the size thresholds
+- **WHEN** in-run flushes keep failing while a producer records output well beyond the flush thresholds
 - **THEN** persist attempts happen at most once per flush interval, and the buffered log text never exceeds 50,000 characters
+- **AND** the buffer may hold more than 50 messages and more than 16,384 characters, since the thresholds are not buffer limits
 
 #### Scenario: Barrier flush fails
 - **WHEN** the flush before a READY transition fails
@@ -152,14 +157,14 @@ Publishing the progress notification SHALL happen only after a successful flush.
 
 A handled exception inside an attempt SHALL pass through the pre-lifecycle flush. If the worker is killed without running handlers (SIGKILL, out-of-memory kill, container or host loss), only progress recorded since the producer's last successful commit MAY be lost. The loss bound depends on how the producer was operating:
 
-- **Normal operation**, where the producer's in-run flushes are succeeding: the lost tail SHALL be at most the output recorded within one flush interval, and at most the maximum buffered message count and character count. The one exception is a single message larger than the character limit, which is being flushed on its own and is itself capped at 50,000 characters.
+- **Normal operation**, where the producer's in-run flushes are succeeding: the lost tail SHALL be at most the output recorded within one flush interval, and below the message and character flush thresholds, since reaching either triggers a flush. The one exception is a single message larger than the character flush threshold, which is being flushed on its own and is itself capped at 50,000 characters.
 - **Degraded operation**, after one or more in-run flushes have failed and their batches are being retained for retry: the lost tail is not bounded in time. It SHALL be at most 50,000 characters of provisioning-log text (the log cap that bounds the buffer), plus the pending status message.
 
 The system SHALL NOT claim that buffered progress survives a hard kill. Both bounds SHALL be documented in the administrator guide.
 
 #### Scenario: Worker killed mid-burst in normal operation
 - **WHEN** the worker process is killed with SIGKILL while a producer whose flushes have been succeeding has buffered progress
-- **THEN** the provisioning log holds everything committed before the kill, and the missing tail is at most the output of one flush interval, within the buffer limits
+- **THEN** the provisioning log holds everything committed before the kill, and the missing tail is at most the output of one flush interval, below the flush thresholds
 
 #### Scenario: Worker killed while flushes are failing
 - **WHEN** in-run flushes have been failing for several intervals and the worker process is then killed with SIGKILL
