@@ -1,6 +1,6 @@
 ## 1. Dependency selection and update
 
-- [ ] 1.1 FastAPI 0.116.2 resolves to Starlette 0.48.0, within its published `>=0.40,<0.49` range and excluding `0.46.2`; OSC acceptance still needs confirmation from the OSC environment.
+- [x] 1.1 FastAPI 0.116.2 resolves to Starlette 0.48.0, within its published `>=0.40,<0.49` range and excluding `0.46.2`; the review confirmed OSC accepted the resolved artifact without errors.
 - [x] 1.2 Updated the FastAPI constraint and replaced the obsolete route-representation comment.
 - [x] 1.3 No Python lock or generated dependency artifact is maintained. A clean `requirements-dev.txt` install resolves without conflicts.
 
@@ -13,4 +13,4 @@
 ## 3. Verification
 
 - [x] 3.1 The fast backend suite (1,160 tests) and PostgreSQL integration suite both pass in PR CI.
-- [ ] 3.2 The clean Docker image build remains pending because this environment has no Docker engine or socket.
+- [x] 3.2 The external clean Docker image build completed successfully (confirmed in PR review on 2026-09-30).
