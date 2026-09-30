@@ -1,7 +1,8 @@
 """Tests for the dedicated provisioning/teardown log view (#378).
 
-`sync_record_progress` sets the compact status_message and appends to the capped
-provisioning_log in one commit. GET /bookings/{id}/log is a new HTML page, owner/admin-gated
+`sync_append_progress` sets the compact status_message and appends a batch of progress lines to
+the capped provisioning_log in one atomic UPDATE + commit (#444; its SQL semantics are covered by
+tests/integration/test_progress_append.py). GET /bookings/{id}/log is a new HTML page, owner/admin-gated
 exactly like the existing GET /bookings/{id}/audit page.
 """
 from datetime import datetime, timedelta, timezone
@@ -55,62 +56,92 @@ def _make_booking_model(status: str = "PROVISIONING", provisioning_log=None):
     )
 
 
-# ── sync_record_progress ──────────────────────────────────────────────────────
-def test_sync_record_progress_updates_status_message_and_log():
+# ── sync_append_progress ──────────────────────────────────────────────────────
+def _append_session(row=("owner-1", "disp-1", None)):
     from sqlalchemy.orm import Session
 
-    model = _make_booking_model()
     session = MagicMock(spec=Session)
-    session.get.return_value = model
+    result = MagicMock()
+    result.one_or_none.return_value = (
+        None if row is None
+        else MagicMock(user_id=row[0], created_by=row[1], environment_id=row[2])
+    )
+    session.execute.return_value = result
+    return session
 
-    repo = BookingRepository()
-    repo.sync_record_progress(session, model.id, "line one")
 
-    assert model.status_message == "line one"
-    assert model.provisioning_log == "line one\n"
+def _compiled(stmt) -> str:
+    from sqlalchemy.dialects import postgresql
+    return str(stmt.compile(dialect=postgresql.dialect()))
+
+
+def test_sync_append_progress_is_one_atomic_update_and_one_commit():
+    from app.domain.booking_status import PROVISIONING_PROGRESS_STATUSES
+
+    session = _append_session()
+    with patch("app.infrastructure.repositories.booking_repo.publish_progress_changed"):
+        BookingRepository().sync_append_progress(
+            session, uuid4(), "a\nb\n", "b", PROVISIONING_PROGRESS_STATUSES,
+        )
+    session.execute.assert_called_once()
+    session.get.assert_not_called()          # no load-modify-commit
     session.commit.assert_called_once()
+    sql = _compiled(session.execute.call_args.args[0])
+    assert sql.startswith("UPDATE bookings SET")
+    assert "right(coalesce(bookings.provisioning_log" in sql
+    assert "CASE WHEN (bookings.status IN" in sql
+    assert "RETURNING" in sql
 
 
-def test_sync_record_progress_appends_across_calls():
-    from sqlalchemy.orm import Session
+def test_sync_append_progress_publishes_after_commit_with_returned_routing():
+    from app.domain.booking_status import TEARDOWN_PROGRESS_STATUSES
+    from app.infrastructure.events import Routing
 
-    model = _make_booking_model(provisioning_log="line one\n")
-    session = MagicMock(spec=Session)
-    session.get.return_value = model
-
-    repo = BookingRepository()
-    repo.sync_record_progress(session, model.id, "line two")
-
-    assert model.status_message == "line two"
-    assert model.provisioning_log == "line one\nline two\n"
-
-
-def test_sync_record_progress_caps_at_50000_chars_keeping_tail():
-    from sqlalchemy.orm import Session
-
-    # Pre-existing log already at the cap, made of a distinguishable head/tail.
-    existing = "HEAD" + ("x" * 49_990) + "TAIL"
-    model = _make_booking_model(provisioning_log=existing)
-    session = MagicMock(spec=Session)
-    session.get.return_value = model
-
-    repo = BookingRepository()
-    repo.sync_record_progress(session, model.id, "new-line")
-
-    assert len(model.provisioning_log) == 50_000
-    assert model.provisioning_log.endswith("new-line\n")
-    assert "HEAD" not in model.provisioning_log  # oldest content trimmed from the front
+    env_id = uuid4()
+    session = _append_session(("owner-1", "disp-1", env_id))
+    order = []
+    session.commit.side_effect = lambda: order.append("commit")
+    booking_id = uuid4()
+    with patch(
+        "app.infrastructure.repositories.booking_repo.publish_progress_changed",
+        side_effect=lambda **kw: order.append(("publish", kw)),
+    ):
+        BookingRepository().sync_append_progress(session, booking_id, "x\n", "x", TEARDOWN_PROGRESS_STATUSES)
+    assert order == ["commit", ("publish", {
+        "booking_id": booking_id,
+        "booking_routing": Routing(owner_id="owner-1", created_by="disp-1"),
+        "environment_id": env_id,
+    })]
 
 
-def test_sync_record_progress_raises_for_missing_booking():
-    from sqlalchemy.orm import Session
+def test_sync_append_progress_does_not_publish_when_commit_fails():
+    from app.domain.booking_status import PROVISIONING_PROGRESS_STATUSES
 
-    session = MagicMock(spec=Session)
-    session.get.return_value = None
+    session = _append_session()
+    session.commit.side_effect = RuntimeError("db down")
+    with (
+        patch("app.infrastructure.repositories.booking_repo.publish_progress_changed") as publish,
+        pytest.raises(RuntimeError),
+    ):
+        BookingRepository().sync_append_progress(
+            session, uuid4(), "x\n", "x", PROVISIONING_PROGRESS_STATUSES,
+        )
+    publish.assert_not_called()
 
-    repo = BookingRepository()
-    with pytest.raises(BookingNotFoundError):
-        repo.sync_record_progress(session, uuid4(), "msg")
+
+def test_sync_append_progress_raises_for_missing_booking():
+    from app.domain.booking_status import PROVISIONING_PROGRESS_STATUSES
+
+    session = _append_session(row=None)
+    with (
+        patch("app.infrastructure.repositories.booking_repo.publish_progress_changed") as publish,
+        pytest.raises(BookingNotFoundError),
+    ):
+        BookingRepository().sync_append_progress(
+            session, uuid4(), "msg\n", "msg", PROVISIONING_PROGRESS_STATUSES,
+        )
+    session.commit.assert_not_called()
+    publish.assert_not_called()
 
 
 # ── GET /bookings/{id}/log ────────────────────────────────────────────────────

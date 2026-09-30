@@ -135,6 +135,16 @@ The spec, proposal and admin guide state both bounds with the same wording. Cele
 
 It counts commits with a SQLAlchemy `after_commit` listener, records the total wall time spent inside `persist`, and asserts that the batched commit count is at most `ceil(10/0.5) + ceil(2000/50) + 2` and that the final logs are equal. The test prints the numbers. They go in the code PR description, and the table in design.md is updated before archive.
 
+Measured on 2026-09-30 against the local Postgres 16 test container (port 5433), same burst each time:
+
+| Path | Commits | DB time |
+|---|---|---|
+| Pre-#444 `sync_record_progress` (baseline, `main`) | 2,000 | 18.0 s |
+| New path, `PROGRESS_FLUSH_INTERVAL_MS=0` | 2,000 | 13.6 s |
+| New path, defaults (500 ms / 50 msgs / 16,384 chars) | 41 | 0.26 s |
+
+With these 3-line (~245-character) snapshots arriving every 5 ms, the 50-message threshold is what triggers each flush: 40 threshold flushes plus the leading edge. The final barrier had nothing left to flush. The interval-0 row is faster than the baseline because the atomic `UPDATE … RETURNING` replaces a SELECT, an ORM flush and a Python-side rewrite of a log that grows towards 50,000 characters.
+
 ## Risks / Trade-offs
 
 - [The timer thread runs `persist` concurrently with Terraform/SSH on the task thread] → Each flush opens its own `SyncSessionLocal`, so connections are not shared. The coalescer already runs publishes from timer threads in the same process, so there is precedent.

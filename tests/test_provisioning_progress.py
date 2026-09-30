@@ -96,13 +96,15 @@ def _run_provision(booking_id, image_id, hw_config_id, *, terraform_apply_side_e
 
 
 def test_provision_task_on_progress_called_and_cleared():
-    """on_progress writes go through sync_record_progress (#378), not sync_set_status_message;
-    the terminal clear-to-None call is unchanged."""
+    """on_progress writes go through the batched sync_append_progress (#378, #444), not
+    sync_set_status_message; the terminal clear-to-None call is unchanged."""
+    from app.domain.booking_status import PROVISIONING_PROGRESS_STATUSES
+
     booking_id = str(uuid4())
     mock_repo = _run_provision(booking_id, str(uuid4()), str(uuid4()))
 
-    progress_calls = [c.args[2] for c in mock_repo.sync_record_progress.call_args_list]
-    assert "Provisioning (stub mode)…" in progress_calls
+    progress_calls = [c.args[2:] for c in mock_repo.sync_append_progress.call_args_list]
+    assert ("Provisioning (stub mode)…\n", "Provisioning (stub mode)…", PROVISIONING_PROGRESS_STATUSES) in progress_calls
 
     msg_calls = [c.args[2] for c in mock_repo.sync_set_status_message.call_args_list]
     assert None in msg_calls  # cleared on success
@@ -165,12 +167,14 @@ def _run_teardown(booking_id, *, terraform_destroy_side_effect=None):
 
 
 def test_teardown_task_on_progress_called_and_cleared():
-    """Teardown on_progress writes go through sync_record_progress (#378), not
+    """Teardown on_progress writes go through the batched sync_append_progress (#378, #444), not
     sync_set_status_message; the terminal clear-to-None call is unchanged."""
+    from app.domain.booking_status import TEARDOWN_PROGRESS_STATUSES
+
     mock_repo = _run_teardown(str(uuid4()))
 
-    progress_calls = [c.args[2] for c in mock_repo.sync_record_progress.call_args_list]
-    assert "Destroying (stub mode)…" in progress_calls
+    progress_calls = [c.args[2:] for c in mock_repo.sync_append_progress.call_args_list]
+    assert ("Destroying (stub mode)…\n", "Destroying (stub mode)…", TEARDOWN_PROGRESS_STATUSES) in progress_calls
 
     msg_calls = [c.args[2] for c in mock_repo.sync_set_status_message.call_args_list]
     assert None in msg_calls

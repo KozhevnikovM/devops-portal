@@ -33,6 +33,14 @@ LIVE_CHILD_STATUSES: frozenset[BookingStatus] = frozenset(
     if s not in {BookingStatus.RELEASED, BookingStatus.RELEASING, BookingStatus.FAILED}
 )
 
+# Statuses in which a producer's progress output may still set the booking's status message (#444).
+# Outside them a late progress batch is appended to the log only, so it can never overwrite a
+# lifecycle outcome (READY/FAILED/RETRY/config-error, or teardown's own message after a release).
+PROVISIONING_PROGRESS_STATUSES: frozenset[BookingStatus] = frozenset(
+    {BookingStatus.PROVISIONING, BookingStatus.CONFIGURING}
+)
+TEARDOWN_PROGRESS_STATUSES: frozenset[BookingStatus] = frozenset({BookingStatus.RELEASING})
+
 ALLOWED_TRANSITIONS: dict[BookingStatus, set[BookingStatus]] = {
     BookingStatus.QUEUED:       {BookingStatus.READY, BookingStatus.RELEASED},
     BookingStatus.PENDING:      {BookingStatus.PROVISIONING, BookingStatus.FAILED, BookingStatus.RELEASING,

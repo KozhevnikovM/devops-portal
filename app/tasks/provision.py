@@ -9,12 +9,14 @@ import redis as redis_lib
 
 from app.application.ports import SyncBookingRepositoryPort
 from app.config import settings
+from app.domain.booking_status import PROVISIONING_PROGRESS_STATUSES
 from app.domain.enums import BookingStatus
 from app.domain.exceptions import SecretDecryptionError
 from app.infrastructure import provisioning_lock
 from app.infrastructure.celery_app import celery_app
 from app.infrastructure.database.session import SyncSessionLocal
 from app.infrastructure.logging_config import request_id_ctx_var
+from app.infrastructure.progress_recorder import ProgressRecorder, recorder_from_settings
 from app.infrastructure.repositories.booking_repo import BookingRepository
 from app.infrastructure.repositories.environment_repo import EnvironmentRepository
 from app.infrastructure.repositories.image_repo import ImageRepository
@@ -106,6 +108,17 @@ def provision_vm_task(
         lock_key = None
         redis_client = None
         api_token = None
+        # Progress output is buffered and persisted in batches (#444). One recorder per execution
+        # (a Celery retry is a new execution), closed in the `finally` below so nothing buffered
+        # by this attempt is ever written after it returns.
+        recorder: ProgressRecorder | None = None
+
+        def _lifecycle(work):
+            """A lifecycle write: first flush buffered progress (a barrier), so a buffered line can
+            never land after — and overwrite — the status message/transition written here."""
+            if recorder is not None:
+                recorder.flush()
+            return _run(work)
 
         if use_semaphore:
             redis_client = redis_lib.Redis.from_url(settings.REDIS_URL)
@@ -148,11 +161,18 @@ def provision_vm_task(
                 _run(lambda s: repo.sync_update_status(s, booking_uuid, BookingStatus.PROVISIONING))
                 logger.info("Provisioning started for booking %s", booking_id)
 
+                recorder = recorder_from_settings(
+                    # Each flush gets its own short-lived session/connection; none is held between.
+                    lambda chunk, last: _run(lambda s: repo.sync_append_progress(
+                        s, booking_uuid, chunk, last, PROVISIONING_PROGRESS_STATUSES,
+                    )),
+                    label=booking_id,
+                )
+
                 def _on_progress(msg: str) -> None:
                     if redis_client and lock_key:
                         redis_client.expire(lock_key, settings.VCD_TOKEN_LOCK_TTL)
-                    # Each progress write gets its own short-lived session/connection.
-                    _run(lambda s: repo.sync_record_progress(s, booking_uuid, msg))
+                    recorder.record(msg)
 
                 # A provisioning-lock marker is held for the duration of the apply so
                 # teardown_vm_task (dispatched if this booking gets released mid-flight) never
@@ -170,7 +190,7 @@ def provision_vm_task(
                     if lock_client:
                         provisioning_lock.release(lock_client, booking_id)
                 ip = result["ip"]
-                _run(lambda s: repo.sync_set_status_message(s, booking_uuid, None))
+                _lifecycle(lambda s: repo.sync_set_status_message(s, booking_uuid, None))
 
                 # ── Post-provision: wait for SSH reachability, then run the startup script ──
                 # Two distinct outcomes: an unreachable VM is an infra failure (raises → FAILED); a
@@ -183,12 +203,13 @@ def provision_vm_task(
                         "Booking %s was released while its terraform apply was in flight — "
                         "handing off to teardown instead of configuring", booking_id,
                     )
+                    recorder.close()
                     teardown_vm_task.delay(booking_id, request_id=request_id)
                     return
                 config_failed = False
                 config_message = None
                 if not settings.USE_STUB_TERRAFORM:
-                    _run(lambda s: repo.sync_update_status(
+                    _lifecycle(lambda s: repo.sync_update_status(
                         s, booking_uuid, BookingStatus.CONFIGURING, vm_ip=ip, vm_password=vm_password
                     ))
                     _on_progress(f"Waiting for {ip} to become reachable…")
@@ -213,16 +234,16 @@ def provision_vm_task(
                         logger.warning("Configuration failed for booking %s: %s", booking_id, cfg_exc)
                     finally:
                         config_runner.close(client)
-                    _run(lambda s: repo.sync_set_status_message(s, booking_uuid, config_message))
+                    _lifecycle(lambda s: repo.sync_set_status_message(s, booking_uuid, config_message))
 
-                _run(lambda s: repo.sync_update_status(
+                _lifecycle(lambda s: repo.sync_update_status(
                     s, booking_uuid, BookingStatus.READY,
                     vm_ip=ip, vm_password=vm_password, config_failed=config_failed,
                     start_lease=True,  # #223 — the lease starts now that the VM is usable
                 ))
                 # If this VM is part of an environment, the lease for the whole stack starts once
                 # every child has settled — the last one to settle stamps the environment + children.
-                _run(lambda s: env_repo.sync_start_lease_if_ready_for_booking(s, booking_uuid))
+                _lifecycle(lambda s: env_repo.sync_start_lease_if_ready_for_booking(s, booking_uuid))
                 logger.info(
                     "Provisioning complete for booking %s — IP: %s (config_failed=%s)",
                     booking_id, ip, config_failed,
@@ -233,10 +254,10 @@ def provision_vm_task(
                 # Do not retry; retries would all fail identically and delay the failure signal.
                 logger.error("Secret decryption failed for booking %s (not retrying): %s", booking_id, exc)
                 try:
-                    _run(lambda s: repo.sync_set_status_message(s, booking_uuid, f"Secret decryption failed: {exc}"))
-                    _run(lambda s: repo.sync_update_status(s, booking_uuid, BookingStatus.FAILED))
+                    _lifecycle(lambda s: repo.sync_set_status_message(s, booking_uuid, f"Secret decryption failed: {exc}"))
+                    _lifecycle(lambda s: repo.sync_update_status(s, booking_uuid, BookingStatus.FAILED))
                     # A failed child has settled — it must not hold its environment's lease back (#434).
-                    _run(lambda s: env_repo.sync_start_lease_if_ready_for_booking(s, booking_uuid))
+                    _lifecycle(lambda s: env_repo.sync_start_lease_if_ready_for_booking(s, booking_uuid))
                 except Exception:
                     pass
                 return
@@ -245,15 +266,17 @@ def provision_vm_task(
                 is_last_attempt = self.request.retries >= self.max_retries
                 new_status = BookingStatus.FAILED if is_last_attempt else BookingStatus.RETRY
                 try:
-                    _run(lambda s: repo.sync_set_status_message(s, booking_uuid, "Failed — see audit log"))
-                    _run(lambda s: repo.sync_update_status(s, booking_uuid, new_status))
+                    _lifecycle(lambda s: repo.sync_set_status_message(s, booking_uuid, "Failed — see audit log"))
+                    _lifecycle(lambda s: repo.sync_update_status(s, booking_uuid, new_status))
                     if new_status == BookingStatus.FAILED:
                         # Final failure: the child has settled — start the env lease if due (#434).
-                        _run(lambda s: env_repo.sync_start_lease_if_ready_for_booking(s, booking_uuid))
+                        _lifecycle(lambda s: env_repo.sync_start_lease_if_ready_for_booking(s, booking_uuid))
                 except Exception:
                     pass
                 raise self.retry(exc=exc)
         finally:
+            if recorder is not None:
+                recorder.close()
             if redis_client and lock_key:
                 redis_client.delete(lock_key)
                 logger.info("Released token lock %s for booking %s", lock_key, booking_id)

@@ -87,7 +87,10 @@ inspected with `docker inspect <container-id>`.
 | `ENVIRONMENTS_PAGE_SIZE` | No | Environments shown per page on the browser **Environments** page, and appended per **Load more** click (keyset pagination, #467). Must be > 0. Server-side only — it isn't a query parameter. The JSON environments list isn't paginated. Default: `50` |
 | `BOOKINGS_PAGE_SIZE` | No | Bookings shown per page on the browser **VM** and **Namespace** booking pages, and appended per **Load more** click (keyset pagination, #479). Must be > 0. Server-side only — it isn't a query parameter. Each page reads a bounded number of rows regardless of booking history. The JSON bookings list isn't paginated. Default: `50` |
 | `BOOKINGS_LABEL_SCAN_SIZE` | No | How many bookings one label-filtered page examines on the **VM** and **Namespace** booking pages (#485). The label filter is a substring match, which no index can serve in page order, so each request looks at most this many bookings of the page's Mine/All, type and released range, and shows the ones whose label matches. When a rare label fills less than a page, the list offers **Search older bookings** to continue. Raising it means fewer clicks for rare labels but more work per request, at most about 4 × this many index entries plus this many row lookups. Must be greater than `BOOKINGS_PAGE_SIZE`, or the app refuses to start. Default: `200` |
-| `SSE_PROGRESS_COALESCE_MS` | No | Live-update throttle for provisioning/teardown progress output. A booking's progress lines (Ansible, startup script, SSH wait) produce at most one live row update per this many milliseconds, plus one final update after a burst ends so the last line always shows. Status changes (READY, FAILED, RELEASED, …) are never throttled. Every line is still saved to the provisioning log. `0` disables throttling (one update per line). Read when the worker starts, so restart `worker` after changing it. Default: `750` |
+| `SSE_PROGRESS_COALESCE_MS` | No | Live-update throttle for provisioning/teardown progress output. A booking's progress lines (Ansible, startup script, SSH wait) produce at most one live row update per this many milliseconds, plus one final update after a burst ends so the last line always shows. Status changes (READY, FAILED, RELEASED, …) are never throttled. Every line is still saved to the provisioning log, in batches (see `PROGRESS_FLUSH_INTERVAL_MS`). Each saved batch triggers at most one update, still throttled by this setting. `0` disables throttling (one update per saved batch). Read when the worker starts, so restart `worker` after changing it. Default: `750` |
+| `PROGRESS_FLUSH_INTERVAL_MS` | No | How often provisioning/teardown progress output is saved to the database (#444). The first line after a quiet spell is saved at once. Lines arriving within this many milliseconds after a save are held in memory and saved together, even if nothing else arrives, so a line waits at most this long in normal operation. Must be ≥ 0. `0` saves every line as it arrives (one commit per line, the pre-#444 behaviour). Use it as an in-place rollback lever. If a save fails, retries still wait at least 500 ms, so a database outage never causes a tight retry loop. See [How progress output is saved](#how-progress-output-is-saved) for failure and crash behaviour. Restart `worker` after changing it. Default: `500` |
+| `PROGRESS_FLUSH_MESSAGE_THRESHOLD` | No | Flush threshold, not a buffer limit: once this many progress lines are waiting, they are saved immediately instead of at the end of the interval. Must be ≥ 1. Restart `worker` after changing it. Default: `50` |
+| `PROGRESS_FLUSH_CHAR_THRESHOLD` | No | Flush threshold, not a buffer limit: once this many characters of progress output are waiting, they are saved immediately. Must be ≥ 1. The only hard limit on what a task holds in memory is the 50,000-character log cap (see below). Restart `worker` after changing it. Default: `16384` |
 
 ---
 
@@ -1066,6 +1069,36 @@ the rest of the row down), and a **"View full log ↗"** link opens `/bookings/{
 tab whenever the booking has one: the full accumulated Terraform/Ansible provisioning-and-teardown
 output (capped at the last 50,000 characters), as opposed to the audit page's structured
 status-transition timeline. Same owner-or-admin access as the audit page.
+
+#### How progress output is saved
+
+Progress output (Terraform, SSH-wait, startup-script and Ansible lines) is written to the booking in
+batches rather than one database commit per line (#444). The log and the row's status message end up
+exactly as saving each line individually would leave them: same lines, same order, repeated lines
+kept. A noisy playbook therefore costs a few commits per second instead of one per output line.
+
+- **Freshness.** The first line after a quiet spell is saved immediately. Later lines are saved
+  together at most `PROGRESS_FLUSH_INTERVAL_MS` (default 500 ms) after the previous save, or
+  immediately once `PROGRESS_FLUSH_MESSAGE_THRESHOLD` lines or `PROGRESS_FLUSH_CHAR_THRESHOLD`
+  characters are waiting. A task that goes quiet still has its last line saved within one interval.
+- **Status changes always come after the output that preceded them.** Before the worker writes a
+  status or status message (READY, FAILED, RETRY, a configuration error, …), it saves any waiting
+  progress first. Progress saved late never overwrites that outcome. Output is still appended to the
+  log, but the status message is only set while the booking is provisioning/configuring
+  (provisioning output) or releasing (teardown output).
+- **Size caps.** The log keeps its last 50,000 characters, as before. A progress line's status
+  message is also cut to its last 50,000 characters. This only affects a single output line longer
+  than that, which used to be stored in full. These two caps also bound what one task can hold in
+  memory: at most 50,000 characters of waiting log text plus a 50,000-character status message.
+- **If the database can't be reached** while progress is being saved, the task is not failed. The
+  error is logged, the waiting output is kept (within the caps) and retried at most once per
+  `max(PROGRESS_FLUSH_INTERVAL_MS, 500 ms)`. If the save made just before a status change fails, the
+  waiting output is dropped with a warning so it can never land after the status change.
+- **If the worker is killed** (SIGKILL, out-of-memory kill, container or host loss), the output
+  waiting in memory is lost. Everything saved before that stays in the log. In normal operation the
+  loss is at most one flush interval of output, below the flush thresholds. If saves were already
+  failing when the worker died, it is at most 50,000 characters of log text plus the pending status
+  message. A handled error (including a Celery soft time limit) always saves waiting output first.
 
 ---
 

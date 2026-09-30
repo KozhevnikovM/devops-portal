@@ -207,7 +207,7 @@ def test_sync_update_status_no_publish_on_illegal_transition(mock_row_changed_pu
     sync_mock.assert_not_called()
 
 
-# ── sync_set_status_message / sync_record_progress ──────────────────────────────
+# ── sync_set_status_message / sync_append_progress ─────────────────────────────
 def test_sync_set_status_message_publishes(mock_row_changed_publish, env_lookup):
     from app.infrastructure.repositories.booking_repo import BookingRepository
     sync_mock, _ = mock_row_changed_publish
@@ -220,14 +220,20 @@ def test_sync_set_status_message_publishes(mock_row_changed_publish, env_lookup)
     sync_mock.assert_called_once_with(**_lifecycle(model.id, env_id, ENV_ROUTING))
 
 
-def test_sync_record_progress_publishes_coalesced_progress(mock_row_changed_publish, env_lookup):
+def test_sync_append_progress_publishes_coalesced_progress(mock_row_changed_publish, env_lookup):
+    from app.domain.booking_status import PROVISIONING_PROGRESS_STATUSES
     from app.infrastructure.repositories.booking_repo import BookingRepository
     sync_mock, _ = mock_row_changed_publish
     env_id = uuid4()
     model = _model(environment_id=env_id)
-    session = MagicMock(); session.get.return_value = model
+    session = MagicMock()
+    session.execute.return_value.one_or_none.return_value = MagicMock(
+        user_id=model.user_id, created_by=model.created_by, environment_id=env_id,
+    )
 
-    BookingRepository().sync_record_progress(session, model.id, "log line")
+    BookingRepository().sync_append_progress(
+        session, model.id, "log line\n", "log line", PROVISIONING_PROGRESS_STATUSES,
+    )
 
     # Progress goes through the coalesced path (#440), never the immediate lifecycle one — and
     # never pays for the environment routing lookup: it doesn't refresh the environment row (#442).
