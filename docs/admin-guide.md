@@ -63,6 +63,7 @@ inspected with `docker inspect <container-id>`.
 | `SESSION_TTL` | No | Browser session lifetime in seconds. Default: `86400` (24 h) |
 | `SESSION_COOKIE_SECURE` | No | Send the `session_id` cookie only over HTTPS. Default: `true`. Set `false` only for local development over plain `http://localhost`. |
 | `BASE_URL` | No | Canonical origin the browser uses to reach the portal (scheme + host, no trailing slash). Used by the CSRF origin check to reject requests from foreign origins. Default: `http://localhost:8000`. **Must be set in production** (e.g. `https://dp.my-domain.com`). |
+| `BCRYPT_MAX_CONCURRENCY` | No | Most password hash/verify operations (login, user creation, password reset/change) that run at once in one app process (#493). They run on a dedicated thread pool so they never stall other requests; work beyond the limit waits its turn rather than failing, holding no database connection while it waits. The limit applies **per process**: with `N` uvicorn workers the host runs up to `N ×` this many at once, so size it so that doesn't exceed the cores you want to spend on logins. Must be greater than `0`, or the app refuses to start. Default: the number of CPUs available to the process. |
 | `APP_WORKERS` | No | Number of uvicorn worker processes. Default: `2`. Only applies when using `docker-compose.prod.yml` (the dev file uses `--reload` which is single-process). |
 | `DEFAULT_QUOTA_CPUS` | No | Default CPU core quota per user. Default: `16` |
 | `DEFAULT_QUOTA_MEMORY_GB` | No | Default memory quota per user in GB. Default: `32` |

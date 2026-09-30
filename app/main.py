@@ -2,7 +2,6 @@ import asyncio
 import logging
 from contextlib import asynccontextmanager
 
-import bcrypt
 import redis.asyncio as aioredis
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -13,6 +12,7 @@ from sqlalchemy import text
 from app.config import settings
 from app.infrastructure.database.session import AsyncSessionLocal, SyncSessionLocal
 from app.infrastructure.logging_config import configure_logging
+from app.infrastructure.passwords import hash_password_blocking, shutdown_executor
 from app.infrastructure.repositories.booking_repo import BookingRepository
 from app.infrastructure.repositories.user_repo import UserRepository
 from app.presentation.middleware.correlation_id import CorrelationIdMiddleware
@@ -47,6 +47,7 @@ async def lifespan(app: FastAPI):
     _recover_in_progress_bookings()
     _recover_stuck_releases()
     yield
+    shutdown_executor()
 
 
 def _seed_admin_user() -> None:
@@ -67,7 +68,8 @@ def _seed_admin_user() -> None:
         else:
             effective_pw = settings.ADMIN_PASSWORD
 
-        pw_hash = bcrypt.hashpw(effective_pw.encode(), bcrypt.gensalt()).decode()
+        # Startup, before serving: hashing on this thread blocks nothing.
+        pw_hash = hash_password_blocking(effective_pw)
         repo.sync_create(session, settings.ADMIN_USERNAME, pw_hash, "admin")
         logger.info("seeded admin user '%s'", settings.ADMIN_USERNAME)
 

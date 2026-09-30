@@ -32,6 +32,10 @@ class Settings(BaseSettings):
     # no trailing slash). Used by CSRFOriginMiddleware to reject requests from foreign origins.
     # Must match the URL in the browser's address bar (e.g. https://dp.my-domain.com).
     BASE_URL: str = "http://localhost:8000"
+    # Max bcrypt hash/verify operations running at once in this process (#493). They run on a
+    # dedicated thread pool off the event loop; work beyond this waits for a free slot. Unset =
+    # the number of CPUs available to the process. Per process: N uvicorn workers → N × this.
+    BCRYPT_MAX_CONCURRENCY: int | None = Field(None, gt=0)
 
     # Per-user resource quotas (defaults applied when no per-user row exists)
     DEFAULT_QUOTA_CPUS: int = 16

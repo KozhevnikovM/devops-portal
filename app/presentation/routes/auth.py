@@ -3,7 +3,6 @@ import secrets
 from uuid import UUID
 from zoneinfo import available_timezones
 
-import bcrypt
 import redis.asyncio as aioredis
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
@@ -15,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.infrastructure.auth import VALID_ROLES, require_admin, require_user
 from app.infrastructure.database.session import get_async_session
+from app.infrastructure.passwords import DUMMY_PASSWORD_HASH, hash_password, verify_password
 from app.domain.entities import User
 from app.presentation import deps as _deps
 from app.presentation.templating import templates
@@ -31,6 +31,22 @@ def _get_redis() -> aioredis.Redis:
     return aioredis.from_url(settings.REDIS_URL, decode_responses=True)
 
 
+# Password work (#493) runs off the event loop but can still wait hundreds of ms, longer under a
+# login burst when it queues for a bcrypt slot. Routes call it only through these wrappers, which
+# first commit the request session: that ends any open read transaction — including the one
+# `require_user`/`require_admin` opened on this same, dependency-cached session — so the pooled
+# DB connection goes back to the pool for the whole wait. A no-op when nothing is open. Nothing
+# is written before a password await today; keep it that way, or this would commit that write.
+async def _hash(session: AsyncSession, password: str) -> str:
+    await session.commit()
+    return await hash_password(password)
+
+
+async def _verify(session: AsyncSession, password: str, password_hash: str) -> bool:
+    await session.commit()
+    return await verify_password(password, password_hash)
+
+
 async def _invalidate_user_sessions(
     r: aioredis.Redis,
     user_id: str,
@@ -44,11 +60,6 @@ async def _invalidate_user_sessions(
     if keep_session_id:
         await r.sadd(f"user_sessions:{user_id}", keep_session_id)
         await r.expire(f"user_sessions:{user_id}", settings.SESSION_TTL)
-
-
-# A fixed dummy hash (same cost factor as real hashes) compared on the username-miss path so
-# login spends the same bcrypt time whether or not the user exists — closes the timing oracle (#146).
-_DUMMY_PASSWORD_HASH = bcrypt.hashpw(b"timing-equalizer", bcrypt.gensalt()).decode()
 
 
 # ── Login / Logout ────────────────────────────────────────────────────────────
@@ -68,8 +79,8 @@ async def login(
     user = await _user_repo.get_by_username(session, username)
     # Always run one bcrypt comparison (against a dummy hash when the user is missing) so the
     # response time doesn't reveal whether the username exists.
-    password_hash = user.password_hash if user else _DUMMY_PASSWORD_HASH
-    password_ok = bcrypt.checkpw(password.encode(), password_hash.encode())
+    password_hash = user.password_hash if user else DUMMY_PASSWORD_HASH
+    password_ok = await _verify(session, password, password_hash)
     if not user or not password_ok:
         return templates.TemplateResponse(
             request, "login.html",
@@ -160,7 +171,7 @@ async def create_user(
         raise HTTPException(status_code=400, detail=f"invalid role '{body.role}'")
     if len(body.password) < 8:
         raise HTTPException(status_code=422, detail="password must be at least 8 characters")
-    pw_hash = bcrypt.hashpw(body.password.encode(), bcrypt.gensalt()).decode()
+    pw_hash = await _hash(session, body.password)
     user = await _user_repo.create(session, body.username, pw_hash, body.role)
     return UserResponse(id=user.id, username=user.username, role=user.role, is_active=user.is_active)
 
@@ -183,7 +194,7 @@ async def admin_reset_password(
     user = await _user_repo.get(session, user_id)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
-    new_hash = bcrypt.hashpw(body.new_password.encode(), bcrypt.gensalt()).decode()
+    new_hash = await _hash(session, body.new_password)
     await _user_repo.update_password(session, user_id, new_hash)
     r = _get_redis()
     await _invalidate_user_sessions(r, str(user_id))
@@ -298,7 +309,7 @@ async def admin_create_user(
             content='<span class="text-red-400 text-xs">Password must be at least 8 characters.</span>',
             headers={"HX-Retarget": "#user-create-error", "HX-Reswap": "innerHTML"},
         )
-    pw_hash = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+    pw_hash = await _hash(session, password)
     try:
         await _user_repo.create(session, username, pw_hash, role)
     except IntegrityError:
@@ -380,7 +391,7 @@ async def admin_reset_user_password_ui(
     user = await _user_repo.get(session, user_id)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
-    new_hash = bcrypt.hashpw(new_password.encode(), bcrypt.gensalt()).decode()
+    new_hash = await _hash(session, new_password)
     await _user_repo.update_password(session, user_id, new_hash)
     r = _get_redis()
     await _invalidate_user_sessions(r, str(user_id))
@@ -496,10 +507,10 @@ async def change_password(
         return _card(error="New password must be at least 8 characters.")
 
     db_user = await _user_repo.get(session, current_user.id)
-    if not db_user or not bcrypt.checkpw(current_password.encode(), db_user.password_hash.encode()):
+    if not db_user or not await _verify(session, current_password, db_user.password_hash):
         return _card(error="Current password is incorrect.")
 
-    new_hash = bcrypt.hashpw(new_password.encode(), bcrypt.gensalt()).decode()
+    new_hash = await _hash(session, new_password)
     await _user_repo.update_password(session, current_user.id, new_hash)
 
     session_id = request.cookies.get("session_id")
