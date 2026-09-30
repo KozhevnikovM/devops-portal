@@ -21,7 +21,9 @@
 
   Verify: `pytest tests/test_progress_recorder.py`.
 - [ ] 3.3 Add failure and isolation tests to the same file:
-  - a periodic flush failure retains the buffer and the next flush persists the retained and new messages in order;
+  - a trailing or threshold flush failure retains the buffer, and the next flush persists the retained and new messages in order;
+  - a failed leading-edge persist keeps the first message (it is not dropped), and the trailing timer retries it one interval later together with the messages recorded meanwhile;
+  - during retry backoff, records past the size thresholds trigger no extra persist attempts (at most one per interval, checked with the fake clock), and the buffered log text never exceeds 50,000 characters;
   - a barrier `flush()` failure drops the buffer and logs a warning, and nothing from it is persisted later;
   - `record` never raises when `persist` raises;
   - after `close()`, `record` is a no-op and a timer that fires late persists nothing;
@@ -70,7 +72,7 @@
 - [ ] 6.2 Update `docs/admin-guide.md`:
   - document the three new settings with defaults, freshness and crash-loss implications, and the `PROGRESS_FLUSH_INTERVAL_MS=0` rollback lever;
   - correct the `SSE_PROGRESS_COALESCE_MS` row ("every line is still saved", now in batched commits);
-  - state the SIGKILL loss bound.
+  - state both SIGKILL loss bounds, using the spec's wording: at most one flush interval of output (within the size thresholds) in normal operation, and at most 50,000 log characters while flushes are failing.
 
   Check `docs/api-reference.md` for any mention of per-line progress persistence. Verify: the docs diff is reviewed in the PR.
 - [ ] 6.3 Run the `py-review` skill (ruff, mypy, bandit) on the changed Python files and fix any findings. Verify: a clean `py-review` report.

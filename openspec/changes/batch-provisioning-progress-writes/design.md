@@ -31,7 +31,7 @@ See proposal.md for why. Current shape of the code:
 
 `ProgressRecorder(persist, *, interval_s, max_messages, max_chars, log_cap, clock=time.monotonic, timer_factory=threading.Timer)`. `persist(chunk: str, last_message: str) -> None` is supplied by the task. The API:
 
-- `record(msg)` appends `msg + "\n"` to the buffered chunk, trims the chunk to its last `log_cap` characters, remembers `msg` as the last message, and bumps the message count. It then either flushes (leading edge or threshold reached) or arms a single trailing timer for `last_flush + interval`.
+- `record(msg)` appends `msg + "\n"` to the buffered chunk, trims the chunk to its last `log_cap` characters, remembers `msg` as the last message, and bumps the message count. It then either flushes (leading edge or threshold reached) or arms a single trailing timer for `last_flush + interval`. While the recorder is in retry backoff after a failed in-run flush (D5), neither the leading edge nor a threshold triggers a flush; only the trailing timer does.
 - `flush()` is the barrier: synchronous, one attempt. On failure it drops the buffer and logs a warning.
 - `close()` cancels the timer, performs a barrier flush, and marks the recorder closed. Later `record` calls are no-ops. The timer callback also checks `closed`.
 
@@ -52,7 +52,7 @@ This mirrors the coalescer. An isolated line commits at once, so there is no fre
 - `PROGRESS_FLUSH_MAX_MESSAGES=50`
 - `PROGRESS_FLUSH_MAX_CHARS=16384`
 
-The worst-case freshness delay in normal operation is one interval plus the flush time. The buffer is bounded at `min(max_chars, log_cap)` characters of log text, plus one oversized message. Any message that pushes the buffer over `max_chars` triggers an immediate flush, and the buffered log text is cut to `log_cap` characters, because suffix truncation composes: `((a+b)[-N:] + c)[-N:] == (a+b+c)[-N:]`. `interval=0` short-circuits to persist on every `record`.
+The worst-case freshness delay in normal operation is one interval plus the flush time. In normal operation the buffer stays below `max_chars` characters of log text, apart from one oversized message that is flushed at once. In degraded operation (D5) it can grow to `log_cap` characters but no further. Any message that pushes the buffer over `max_chars` triggers an immediate flush, and the buffered log text is cut to `log_cap` characters, because suffix truncation composes: `((a+b)[-N:] + c)[-N:] == (a+b+c)[-N:]`. `interval=0` short-circuits to persist on every `record`.
 
 ### D3. One atomic UPDATE with a status guard
 
@@ -101,7 +101,8 @@ Why flush before each write instead of relying on the SQL guard alone: the guard
 ### D5. Failure semantics
 
 - `record()` never raises. Exceptions from `persist` are caught and logged.
-- **Periodic or threshold flush fails:** keep the buffer, still cap-bounded, and re-arm the timer for another interval. Messages recorded meanwhile append behind the retained ones, so order is preserved.
+- **In-run flush fails** (the leading-edge persist inside `record()`, the trailing timer flush, or a threshold flush): keep the batch, still cap-bounded, and set `retry_after = now + interval`. Then arm the trailing timer for that time. Until the timer fires, `record()` only buffers, so a DB outage costs at most one attempt per interval per producer, however much output arrives. Messages recorded meanwhile append behind the retained ones, so order is preserved. A leading-edge failure is deliberately handled in the same way: the first line after a quiet period is often the only line for a while (e.g. an SSH-wait message), and dropping it on a transient error would lose exactly the line the leading edge exists to show.
+- In-run and barrier flushes share one internal `_persist_locked(on_failure=retain|drop)` routine, so the two classes differ only in their failure branch.
 - **Barrier flush fails:** drop the buffer and log a warning, then let the lifecycle write proceed. It will most likely hit the same DB outage and follow the existing `except ... pass`/retry paths.
 
 The asymmetry exists because a failed barrier would otherwise leave data that could only be applied *after* the lifecycle write. That reintroduces the ordering hazard, and the status guard only half-protects against it, since the log would still carry lines after the outcome.
@@ -114,7 +115,12 @@ A new recorder is created per task execution, and Celery retries are new executi
 
 ### D7. Crash semantics
 
-`finally` does not run on SIGKILL, OOM kills or host loss. What is lost is exactly the unflushed buffer. By D2 that is at most one interval of output and below the size thresholds, apart from a single oversized message, which is flushed immediately and so is never left buffered. Celery's `SoftTimeLimitExceeded` is an ordinary exception and passes through the barrier. This is documented in `docs/admin-guide.md`.
+`finally` does not run on SIGKILL, OOM kills or host loss. What is lost is exactly the output recorded since the last successful commit, which means the buffer plus any batch whose commit was in flight. Two bounds apply:
+
+- **Normal operation** (in-run flushes succeeding): by D2, at most one interval of output and below the size thresholds. The exception is a single oversized message, which is flushed on its own at once and is itself tail-capped at 50,000 characters.
+- **Degraded operation** (one or more in-run flushes failed and are being retained): the buffer can hold output from many intervals, so no time bound applies. The hard bound is the buffer's tail cap: at most 50,000 characters of log text, plus the pending status message. Anything older would have been cut from the log by the cap anyway.
+
+The spec, proposal and admin guide state both bounds with the same wording. Celery's `SoftTimeLimitExceeded` is an ordinary exception and passes through the barrier. This is documented in `docs/admin-guide.md`.
 
 ### D8. Measuring before and after
 
@@ -130,7 +136,7 @@ It counts commits with a SQLAlchemy `after_commit` listener, records the total w
 - [The timer thread runs `persist` concurrently with Terraform/SSH on the task thread] → Each flush opens its own `SyncSessionLocal`, so connections are not shared. The coalescer already runs publishes from timer threads in the same process, so there is precedent.
 - [Up to 500 ms extra UI latency for lines inside a burst] → Leading-edge commits keep isolated lines instant. The SSE window (750 ms) already dominates perceived latency.
 - [A progress DB error no longer fails the attempt, which hides DB trouble] → It is logged with booking id and exception at ERROR level. Lifecycle writes still surface a real outage.
-- [SIGKILL loses up to one interval of output] → Bounded and documented. The rest of the log is intact and the stale-provisioning reaper still settles the booking.
+- [SIGKILL loses up to one interval of output, or up to 50,000 log characters if flushes were already failing] → Both bounds are documented. The rest of the log is intact and the stale-provisioning reaper still settles the booking.
 - [`right()` and `||` are Postgres-specific] → Production and the integration suite are Postgres. Unit tests use mocks and assert on the recorder and task wiring, not SQL text.
 - [Tuning knobs could be set badly (e.g. very large interval)] → Settings are validated as non-negative integers. The admin guide states the freshness and crash-loss implications of each.
 

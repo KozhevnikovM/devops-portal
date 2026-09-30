@@ -59,7 +59,8 @@ Messages SHALL NOT be de-duplicated, merged, split or reordered. A message that 
 
 #### Scenario: Single message larger than the log cap
 - **WHEN** a producer records one message longer than 50,000 characters
-- **THEN** it is persisted immediately, the provisioning log holds exactly the last 50,000 characters of that message followed by its newline, and no more than 50,000 log characters were buffered for it
+- **THEN** it is persisted immediately, and the provisioning log equals the last 50,000 characters of that message followed by its newline, i.e. the final 49,999 characters of the message and then the newline, exactly as a per-line append of `message + "\n"` followed by the tail cap would leave it
+- **AND** no more than 50,000 log characters were buffered for it
 
 #### Scenario: Continuous output over the cap
 - **WHEN** a producer records far more than 50,000 characters of output
@@ -120,11 +121,24 @@ Each task execution SHALL start with an empty progress buffer. When an attempt e
 
 ### Requirement: Progress persistence failures do not fail the task
 
-A failure to persist a progress batch SHALL be logged and SHALL NOT raise into the Terraform, SSH, startup-script or Ansible work that produced it, nor fail the attempt. When a periodic or size-triggered flush fails, the batch SHALL remain buffered, still bounded by the log cap, and SHALL be retried by the next flush. When the flush before a lifecycle write or at attempt end fails, the buffered batch SHALL be discarded with a logged warning, and the lifecycle write SHALL still be attempted, so a failed flush can never be applied after the lifecycle outcome. Publishing the progress notification SHALL happen only after a successful flush.
+A failure to persist a progress batch SHALL be logged and SHALL NOT raise into the Terraform, SSH, startup-script or Ansible work that produced it, nor fail the attempt. Flushes fall into two classes with different failure handling:
+
+- **In-run flushes** are the leading-edge flush of the first message after a quiet period, the trailing (interval) flush, and the size-triggered flush. When one of these fails, the batch SHALL remain buffered in recording order. Messages recorded afterwards SHALL be appended behind it, and the buffered log text SHALL stay bounded by the 50,000-character log cap. The retained batch SHALL be retried by a trailing flush no sooner than one flush interval after the failure, even if no further message arrives. Reaching a size threshold SHALL NOT trigger an extra attempt before then, so an unavailable database is retried at most once per flush interval per producer.
+- **Barrier flushes** are the flush before a lifecycle write and the flush at attempt end. When one of these fails, the buffered batch SHALL be discarded with a logged warning, and the lifecycle write SHALL still be attempted, so a failed flush can never be applied after the lifecycle outcome.
+
+Publishing the progress notification SHALL happen only after a successful flush.
 
 #### Scenario: Database briefly unavailable mid-run
 - **WHEN** a periodic progress flush fails because the database is briefly unavailable, and the next flush succeeds
 - **THEN** the provisioning task keeps running, the error is logged, and the next successful flush persists the retained and new messages in order
+
+#### Scenario: Leading-edge flush fails
+- **WHEN** the first message after a quiet period is persisted immediately and that persist fails
+- **THEN** the message is kept in the buffer rather than dropped, the error is logged, and it is retried by a trailing flush one flush interval later, together with any messages recorded meanwhile, in order
+
+#### Scenario: Database stays unavailable during continuous output
+- **WHEN** in-run flushes keep failing while a producer records output well beyond the size thresholds
+- **THEN** persist attempts happen at most once per flush interval, and the buffered log text never exceeds 50,000 characters
 
 #### Scenario: Barrier flush fails
 - **WHEN** the flush before a READY transition fails
@@ -136,11 +150,20 @@ A failure to persist a progress batch SHALL be logged and SHALL NOT raise into t
 
 ### Requirement: Crash loss of buffered progress is bounded and documented
 
-A handled exception inside an attempt SHALL pass through the pre-lifecycle flush. If the worker is killed without running handlers (SIGKILL, out-of-memory kill, container or host loss), only progress recorded since the last successful commit MAY be lost. That loss SHALL be at most one flush interval of output, and never more than the maximum buffered message and character counts. The system SHALL NOT claim that buffered progress survives a hard kill. The bound SHALL be documented in the administrator guide.
+A handled exception inside an attempt SHALL pass through the pre-lifecycle flush. If the worker is killed without running handlers (SIGKILL, out-of-memory kill, container or host loss), only progress recorded since the producer's last successful commit MAY be lost. The loss bound depends on how the producer was operating:
 
-#### Scenario: Worker killed mid-burst
-- **WHEN** the worker process is killed with SIGKILL while a producer has buffered progress
-- **THEN** the provisioning log holds everything committed before the kill, and the missing tail is at most the output of one flush interval, bounded by the buffer limits
+- **Normal operation**, where the producer's in-run flushes are succeeding: the lost tail SHALL be at most the output recorded within one flush interval, and at most the maximum buffered message count and character count. The one exception is a single message larger than the character limit, which is being flushed on its own and is itself capped at 50,000 characters.
+- **Degraded operation**, after one or more in-run flushes have failed and their batches are being retained for retry: the lost tail is not bounded in time. It SHALL be at most 50,000 characters of provisioning-log text (the log cap that bounds the buffer), plus the pending status message.
+
+The system SHALL NOT claim that buffered progress survives a hard kill. Both bounds SHALL be documented in the administrator guide.
+
+#### Scenario: Worker killed mid-burst in normal operation
+- **WHEN** the worker process is killed with SIGKILL while a producer whose flushes have been succeeding has buffered progress
+- **THEN** the provisioning log holds everything committed before the kill, and the missing tail is at most the output of one flush interval, within the buffer limits
+
+#### Scenario: Worker killed while flushes are failing
+- **WHEN** in-run flushes have been failing for several intervals and the worker process is then killed with SIGKILL
+- **THEN** the provisioning log holds everything committed before the first failed flush, and the missing tail is at most 50,000 characters of log text
 
 ### Requirement: Persisting progress holds no database connection between flushes
 
