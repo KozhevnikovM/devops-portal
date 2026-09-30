@@ -382,7 +382,7 @@ def publish_progress_changed(
     booking_routing: Routing,
     environment_id: UUID | str | None = None,
 ) -> None:
-    """Sync progress publish — called by ``BookingRepository.sync_record_progress`` (#440).
+    """Sync progress publish — called by ``BookingRepository.sync_append_progress`` once per committed progress batch (#440, #444).
 
     Coalesced per booking; publishes immediately when coalescing is disabled. Best-effort like
     ``publish_row_changed``, including the trailing publish fired from the coalescer's timer.

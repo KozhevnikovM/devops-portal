@@ -68,6 +68,14 @@ class Settings(BaseSettings):
     # output line) are coalesced per booking to at most one per window, plus a trailing publish
     # after a burst (#440). 0 disables coalescing. Read at worker start-up.
     SSE_PROGRESS_COALESCE_MS: int = 750
+    # Progress persistence batching (#444): the first progress line after a quiet period is saved
+    # at once; later lines are saved together at most once per interval, or right away once the
+    # buffer reaches either flush threshold. The thresholds trigger flushes — they don't bound the
+    # buffer (the 50,000-character log cap does). 0 = save every line as it arrives. Read at
+    # worker start-up.
+    PROGRESS_FLUSH_INTERVAL_MS: int = Field(500, ge=0)
+    PROGRESS_FLUSH_MESSAGE_THRESHOLD: int = Field(50, ge=1)
+    PROGRESS_FLUSH_CHAR_THRESHOLD: int = Field(16_384, ge=1)
 
     # Terraform / VCD — only required when USE_STUB_TERRAFORM=False
     TF_WORKSPACES_DIR: str = "/tmp/tf-workspaces"

@@ -963,6 +963,10 @@ log ↗"). This is a different, log-focused view from the audit page above — i
 provisioning/teardown output, not the structured status-transition timeline. Browser presentation
 route (omitted from `/docs`); no JSON API equivalent yet.
 
+The worker saves progress output in batches (#444). While provisioning is running, the newest lines
+can show up here up to `PROGRESS_FLUSH_INTERVAL_MS` (default 500 ms) after they were produced. The
+log is always complete before the booking's status changes.
+
 **Auth:** the booking **owner** or an **admin**. A non-owner gets `403`; an unknown id gets `404`.
 
 ---
