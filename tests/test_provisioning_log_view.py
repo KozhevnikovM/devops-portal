@@ -144,6 +144,54 @@ def test_sync_append_progress_raises_for_missing_booking():
     publish.assert_not_called()
 
 
+# ── sync_set_status_message(if_status_in=...) — provisioning ownership guard (#444 review) ──────
+def _conditional_session(rowcount, model):
+    from sqlalchemy.orm import Session
+
+    session = MagicMock(spec=Session)
+    session.execute.return_value = MagicMock(rowcount=rowcount)
+    session.get.return_value = model
+    return session
+
+
+def test_conditional_status_message_skips_when_status_not_owned():
+    from app.domain.booking_status import PROVISIONING_OWNED_STATUSES
+
+    session = _conditional_session(0, _make_booking_model(status="RELEASING"))
+    with patch("app.infrastructure.repositories.booking_repo.publish_row_changed") as publish:
+        written = BookingRepository().sync_set_status_message(
+            session, uuid4(), None, if_status_in=PROVISIONING_OWNED_STATUSES,
+        )
+    assert written is False
+    session.commit.assert_not_called()
+    publish.assert_not_called()
+    sql = _compiled(session.execute.call_args.args[0])
+    assert "WHERE bookings.id = " in sql and "bookings.status IN" in sql   # one atomic guarded UPDATE
+
+
+def test_conditional_status_message_writes_and_publishes_when_owned():
+    from app.domain.booking_status import PROVISIONING_OWNED_STATUSES
+
+    session = _conditional_session(1, _make_booking_model(status="PROVISIONING"))
+    with patch("app.infrastructure.repositories.booking_repo.publish_row_changed") as publish:
+        written = BookingRepository().sync_set_status_message(
+            session, uuid4(), None, if_status_in=PROVISIONING_OWNED_STATUSES,
+        )
+    assert written is True
+    session.commit.assert_called_once()
+    publish.assert_called_once()
+
+
+def test_conditional_status_message_raises_for_missing_booking():
+    from app.domain.booking_status import PROVISIONING_OWNED_STATUSES
+
+    session = _conditional_session(0, None)
+    with pytest.raises(BookingNotFoundError):
+        BookingRepository().sync_set_status_message(
+            session, uuid4(), None, if_status_in=PROVISIONING_OWNED_STATUSES,
+        )
+
+
 # ── GET /bookings/{id}/log ────────────────────────────────────────────────────
 def _client(user):
     from app.main import app

@@ -9,7 +9,7 @@ import redis as redis_lib
 
 from app.application.ports import SyncBookingRepositoryPort
 from app.config import settings
-from app.domain.booking_status import PROVISIONING_PROGRESS_STATUSES
+from app.domain.booking_status import PROVISIONING_OWNED_STATUSES, PROVISIONING_PROGRESS_STATUSES
 from app.domain.enums import BookingStatus
 from app.domain.exceptions import SecretDecryptionError
 from app.infrastructure import provisioning_lock
@@ -190,21 +190,26 @@ def provision_vm_task(
                     if lock_client:
                         provisioning_lock.release(lock_client, booking_id)
                 ip = result["ip"]
-                _lifecycle(lambda s: repo.sync_set_status_message(s, booking_uuid, None))
+                _lifecycle(lambda s: repo.sync_set_status_message(
+                    s, booking_uuid, None, if_status_in=PROVISIONING_OWNED_STATUSES,
+                ))
 
                 # ── Post-provision: wait for SSH reachability, then run the startup script ──
                 # Two distinct outcomes: an unreachable VM is an infra failure (raises → FAILED); a
                 # reachable VM whose script fails is still usable → READY with config_failed=True.
                 booking = _run(lambda s: repo.sync_get(s, booking_uuid))
-                if booking.status == BookingStatus.RELEASING:
-                    # Released while the apply above was in flight — hand off to teardown instead
-                    # of configuring a VM that's about to be destroyed (#394).
+                if booking.status not in PROVISIONING_OWNED_STATUSES:
+                    # Released while the apply above was in flight — don't configure a VM that's
+                    # being (or has been) torn down (#394). While teardown is still RELEASING, hand
+                    # off to it; if a waiting teardown already settled the booking (RELEASED /
+                    # FAILED) once the provisioning lock was released, there is nothing left to do.
                     logger.info(
-                        "Booking %s was released while its terraform apply was in flight — "
-                        "handing off to teardown instead of configuring", booking_id,
+                        "Booking %s was released while its terraform apply was in flight "
+                        "(status=%s) — not configuring", booking_id, booking.status.value,
                     )
                     recorder.close()
-                    teardown_vm_task.delay(booking_id, request_id=request_id)
+                    if booking.status == BookingStatus.RELEASING:
+                        teardown_vm_task.delay(booking_id, request_id=request_id)
                     return
                 config_failed = False
                 config_message = None
@@ -234,7 +239,9 @@ def provision_vm_task(
                         logger.warning("Configuration failed for booking %s: %s", booking_id, cfg_exc)
                     finally:
                         config_runner.close(client)
-                    _lifecycle(lambda s: repo.sync_set_status_message(s, booking_uuid, config_message))
+                    _lifecycle(lambda s: repo.sync_set_status_message(
+                        s, booking_uuid, config_message, if_status_in=PROVISIONING_OWNED_STATUSES,
+                    ))
 
                 _lifecycle(lambda s: repo.sync_update_status(
                     s, booking_uuid, BookingStatus.READY,
@@ -254,7 +261,9 @@ def provision_vm_task(
                 # Do not retry; retries would all fail identically and delay the failure signal.
                 logger.error("Secret decryption failed for booking %s (not retrying): %s", booking_id, exc)
                 try:
-                    _lifecycle(lambda s: repo.sync_set_status_message(s, booking_uuid, f"Secret decryption failed: {exc}"))
+                    _lifecycle(lambda s: repo.sync_set_status_message(
+                        s, booking_uuid, f"Secret decryption failed: {exc}", if_status_in=PROVISIONING_OWNED_STATUSES,
+                    ))
                     _lifecycle(lambda s: repo.sync_update_status(s, booking_uuid, BookingStatus.FAILED))
                     # A failed child has settled — it must not hold its environment's lease back (#434).
                     _lifecycle(lambda s: env_repo.sync_start_lease_if_ready_for_booking(s, booking_uuid))
@@ -266,7 +275,9 @@ def provision_vm_task(
                 is_last_attempt = self.request.retries >= self.max_retries
                 new_status = BookingStatus.FAILED if is_last_attempt else BookingStatus.RETRY
                 try:
-                    _lifecycle(lambda s: repo.sync_set_status_message(s, booking_uuid, "Failed — see audit log"))
+                    _lifecycle(lambda s: repo.sync_set_status_message(
+                        s, booking_uuid, "Failed — see audit log", if_status_in=PROVISIONING_OWNED_STATUSES,
+                    ))
                     _lifecycle(lambda s: repo.sync_update_status(s, booking_uuid, new_status))
                     if new_status == BookingStatus.FAILED:
                         # Final failure: the child has settled — start the env lease if due (#434).

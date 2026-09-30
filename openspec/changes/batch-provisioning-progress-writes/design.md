@@ -102,6 +102,14 @@ Each task creates `recorder = ProgressRecorder(...)` right after the status move
 
 Why flush before each write instead of relying on the SQL guard alone: the guard protects `status_message`, but `sync_set_status_message(None)` at a step boundary happens *within* PROVISIONING. Only ordering on the task thread keeps a buffered line from overwriting that cleared message. The barrier gives ordering and the guard is defence in depth.
 
+### D4a. Provisioning status-message writes are conditional on ownership (code review)
+
+The barrier orders buffered progress against the task's *own* lifecycle writes. It does not order them against another task. The provisioning lock is released as soon as the apply returns. A teardown waiting on that lock can then move the booking to RELEASING, write its own progress, or even settle the booking, all before provisioning's step-boundary `sync_set_status_message(None)`. That call used to be unconditional, so it erased teardown's message. Reading the status first would leave a TOCTOU window.
+
+So `sync_set_status_message` gains an optional `if_status_in`. When it is set, the UPDATE itself carries `WHERE status IN (...)`. No row updated means the status is no longer owned: the method returns `False` and does not commit or publish. The provisioning task passes `PROVISIONING_OWNED_STATUSES` (PENDING, RETRY, PROVISIONING, CONFIGURING) on all four of its status-message writes: the clear, the config-error message, the secret-decryption message and the failure message. PENDING and RETRY are included so a failure before the PROVISIONING transition still records "Failed — see audit log". The early return after the apply now fires on any status outside that set. It hands off to teardown only while the status is RELEASING. A booking that teardown has already settled (RELEASED or FAILED) is left alone, where before it fell into an illegal CONFIGURING transition and a retry.
+
+Teardown's own writes stay unconditional, because nothing takes ownership of a booking away from teardown.
+
 ### D5. Failure semantics
 
 - `record()` never raises. Exceptions from `persist` are caught and logged.
@@ -143,7 +151,17 @@ Measured on 2026-09-30 against the local Postgres 16 test container (port 5433),
 | New path, `PROGRESS_FLUSH_INTERVAL_MS=0` | 2,000 | 13.6 s |
 | New path, defaults (500 ms / 50 msgs / 16,384 chars) | 41 | 0.26 s |
 
-With these 3-line (~245-character) snapshots arriving every 5 ms, the 50-message threshold is what triggers each flush: 40 threshold flushes plus the leading edge. The final barrier had nothing left to flush. The interval-0 row is faster than the baseline because the atomic `UPDATE … RETURNING` replaces a SELECT, an ORM flush and a Python-side rewrite of a log that grows towards 50,000 characters.
+With these 3-line (~245-character) snapshots arriving every 5 ms, the 50-message threshold is what triggers each flush: 40 threshold flushes plus the leading edge. The final barrier had nothing left to flush. Runtime check with a real startup script (task 6.4, after review). In the dev compose stack, the real `provision_vm_task` ran in the worker container. It used the real `SshConfigRunner` (paramiko) against a throwaway sshd container on the compose network, with real Postgres, Redis, provisioning lock and timer threads. The script was `for i in $(seq 1 2000); do echo line $i; done`. Only VM *creation* was faked: there is no vCloud Director in dev, so the Terraform adapter returned the sshd container's IP. Commits were counted in-process with an `after_commit` listener, because `pg_stat_database.xact_commit` lags for runs under a second.
+
+| Run | Task commits | Wall time | Result |
+|---|---|---|---|
+| `PROGRESS_FLUSH_INTERVAL_MS=0` | 2,008 | 13.2 s | READY, log complete and ordered to `line 2000` (50,000-char cap) |
+| defaults | 47 | 1.0 s | same log, READY, status message cleared |
+| defaults, script ends `exit 3` | 47 | 0.9 s | READY + `config_failed`, status message = the config error (not overwritten) |
+
+Live SSE row events for the booking arrived in every run: 25 per-line, 14 batched.
+
+The interval-0 row is faster than the baseline because the atomic `UPDATE … RETURNING` replaces a SELECT, an ORM flush and a Python-side rewrite of a log that grows towards 50,000 characters.
 
 ## Risks / Trade-offs
 

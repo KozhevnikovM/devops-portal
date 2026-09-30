@@ -67,6 +67,7 @@
 
   Verify: `pytest tests/test_provision_progress_batching.py`.
 - [x] 5.4 Update the existing provisioning and teardown tests that asserted one `sync_record_progress` call per line (`tests/test_provisioning_progress.py`, `tests/test_provision_task.py`, `tests/test_release_during_provisioning.py`, `tests/test_*_session_lifetime.py`, and any others found by grep). Keep the session-lifetime tests asserting that no session is open during apply/destroy or between flushes. Verify: `pytest tests/ -m "not integration"` is green.
+- [x] 5.5 (Code review) Make the provisioning task's status-message writes conditional on it still owning the booking. Add `sync_set_status_message(..., if_status_in=...)` as one atomic guarded UPDATE, and `PROVISIONING_OWNED_STATUSES`. Widen the post-apply early return to any non-owned status, handing off to teardown only while RELEASING. Verify: `pytest -m integration tests/integration/test_provision_release_race.py` interleaves teardown progress and a teardown FAILED outcome right after the provisioning lock is released, and fails without the guard. Unit tests in `tests/test_provision_progress_batching.py` and `tests/test_provisioning_log_view.py` cover the rest.
 
 ## 6. Measurement, docs and quality gate
 
@@ -78,4 +79,4 @@
 
   Check `docs/api-reference.md` for any mention of per-line progress persistence. Verify: the docs diff is reviewed in the PR.
 - [x] 6.3 Run the `py-review` skill (ruff, mypy, bandit) on the changed Python files and fix any findings. Verify: a clean `py-review` report.
-- [x] 6.4 Runtime check: run the stack with `docker compose up`, order a VM with a noisy startup script (e.g. `for i in $(seq 1 2000); do echo line $i; done`), and confirm that the row updates live, the provisioning log shows all lines in order within the cap, READY's status message is not overwritten, and the Postgres `xact_commit` delta for the run is far below the line count. Verify: observations noted in the code PR.
+- [x] 6.4 Runtime check: run the stack with `docker compose up` and run a VM's noisy startup script (e.g. `for i in $(seq 1 2000); do echo line $i; done`) through the real provisioning task and real SSH configuration step. Confirm that the row updates live, the provisioning log shows all lines in order within the cap, READY's status message is not overwritten, and the run's commit count is far below the line count. The dev stack has no vCloud Director, so VM *creation* is faked by returning a local sshd container's IP; everything from the SSH connect onwards is real. Verify: observations noted in the code PR and in design.md D8.

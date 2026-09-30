@@ -1,9 +1,10 @@
 import logging
 from datetime import datetime, timedelta, timezone
+from typing import cast as type_cast
 from uuid import UUID
 
 from sqlalchemy import (
-    case, cast, column, Connection, Engine, false, func, literal, or_, select, String, Text, text, true,
+    CursorResult, case, cast, column, Connection, Engine, false, func, literal, or_, select, String, Text, text, true,
     tuple_, union_all, update,
 )
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
@@ -939,14 +940,42 @@ class BookingRepository:
         _publish_lifecycle(session, model)
 
     def sync_set_status_message(
-        self, session: Session, booking_id: UUID, message: str | None
-    ) -> None:
-        model = session.get(BookingModel, booking_id)
-        if model is None:
-            raise BookingNotFoundError(booking_id)
-        model.status_message = message
+        self,
+        session: Session,
+        booking_id: UUID,
+        message: str | None,
+        if_status_in: frozenset[BookingStatus] | None = None,
+    ) -> bool:
+        """Set (or clear) the status message; return whether it was written.
+
+        With ``if_status_in``, the write is conditional on the booking's status being one of those,
+        evaluated atomically in the UPDATE itself (#444 review): the provisioning task uses it so a
+        release that lands between its own read and write can't have teardown's message erased.
+        """
+        if if_status_in is None:
+            model = session.get(BookingModel, booking_id)
+            if model is None:
+                raise BookingNotFoundError(booking_id)
+            model.status_message = message
+            session.commit()
+            _publish_lifecycle(session, model)
+            return True
+        # An UPDATE returns a CursorResult (with rowcount), though typed as the generic Result.
+        result = type_cast(CursorResult, session.execute(
+            update(BookingModel)
+            .where(BookingModel.id == booking_id, BookingModel.status.in_([s.value for s in if_status_in]))
+            .values(status_message=message)
+            .execution_options(synchronize_session=False)
+        ))
+        if result.rowcount == 0:
+            if session.get(BookingModel, booking_id) is None:
+                raise BookingNotFoundError(booking_id)
+            return False  # status no longer owned by the caller — leave the message alone
         session.commit()
-        _publish_lifecycle(session, model)
+        model = session.get(BookingModel, booking_id)
+        if model is not None:  # deleted in between: nothing left to announce
+            _publish_lifecycle(session, model)
+        return True
 
     def sync_append_progress(
         self,

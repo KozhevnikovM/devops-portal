@@ -85,7 +85,8 @@ class SyncBookingRepositoryPort(Protocol):
     ) -> None: ...
     def sync_set_status_message(
         self, session: Session, booking_id: UUID, message: str | None,
-    ) -> None: ...
+        if_status_in: frozenset[BookingStatus] | None = None,
+    ) -> bool: ...
     def sync_append_progress(
         self, session: Session, booking_id: UUID, chunk: str, last_message: str,
         accepting: frozenset[BookingStatus],

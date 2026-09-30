@@ -41,6 +41,15 @@ PROVISIONING_PROGRESS_STATUSES: frozenset[BookingStatus] = frozenset(
 )
 TEARDOWN_PROGRESS_STATUSES: frozenset[BookingStatus] = frozenset({BookingStatus.RELEASING})
 
+# Statuses in which the provisioning task still owns a booking's status message (#444 review).
+# Once a release moves the booking to RELEASING (or teardown settles it), the status message belongs
+# to teardown, so provisioning's own lifecycle messages (the step-boundary clear, a config-error
+# message, a failure message) are written only while the status is one of these — checked in the
+# same UPDATE, so there is no read-then-write window.
+PROVISIONING_OWNED_STATUSES: frozenset[BookingStatus] = frozenset({
+    BookingStatus.PENDING, BookingStatus.RETRY, BookingStatus.PROVISIONING, BookingStatus.CONFIGURING,
+})
+
 ALLOWED_TRANSITIONS: dict[BookingStatus, set[BookingStatus]] = {
     BookingStatus.QUEUED:       {BookingStatus.READY, BookingStatus.RELEASED},
     BookingStatus.PENDING:      {BookingStatus.PROVISIONING, BookingStatus.FAILED, BookingStatus.RELEASING,

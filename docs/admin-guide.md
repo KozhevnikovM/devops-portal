@@ -1086,6 +1086,10 @@ kept. A noisy playbook therefore costs a few commits per second instead of one p
   progress first. Progress saved late never overwrites that outcome. Output is still appended to the
   log, but the status message is only set while the booking is provisioning/configuring
   (provisioning output) or releasing (teardown output).
+- **A release during provisioning belongs to teardown.** If a booking is released while its VM is
+  still being created, provisioning stops touching its status message the moment the release lands.
+  That check is atomic, so teardown's progress or outcome is never cleared. Provisioning also skips
+  configuring the VM, and hands off to teardown only if the teardown hasn't already finished.
 - **Size caps.** The log keeps its last 50,000 characters, as before. A progress line's status
   message is also cut to its last 50,000 characters. This only affects a single output line longer
   than that, which used to be stored in full. These two caps also bound what one task can hold in

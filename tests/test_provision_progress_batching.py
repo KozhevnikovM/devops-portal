@@ -11,6 +11,7 @@ from uuid import uuid4
 import pytest
 
 from app.domain.booking_status import (
+    PROVISIONING_OWNED_STATUSES,
     PROVISIONING_PROGRESS_STATUSES,
     TEARDOWN_PROGRESS_STATUSES,
 )
@@ -52,7 +53,7 @@ class Harness:
 
         repo.sync_get.side_effect = sync_get
         repo.sync_append_progress.side_effect = append
-        repo.sync_set_status_message.side_effect = lambda _s, _id, m: self.events.append(("message", m))
+        repo.sync_set_status_message.side_effect = lambda _s, _id, m, **kw: self.events.append(("message", m))
         repo.sync_update_status.side_effect = lambda _s, _id, st, **kw: self.events.append(("status", st))
         self.repo = repo
         self.env_repo = MagicMock()
@@ -211,6 +212,28 @@ def test_release_during_provisioning_flushes_before_teardown_handoff_and_closes(
     rec.record("late line")
     h.sched.advance(10)
     assert len(h.events) == n
+
+
+@pytest.mark.parametrize("settled", [BookingStatus.FAILED, BookingStatus.RELEASED])
+def test_booking_settled_by_teardown_during_apply_is_not_configured_or_handed_off(settled):
+    h = Harness(status_after_apply=settled, startup_script="echo hi")
+    h.run(stub=False, apply=burst_apply(["tf 0", "tf 1"]))
+    assert not any(e[0] == "teardown" for e in h.events)
+    assert [e[1] for e in h.events if e[0] == "status"] == [BookingStatus.PROVISIONING]
+
+
+def test_every_provisioning_status_message_write_is_conditional_on_ownership():
+    h = Harness(startup_script="echo hi")
+
+    def run_script(client, script, on_progress=None):
+        raise ConfigScriptError("exit 1")
+
+    h.run(stub=False, apply=burst_apply(["tf 0"]), run_script=run_script)
+    h2 = Harness()
+    h2.run(apply=burst_apply(["tf 0"], fail=RuntimeError("VCD error")))
+    calls = h.repo.sync_set_status_message.call_args_list + h2.repo.sync_set_status_message.call_args_list
+    assert len(calls) >= 3
+    assert all(c.kwargs.get("if_status_in") == PROVISIONING_OWNED_STATUSES for c in calls)
 
 
 # ── attempt isolation ─────────────────────────────────────────────────────────────────────────
