@@ -1,8 +1,12 @@
 """EXPLAIN (ANALYZE, BUFFERS) matrix for the environments page (#496).
 
-Runs the app's own `_page_stmt` (custom plan via psycopg2 literals, and generic plan via
-PREPARE + plan_cache_mode=force_generic_plan) and the `_children_batch` statement for the
-selected page, and prints one row per case.
+Runs the app's own page-keys statement, `_page_keys_stmt` (custom plan via psycopg2 literals, and
+generic plan via PREPARE + plan_cache_mode=force_generic_plan), under the app's ordered-walk pin
+settings, then the `_children_batch` statement for the selected page, unpinned, and prints one row
+per case.
+
+The "before" numbers in measurements.md came from this script calling the pre-#496 single
+statement, `_page_stmt` (see git history); the implementation PR re-ran it on the new statement.
 """
 import json
 import statistics
@@ -15,7 +19,8 @@ from sqlalchemy.dialects.postgresql import asyncpg as pg_asyncpg
 
 from app.domain.pagination import KeysetCursor
 from app.infrastructure.database.models import BookingModel, NamespaceModel, StaticVMModel, UserModel
-from app.infrastructure.repositories.environment_repo import _page_stmt
+from app.infrastructure.repositories._ordered_walk import _ORDERED_WALK_SETTINGS
+from app.infrastructure.repositories.environment_repo import _page_keys_stmt
 
 URL = "postgresql+psycopg2://portal:portal@localhost:5433/env_probe_496"
 LIMIT = 50
@@ -59,6 +64,12 @@ def summarize(plan_json):
         "env_read": env_read, "env_plan": env_desc, "bk_probes": bk_probes, "bk_plan": bk_desc,
         "sort_in": sort_in, "jit_ms": top.get("JIT", {}).get("Functions", 0),
     }
+
+
+def pin(conn, on: bool):
+    """Session-level twin of _OrderedWalk (this connection is in autocommit)."""
+    for name, value in _ORDERED_WALK_SETTINGS.items():
+        conn.exec_driver_sql(f"SET {name} = {value}" if on else f"RESET {name}")
 
 
 def explain_custom(conn, stmt):
@@ -126,12 +137,14 @@ def main():
                     q += " ORDER BY created_at DESC, id DESC OFFSET (SELECT count(*)/2 FROM environments" + (f" WHERE user_id = '{uid}' OR created_by = '{uid}'" if uid else "") + ") LIMIT 1"
                     mid = conn.exec_driver_sql(q).one()
                     for cur_name, cur in (("first", None), ("deep", KeysetCursor(created_at=mid[0], id=mid[1]))):
-                        stmt = _page_stmt(uid, label=label, include_released=inc, limit=LIMIT, after=cur)
+                        stmt = _page_keys_stmt(uid, label=label, include_released=inc, limit=LIMIT, after=cur)
+                        pin(conn, True)
                         runs, rows = explain_custom(conn, stmt)
                         custom = med(runs)
                         generic = med(explain_generic(conn, stmt))
                         auto = med(explain_generic(conn, stmt, "auto"))
-                        ids = [r[0] for r in rows[:LIMIT]]
+                        pin(conn, False)
+                        ids = [r.id for r in rows[:LIMIT]]
                         if ids:
                             craws = [conn.exec_driver_sql("EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, FORMAT JSON) " + str(cc)).scalar()
                                      for cc in [children_stmt(ids).compile(dialect=postgresql.psycopg2.dialect(), compile_kwargs={"literal_binds": True})] * REPS]

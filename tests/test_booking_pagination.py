@@ -32,9 +32,11 @@ from app.infrastructure.database.models import (
     booking_page_key,
     booking_page_key_value,
 )
-from app.infrastructure.repositories.booking_repo import (
+from app.infrastructure.repositories._ordered_walk import (
     _PIN_ORDERED_WALK,
     _UNPIN_ORDERED_WALK,
+)
+from app.infrastructure.repositories.booking_repo import (
     BookingRepository,
     _label_page_keys_stmt,
     _page_keys_stmt,

@@ -3,11 +3,12 @@
 `list_page` returns at most `limit` environments ordered (created_at DESC, id DESC), continues
 strictly after a (created_at, id) cursor, and loads children for the page's environments only.
 Every traversal is checked against the unpaginated list with the same filters, so pagination
-can't drop, repeat or reorder rows. Guarantee scope (design.md, Decision 8): the environment
-index read is bounded by the page size only for the unfiltered list; selective filters are
-checked for correctness and per-page child loading, not for a row-count bound.
+can't drop, repeat or reorder rows. Since #496 page selection is a pinned page-keys query (All one
+walk, Mine one walk per owner scope); its per-filter read bounds, under real statistics, are in
+test_environment_list_owner_walks.py. Here: the unfiltered page reads at most limit + 1 entries.
 """
 import json
+import re
 from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
@@ -20,9 +21,10 @@ from app.domain.constants import PERMANENT_EXPIRES_AT
 from app.domain.enums import BookingStatus
 from app.domain.pagination import KeysetCursor
 from app.infrastructure.database.models import BookingModel, EnvironmentModel
+from app.infrastructure.repositories._ordered_walk import _OrderedWalk
 from app.infrastructure.repositories.environment_repo import (
     EnvironmentRepository,
-    _page_stmt,
+    _page_keys_stmt,
 )
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio(loop_scope="session")]
@@ -30,6 +32,7 @@ pytestmark = [pytest.mark.integration, pytest.mark.asyncio(loop_scope="session")
 S = BookingStatus
 _repo = EnvironmentRepository()
 _INDEX = "ix_environments_created_at_id"
+_PAGE_INDEXES = (_INDEX, "ix_environments_owner_page", "ix_environments_creator_page")
 # Far in the future so seeded rows sort before any other environment in the test database.
 _BASE = datetime(2999, 1, 1, tzinfo=timezone.utc)
 
@@ -293,19 +296,24 @@ async def test_page_plan_walks_the_index_in_order(async_session, after, user_id,
     await _seed(async_session, owner, _spaced(120))
     await async_session.execute(text("ANALYZE environments"))
     await async_session.execute(text("ANALYZE bookings"))
-    await async_session.execute(text("SET LOCAL enable_seqscan = off"))
 
-    stmt = _page_stmt(
+    stmt = _page_keys_stmt(
         owner if user_id == "OWNER" else None, label=label, include_released=include_released,
         limit=50, after=after,
     )
-    plan = await _explain(async_session, stmt)
+    async with _OrderedWalk(async_session):   # as list_page runs it (#496)
+        plan = await _explain(async_session, stmt)
 
-    assert f"Index Scan Backward using {_INDEX} on environments" in plan, plan
-    assert "Sort" not in plan, plan
+    scans = [line for line in plan.splitlines() if " on environments" in line]
+    assert scans, plan
+    for scan in scans:
+        assert any(f"Scan Backward using {index} on environments" in scan for index in _PAGE_INDEXES), plan
+    assert not re.search(r"^\s*(->\s+)?(Incremental )?Sort\s+\(", plan, re.MULTILINE), plan   # no Sort node
+    assert "Seq Scan" not in plan, plan
     if after is not None:
-        # The cursor is an index condition: rows before it are never read.
-        assert "Index Cond: (ROW(created_at, id) < ROW(" in plan, plan
+        # The cursor is an index condition of every walk: rows before it are never read.
+        assert plan.count("ROW(created_at, id) < ROW(") == len(scans), plan
+        assert "Filter: (ROW(created_at" not in plan, plan
 
 
 def _scan_nodes(node: dict):
@@ -330,7 +338,7 @@ async def test_unfiltered_page_reads_at_most_limit_plus_one_index_entries(async_
         )
         assert [e.id for e in first.items] == ids[:limit]
         after = first.next_cursor
-    stmt = _page_stmt(None, label=None, include_released=True, limit=limit, after=after)
+    stmt = _page_keys_stmt(None, label=None, include_released=True, limit=limit, after=after)
     [plan] = json.loads(await _explain(async_session, stmt, analyze=True))
 
     [scan] = list(_scan_nodes(plan["Plan"]))

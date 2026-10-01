@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
-from sqlalchemy import String, cast, exists, literal, or_, select, tuple_
+from sqlalchemy import String, cast, func, literal, or_, select, true, tuple_, union_all
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session, aliased
 
@@ -15,6 +15,7 @@ from app.domain.pagination import EnvironmentPage, KeysetCursor
 from app.infrastructure.database.models import (
     BookingModel, EnvironmentModel, NamespaceModel, StaticVMModel, UserModel,
 )
+from app.infrastructure.repositories._ordered_walk import _OrderedWalk
 from app.infrastructure.repositories.booking_repo import _to_entity as _booking_to_entity
 
 # Second alias of users to resolve created_by (the dispatcher) → username, distinct from the owner.
@@ -64,28 +65,31 @@ _LIVE_CHILD_STATUSES = [s.value for s in LIVE_CHILD_STATUSES]
 def _not_fully_released():
     """SQL twin of `derive_environment_status(...) != RELEASED` (#466): an environment is fully
     released only when it has a child and every child is RELEASED, so keep it if it has no child
-    or any non-RELEASED one. Keep in step with app/domain/environment_status.py."""
-    child = BookingModel.environment_id == EnvironmentModel.id
-    return or_(
-        ~exists().where(child),
-        exists().where(child, BookingModel.status != BookingStatus.RELEASED.value),
+    (NULL) or any non-RELEASED one (false). Keep in step with app/domain/environment_status.py.
+
+    Spelled as one correlated aggregate (#496): PostgreSQL can turn an EXISTS sublink into a hashed
+    subplan over all (unreleased) bookings when its statistics or work_mem make that look cheaper,
+    but it can only evaluate a correlated aggregate per environment, through an index lookup of
+    that environment's own children — whatever the plan."""
+    all_released = (
+        select(func.bool_and(BookingModel.status == BookingStatus.RELEASED.value))
+        .where(BookingModel.environment_id == EnvironmentModel.id)
+        .scalar_subquery()
     )
+    return all_released.is_not(true())
 
 
-def _list_stmt(user_id: str | None, *, label: str | None, include_released: bool):
-    """The environments-list query (children are fetched separately, only for the rows it returns)."""
-    stmt = (
+def _with_usernames():
+    """Environments with their owner's and dispatcher's usernames."""
+    return (
         select(EnvironmentModel, UserModel.username, _CreatorUser.username)
         .join(UserModel, cast(UserModel.id, String) == EnvironmentModel.user_id, isouter=True)
         .outerjoin(_CreatorUser, cast(_CreatorUser.id, String) == EnvironmentModel.created_by)
-        # id breaks created_at ties so the order is total — keyset pagination relies on it (#467).
-        .order_by(EnvironmentModel.created_at.desc(), EnvironmentModel.id.desc())
     )
-    if user_id is not None:
-        # Visible to user: owned, plus any dispatched on someone's behalf (created_by).
-        stmt = stmt.where(
-            or_(EnvironmentModel.user_id == user_id, EnvironmentModel.created_by == user_id)
-        )
+
+
+def _apply_filters(stmt, *, label: str | None, include_released: bool):
+    """The label and hidden-released filters, shared by the full list and every page walk."""
     if label is not None and label.strip():
         # An environment's name already serves as its label (#345); filter on it directly.
         stmt = stmt.where(EnvironmentModel.name.ilike(f"%{label.strip()}%"))
@@ -95,25 +99,65 @@ def _list_stmt(user_id: str | None, *, label: str | None, include_released: bool
     return stmt
 
 
-def _page_stmt(
+def _list_stmt(user_id: str | None, *, label: str | None, include_released: bool):
+    """The unpaginated environments-list query (children are fetched separately, only for the rows
+    it returns)."""
+    # id breaks created_at ties so the order is total — keyset pagination relies on it (#467).
+    stmt = _with_usernames().order_by(EnvironmentModel.created_at.desc(), EnvironmentModel.id.desc())
+    if user_id is not None:
+        # Visible to user: owned, plus any dispatched on someone's behalf (created_by).
+        stmt = stmt.where(
+            or_(EnvironmentModel.user_id == user_id, EnvironmentModel.created_by == user_id)
+        )
+    return _apply_filters(stmt, label=label, include_released=include_released)
+
+
+def _page_keys_stmt(
     user_id: str | None, *, label: str | None, include_released: bool, limit: int,
     after: KeysetCursor | None,
 ):
-    """One keyset page of `_list_stmt` plus a lookahead row (#467)."""
-    stmt = _list_stmt(user_id, label=label, include_released=include_released)
-    if after is not None:
-        # A row comparison is a single index condition on (created_at, id), so the backward
-        # scan starts at the cursor instead of reading the rows before it.
-        # Typed binds: the cursor always compares as (timestamptz, uuid), whatever Python subclass
-        # carried the values (asyncpg returns its own UUID type).
-        stmt = stmt.where(
-            tuple_(EnvironmentModel.created_at, EnvironmentModel.id)
-            < tuple_(
-                literal(after.created_at, EnvironmentModel.created_at.type),
-                literal(after.id, EnvironmentModel.id.type),
+    """Phase 1 of an environments page (#467, #496): the (created_at, id) keys of up to `limit + 1`
+    matching environments after `after`, newest first — the extra one only tells whether another
+    page exists.
+
+    All is one keyset walk of ix_environments_created_at_id. Mine is the union of owned and
+    dispatched, an OR that no index returns in page order, so it is one walk per scope, each on its
+    own index (ix_environments_owner_page, ix_environments_creator_page) and bounded by the viewer's
+    own history. The top `limit + 1` of the union is the top `limit + 1` of each walk's top
+    `limit + 1`; GROUP BY drops an environment the viewer both owns and dispatched.
+    """
+    size = limit + 1
+    scopes = [None] if user_id is None else [EnvironmentModel.user_id, EnvironmentModel.created_by]
+    walks = []
+    for owner_column in scopes:
+        walk = select(EnvironmentModel.created_at, EnvironmentModel.id)
+        if owner_column is not None:
+            walk = walk.where(owner_column == user_id)
+        if after is not None:
+            # A row comparison is a single index condition on (created_at, id), so the backward
+            # scan starts at the cursor instead of reading the rows before it.
+            # Typed binds: the cursor always compares as (timestamptz, uuid), whatever Python
+            # subclass carried the values (asyncpg returns its own UUID type).
+            walk = walk.where(
+                tuple_(EnvironmentModel.created_at, EnvironmentModel.id)
+                < tuple_(
+                    literal(after.created_at, EnvironmentModel.created_at.type),
+                    literal(after.id, EnvironmentModel.id.type),
+                )
             )
+        walk = _apply_filters(walk, label=label, include_released=include_released)
+        walks.append(
+            walk.order_by(EnvironmentModel.created_at.desc(), EnvironmentModel.id.desc()).limit(size)
         )
-    return stmt.limit(limit + 1)
+    if len(walks) == 1:
+        return walks[0]
+    keys = union_all(*walks).subquery("page_keys")
+    return (
+        select(keys.c.created_at, keys.c.id)
+        .group_by(keys.c.created_at, keys.c.id)
+        .order_by(keys.c.created_at.desc(), keys.c.id.desc())
+        .limit(size)
+    )
 
 
 def _to_entity(m: EnvironmentModel, bookings=None, owner_username=None, created_by_username=None) -> Environment:
@@ -268,15 +312,26 @@ class EnvironmentRepository:
         """One keyset page of the environments list, newest first (#467).
 
         `user_id=None` lists everyone's environments. The page starts strictly after `after`, and
-        one extra row is fetched only to tell whether another page exists. Children are loaded
-        for the kept rows alone, never for the lookahead row.
+        one extra key is fetched only to tell whether another page exists. Two phases (#496): the
+        page keys under the ordered-walk pin, then the rows, usernames and children for the kept
+        keys alone, never for the lookahead.
         """
-        stmt = _page_stmt(
-            user_id, label=label, include_released=include_released, limit=limit, after=after,
-        )
-        rows = (await session.execute(stmt)).all()
-        has_more = len(rows) > limit
-        rows = rows[:limit]
+        # Phase 1 under the ordered-walk pin: no sequential/bitmap scan, no sort, no JIT (#496).
+        async with _OrderedWalk(session):
+            keys = (await session.execute(_page_keys_stmt(
+                user_id, label=label, include_released=include_released, limit=limit, after=after,
+            ))).all()
+        has_more = len(keys) > limit
+        keys = keys[:limit]
+        # Phase 2, unpinned: the page's rows and usernames, then their children, by id.
+        rows_by_id = {}
+        if keys:
+            result = await session.execute(
+                _with_usernames().where(EnvironmentModel.id.in_([k.id for k in keys]))
+            )
+            rows_by_id = {row[0].id: row for row in result.all()}
+        # Key order is page order; an environment deleted between the phases is skipped.
+        rows = [rows_by_id[k.id] for k in keys if k.id in rows_by_id]
         children_by_env = await self._children_batch(session, [model.id for model, _, _ in rows])
         items = [
             _to_entity(model, bookings=children_by_env.get(model.id, []),
@@ -285,7 +340,7 @@ class EnvironmentRepository:
         ]
         next_cursor = None
         if has_more:
-            last = rows[-1][0]
+            last = keys[-1]
             next_cursor = KeysetCursor(created_at=last.created_at, id=last.id)
         return EnvironmentPage(items=items, next_cursor=next_cursor)
 

@@ -1952,6 +1952,16 @@ Always commit the generated migration file alongside the model change.
 > way, run `alembic upgrade head` first. When rolling back, revert the app before running
 > `alembic downgrade 0034`.
 
+> **Migration `0036` (environments page, #496)** adds two indexes on `environments`:
+> `ix_environments_owner_page (user_id, created_at, id)`, and
+> `ix_environments_creator_page (created_by, created_at, id) WHERE created_by IS NOT NULL`. With
+> them, the **Mine** filter on the Environments page reads only the viewer's own environments: those
+> they own, plus those they dispatched for someone else. Without them it reads everyone's history.
+> The migration only adds indexes, so it is safe for blue-green deploys. The build is not
+> concurrent. On a large `environments` table, writes to that table wait until the build ends.
+> Apply the migration and deploy the app in either order. The new app version lists the same pages
+> without `0036`, just more slowly for Mine, so run `alembic downgrade 0035` whenever you like.
+
 ---
 
 ## Scaling Workers
