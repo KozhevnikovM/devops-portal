@@ -8,11 +8,14 @@ On the browser environments page, "the environments that are returned" means the
 
 Each page request SHALL be bounded by the page size in three ways: environments returned, child bookings loaded, and rows rendered. A page SHALL NOT be located by skipping a row offset. Selecting a page SHALL read environments in page order through an index, starting at the cursor position. It SHALL NOT sort the matching environments, read environments that sort before the cursor, read the environments table sequentially, or compile the query just in time.
 
-The environment read SHALL be bounded as follows, by filter:
+The environment read SHALL be bounded as follows, by filter. These bounds limit cost. The page's contents are fixed by the other requirements and SHALL be the same whichever plan the database uses.
 - **All, no label, released shown:** at most one more environment index entry than the page size.
-- **Mine:** Mine is the union of two scopes: the environments the viewer owns, and those the viewer dispatched on someone's behalf. Each scope SHALL be readable through an index whose condition is the viewer's id, in page order, starting at the cursor. On that path the read is bounded by the viewer's own history and reads no other user's environment. The database MAY instead read a scope by walking all environments in page order and skipping other users' environments, but only where it estimates that walk as cheaper, which means a viewer who owns a large share of all environments. A viewer who owns a small share of the environments SHALL be served by the viewer-keyed path.
+- **Mine:** Mine is the union of two scopes: the environments the viewer owns, and those the viewer dispatched on someone's behalf.
+  - **Unconditional:** a Mine page SHALL contain exactly the environments of those scopes that match the other filters, each once, in page order, with the same next-page cursor, whichever plan the database uses.
+  - **Viewer-keyed path:** each scope SHALL be readable through an index whose condition is the viewer's id, in page order, starting at the cursor. When the database reads a scope on that path, the read is bounded by the viewer's own history and reads no other user's environment.
+  - **Planner's choice:** whether that path is used is a cost-based choice the database makes from its statistics. It MAY instead read a scope by walking all environments in page order and skipping other users' environments. That was measured for a viewer who owns a large share of all environments, and is possible for any viewer when statistics are stale. On that path this requirement does NOT bound the Mine read by the viewer's history.
 - **Released hidden:** non-matching environments within the scope (All, or the viewer's own under Mine) MAY be read and skipped. Each one costs one index lookup of its own children.
-- **Label:** the name filter is a substring match and no index serves it. A labelled page MAY read every environment of its scope older than the cursor when matches are sparse. That scope is the whole list under All, and the read of each Mine scope as described above under Mine. It is the only filter whose read is not bounded beyond its scope.
+- **Label:** the name filter is a substring match and no index serves it. A labelled page MAY read every environment of its scope older than the cursor when matches are sparse. That scope is the whole list under All. Under Mine it is the viewer's own environments on the viewer-keyed path, and all environments on a page-order walk. It is the only filter whose read is not bounded beyond its scope.
 
 #### Scenario: Large released history with a small active set
 - **WHEN** a user has many fully released environments and a few active ones, and views the environments page without `show_released`
@@ -49,26 +52,26 @@ The environment read SHALL be bounded as follows, by filter:
 - **THEN** the page contains only matching environments, and at most the page size of them
 - **AND** child bookings are loaded only for those environments, even though the database read past the non-matching ones in page order
 
-#### Scenario: Mine for a small-share user never reads other users' environments
-- **WHEN** a user's only visible environments are a small share of all environments and are older than many environments owned by others, statistics are current, and the user views the Mine list, with released shown and with released hidden
+#### Scenario: Mine for a small-share user uses the viewer-keyed path with current statistics
+- **WHEN** a user's only visible environments are a small share of all environments and are older than many environments owned by others, the tables were analysed after the data was written, and the user views the Mine list, with released shown and with released hidden
 - **THEN** the page contains only the user's environments, and at most the page size of them
-- **AND** the environments read for the page are only environments the user owns or dispatched, each read through an index whose condition is the user's id
+- **AND** the plan reads each Mine scope through an index whose condition is the user's id, so the environments read are only ones the user owns or dispatched
 - **AND** child bookings are loaded only for the environments on the page
 
-#### Scenario: Mine for a large-share user stays correct on either path
-- **WHEN** a user owns a large share of all environments and views the Mine list, once with the planner's own choice and once with the viewer-keyed path required
-- **THEN** both return the same environments in the same order, with the same next-page cursor
+#### Scenario: Mine pages are the same on either path
+- **WHEN** a user who owns a large share of all environments, and a user who owns a small share, each follow the Mine list from the first page to the last, once with the planner's own choice and once with the viewer-keyed indexes unavailable, so that every scope is read by a page-order walk of all environments
+- **THEN** both traversals return the same environments in the same order, with the same next-page cursors
 
 #### Scenario: Mine reads past the user's own released history only
-- **WHEN** a user who owns a small share of all environments has many fully released environments of their own and a few active ones, among many other users' environments, and views the Mine list without `show_released`
-- **THEN** the environments read for the page are the user's own environments only, newest first, up to the page's last match plus one
+- **WHEN** a user who owns a small share of all environments has many fully released environments of their own and a few active ones, among many other users' environments, the tables were analysed after the data was written, and the user views the Mine list without `show_released`
+- **THEN** the environments read for the page are the user's own environments only, newest first, no further into each scope than its page size plus one matches
 
 #### Scenario: Owned and dispatched environment is listed once
 - **WHEN** a dispatcher views the Mine list and an environment is both owned by them and dispatched by them
 - **THEN** that environment appears exactly once across all pages
 
 #### Scenario: Sparse label reads its scope only
-- **WHEN** a user who owns a small share of all environments filters the Mine list by a name that matches none of their environments, while many other users' environments match it
+- **WHEN** a user who owns a small share of all environments filters the Mine list by a name that matches none of their environments, while many other users' environments match it, and the tables were analysed after the data was written
 - **THEN** the page is empty and offers no Load more
 - **AND** the environments read are only the user's own
 

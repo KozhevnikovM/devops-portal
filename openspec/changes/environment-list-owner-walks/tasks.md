@@ -33,11 +33,17 @@
 
 ## 5. Postgres integration tests
 
-- [ ] 5.1 Build a committed, `VACUUM ANALYZE`d fixture dataset. It needs:
+- [ ] 5.1 Build the fixture dataset. It needs:
   - a heavy owner, a dispatcher with owner = creator rows, a low-share user and a rare user with only old environments;
   - mostly released history, empty environments, mixed-status environments, and 1–6 children each.
 
-  Follow the `tests/integration/test_queue_position_batch.py` pattern: VACUUM on an AUTOCOMMIT connection before seeding. Verify that the fixture builds and tears down cleanly.
+  Build it in this order, on an AUTOCOMMIT connection from `async_engine` where VACUUM is needed:
+  1. `VACUUM` `environments` and `bookings`, to clear dead index entries left by earlier rolled-back tests (the `tests/integration/test_queue_position_batch.py` pattern);
+  2. seed;
+  3. commit;
+  4. `VACUUM ANALYZE` `environments` and `bookings`, so the plan tests run on statistics of the seeded data.
+
+  Tear down by deleting the seeded rows. Verify that the fixture builds and tears down cleanly, and that `pg_stat_user_tables.last_analyze` is after the seed.
 - [ ] 5.2 Plan-shape tests on the keys query, for All/Mine × label none/dense/sparse × released shown/hidden × first/deep cursor, under `force_custom_plan` and `force_generic_plan`. Assert:
   - environments are read only via the three page indexes;
   - no `Seq Scan` or `Sort` on environments;
@@ -46,9 +52,9 @@
   - no JIT.
 
   Verify that they pass on PostgreSQL 16.
-- [ ] 5.3 Mine-bound tests for the low-share and rare users, released shown and hidden. Every environment scan has an `Index Cond` on `user_id` or `created_by`, and the rows read are no more than the user's own history (spec: "Mine for a small-share user never reads other users' environments" and "Mine reads past the user's own released history only"). Verify that they pass.
+- [ ] 5.3 Mine-bound tests on the analysed fixture (current statistics), for the low-share and rare users, released shown and hidden. Every environment scan has an `Index Cond` on `user_id` or `created_by`, and the rows read are no more than the user's own history (spec: "Mine for a small-share user uses the viewer-keyed path with current statistics" and "Mine reads past the user's own released history only"). Verify that they pass.
 - [ ] 5.4 Released-check test. With default settings and with `SET LOCAL work_mem = '256MB'`, the plan has no `hashed SubPlan`, no `Seq Scan` / `Bitmap Heap Scan` on bookings, and its child lookup is on `ix_bookings_environment_id`. Replace the two #466 asserts that name `ix_bookings_environment_id_unreleased`. Verify that it passes.
-- [ ] 5.5 Full-traversal equality. Following cursors to the end equals the unpaginated filtered list, for All/Mine × label none/dense/sparse × released shown/hidden, including the dispatcher's owner = creator rows (no duplicates), empty environments and mixed-status environments. Also: the heavy owner's pages are identical with the planner's own choice and with the global index disabled, and custom and generic plans give the same pages. Verify that it passes.
+- [ ] 5.5 Full-traversal equality. Following cursors to the end equals the unpaginated filtered list, for All/Mine × label none/dense/sparse × released shown/hidden, including the dispatcher's owner = creator rows (no duplicates), empty environments and mixed-status environments. Also: for the heavy and the low-share users, Mine traversal is identical with the planner's own choice and with `ix_environments_owner_page` / `ix_environments_creator_page` dropped inside the test transaction and rolled back (spec: "Mine pages are the same on either path"); and custom and generic plans give the same pages. Verify that it passes.
 - [ ] 5.6 Unfiltered bound. The existing "at most limit + 1 index entries" test still passes for All, released shown, no label, on the new keys statement.
 
 ## 6. Runtime check, docs and quality

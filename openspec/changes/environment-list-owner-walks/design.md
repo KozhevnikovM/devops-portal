@@ -14,7 +14,7 @@ The measurements behind every decision below are in `measurements.md` (20k / 100
 ## Goals / Non-Goals
 
 **Goals:**
-- Bound Mine by the viewer's own history on a path the planner can always take, and does take for any viewer who owns a small share of environments.
+- Give Mine a viewer-keyed path, bounded by the viewer's own history, that the planner can always take. With current statistics it took that path for every low-share and rare viewer measured. Mine's page contents are guaranteed on every plan; its read bound is guaranteed only on that path (spec, option (a) of the #508 review).
 - Make the hidden-released check one per-environment index lookup under every plan, so it never hashes all bookings.
 - Keep page selection free of JIT, sequential scans and sorts of matching rows, in custom and generic plans alike.
 - Change neither the page contents, the order nor the cursor. Full-traversal equality must hold, including owner = creator.
@@ -51,9 +51,9 @@ LIMIT :limit_plus_one
 - **Indexes.** `ix_environments_owner_page (user_id, created_at, id)`, and `ix_environments_creator_page (created_by, created_at, id) WHERE created_by IS NOT NULL`. The creator index is partial because most environments are not dispatched. `created_by = :me` implies `created_by IS NOT NULL`, so the creator branch can use the partial index. Neither index's predicate is implied by the other branch, so the #488 partial-index leak cannot occur.
 - **Correctness.** The top `limit + 1` of the union is the top `limit + 1` of each branch's top `limit + 1` (#479's argument). `GROUP BY (created_at, id)` drops an environment that both branches found, where the viewer owns it and also dispatched it. That case was measured: 0.2 % of the seeded rows have owner = creator. Under `enable_sort = off`, the merge is a Merge Append of two ordered walks feeding a Group, with no sort.
 - **All** keeps one walk on `ix_environments_created_at_id`.
-- **Measured at 400k (custom and generic plans, pinned).** On the default view (Mine, released hidden):
-  - a 0.5 % owner goes from 34–101 ms, reading 7k–201k rows, to about 1 ms reading 51 rows;
-  - a 20-environment user goes from 164 ms to under 1 ms, reading 20 rows.
+- **Measured at 400k.** The runs use custom and forced-generic plans under the app's own `_ORDERED_WALK_SETTINGS` (`SET LOCAL`), with this exact `UNION ALL` + `GROUP BY` statement (`probe/combo.py`). Every Mine plan was Merge Append → Group, with no Sort, no hashed SubPlan and no JIT. On the default view (Mine, released hidden):
+  - a 0.5 % owner goes from 34–101 ms, reading 7k–201k rows, to 0.7–1.0 ms reading 51 rows on the first page, and 8–9 ms reading 1,006 own rows on a deep page;
+  - a 20-environment user goes from 164 ms to 0.4–1.8 ms, reading 20 rows.
 
 *Alternatives:*
 - One index on `(user_id, created_at, id)` with `created_by` as a filter misses environments the viewer dispatched.
@@ -91,7 +91,7 @@ LIMIT :limit_plus_one
   - **No seq scan + top-N sort.** That plan was measured for Mine and labels: it reads the whole table, including rows before the cursor.
   - **No JIT.** Measured at +280 ms on the label and hidden plans. The forced penalty costs would make JIT more likely, as #485 found.
   - **Merge without a sort.**
-- **What it does not buy.** The pin cannot stop a Mine branch from walking `ix_environments_created_at_id` with the viewer as a filter. That walk is also sort-free, so it gets no penalty. The planner chose it for the 30 % owner (180 rows read against 102), because environment heap order correlates with `created_at`. This is why the spec bounds Mine only for small-share viewers, with correctness on either path (Risks).
+- **What it does not buy.** The pin cannot stop a Mine branch from walking `ix_environments_created_at_id` with the viewer as a filter. That walk is also sort-free, so it gets no penalty. In the pinned custom-plan run, the planner chose it for the 30 % owner's owned branch whenever a label was set: 626 rows read against 212 through the owner index for the dense label, and 400k against 120k for the sparse label. The reason is that environment heap order correlates with `created_at`. The generic plan used the owner index. Nothing in the planner's choice depends on the viewer's actual share, only on its statistics, so stale statistics can produce the same walk for a rare viewer. This is why the spec guarantees Mine's page on every plan, and its read bound only on the viewer-keyed path (Risks).
 - **Shared pin.** `_OrderedWalk`, its settings and its pin/unpin statements move from `booking_repo.py` to `app/infrastructure/repositories/_ordered_walk.py`, unchanged. `booking_repo` imports them from there. The existing unit tests that pin the call order and the restore move with them.
 - **Unpaginated `_list`** (the JSON list) keeps its single statement and its contract, and gets the new predicate. It is not pinned, because it has no `LIMIT` to protect.
 
@@ -115,23 +115,23 @@ Keeping it is the measured decision. The default view carries no label. The cost
 
 ### 6. How it is tested
 
-On Postgres, integration tests use a committed, vacuumed dataset: one heavy owner, a dispatcher with owner = creator rows, a low-share user, a rare user with old environments only, mostly released history, empty environments, and 1–6 children each. They assert:
+On Postgres, integration tests use a fixture built in this order: `VACUUM` (to clear dead index entries left by earlier rolled-back tests), seed, commit, `VACUUM ANALYZE`. The plan tests therefore run on statistics of the seeded data. The dataset has one heavy owner, a dispatcher with owner = creator rows, a low-share user, a rare user with old environments only, mostly released history, empty environments, and 1–6 children each. They assert:
 - **Plan shape.** These hold for each filter combination, with and without a cursor, under both `plan_cache_mode = force_custom_plan` and `force_generic_plan`:
   - environments are read only through `ix_environments_created_at_id`, `ix_environments_owner_page` or `ix_environments_creator_page`, always in page order;
   - no `Seq Scan` or `Sort` on environments;
   - the cursor appears as an `Index Cond`;
   - no `hashed SubPlan` anywhere;
   - no JIT in the keys query.
-- **Mine bound.** For the low-share and rare users, every environment read has an `Index Cond` on `user_id` or `created_by`, and the rows read are at most the user's own history. The heavy owner gets an equality test only (spec: either path).
+- **Mine bound, with current statistics.** For the low-share and rare users, every environment read has an `Index Cond` on `user_id` or `created_by`, and the rows read are at most the user's own history. This pins measured planner behaviour on analysed data; it is not a guarantee under stale statistics. The heavy owner gets equality tests only.
 - **Released check.** No hashed subplan and no bookings `Seq Scan`, including with `work_mem = 256MB`. The child lookup is on `ix_bookings_environment_id`. This replaces the two #466 asserts that named `ix_bookings_environment_id_unreleased`.
-- **Traversal equality.** Following cursors to the end equals the unpaginated filtered list for All/Mine × label none/dense/sparse × released shown/hidden. That covers empty and mixed-status environments and owner = creator, with no duplicates.
+- **Traversal equality.** Following cursors to the end equals the unpaginated filtered list for All/Mine × label none/dense/sparse × released shown/hidden. That covers empty and mixed-status environments and owner = creator, with no duplicates. For the heavy and the low-share users, Mine traversal is repeated with `ix_environments_owner_page` and `ix_environments_creator_page` dropped inside the test transaction and then rolled back. Every scope is then read by the global page-order walk, and the pages must be identical (spec: "Mine pages are the same on either path").
 - **Unfiltered bound.** At most `limit + 1` index entries, unchanged.
 - **Parity.** The model `__table_args__` and migration 0036 declare the same two indexes, with the same columns and partial predicate, and `tests/test_migration_chain.py` passes.
 - **Unit tests.** The keys statement for All and for Mine, with each optional predicate; the predicate's SQL spelling; and `list_page`'s call order: pin, keys, unpin, rows, children.
 
 ## Risks / Trade-offs
 
-- **[A Mine branch walks the global index with a filter.]** The planner does this when it estimates the viewer's share as large, for example with stale statistics on a user who used to be heavy. If the viewer is in fact rare, the read becomes history-wide again. → The spec states this. Both paths return the same page, and autoanalyze keeps the estimates current. A strict guarantee would need the global index made unusable for Mine, through a partial predicate that only All states. That is a contrived predicate and was rejected. It can be revisited if production stats show the flip.
+- **[A Mine branch walks the global index with a filter.]** The planner does this when it estimates the viewer's share as large, for example with stale statistics on a user who used to be heavy. If the viewer is in fact rare, the read becomes history-wide again. → The spec states it: page contents are unconditional, and the read bound applies only on the viewer-keyed path. Both paths return the same page, and a test forces the global walk to prove it. Autoanalyze keeps the estimates current. A strict guarantee would need the global index made unusable for Mine, through a partial predicate that only All states. That is a contrived predicate and was rejected. It can be revisited if production stats show the flip.
 - **[Two more indexes on `environments`.]** Environments are written once at order time and rarely updated (name, lease stamp), so write amplification is small. The indexes add about 2 × the size of `ix_environments_created_at_id`.
 - **[The aggregate reads every child of each examined environment.]** Blueprints bound the child count. The measured cost per row was flat.
 - **[The username cast join, `CAST(users.id AS VARCHAR) = environments.user_id`, cannot use `users_pkey`.]** Each page row is compared against every user: about 10k comparisons per page with 200 users. The same join is used across booking, namespace and static-VM reads. → Out of scope here. It is recorded as a follow-up issue to propose, because it is not specific to this list.

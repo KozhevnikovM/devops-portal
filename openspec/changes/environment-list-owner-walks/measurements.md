@@ -84,19 +84,41 @@ The app runs on asyncpg, which uses prepared statements. Under `plan_cache_mode 
 
 ## Candidate: owner/creator walks + aggregate released check + pin (400k)
 
-These runs add `(user_id, created_at, id)` and `(created_by, created_at, id) WHERE created_by IS NOT NULL`. Mine is a `UNION` of the two walks. "Not fully released" is spelled `(SELECT bool_and(status = 'RELEASED') FROM bookings WHERE environment_id = e.id) IS NOT TRUE`. The runs use `PREPARE` with custom and with generic plans, under the pin settings (seq/bitmap/sort/JIT off). Each cell is ms / environment rows read. (`probe/combo.py`)
+The candidate adds `(user_id, created_at, id)` and `(created_by, created_at, id) WHERE created_by IS NOT NULL`, and spells "not fully released" as `(SELECT bool_and(status = 'RELEASED') FROM bookings WHERE environment_id = e.id) IS NOT TRUE`. `probe/combo.py` runs the proposed page-keys statement (design.md, Decision 1):
+- All is one keyset walk.
+- Mine is the owned walk and the dispatched walk, merged by `UNION ALL` + `GROUP BY (created_at, id)` + `ORDER BY` + `LIMIT 51`.
+- The cursor, label and released predicates appear only when they are in effect.
 
-| Scope | Released | No label | Dense label | Sparse label |
-|---|---|---|---|---|
-| all | shown | 0.1 / 51 | 0.2 / 219 | 302–331 / 369k–400k |
-| all | hidden | 0.4–0.6 / 51 | 0.7 / 219 | 323–356 / 400k |
-| heavy (30 %) | shown | 0.6 / 102–180 † | 1.0–2.7 / 428–842 † | 172–382 / 120k–400k † |
-| heavy | hidden | 3.7–4.3 / 270 | 1.9–2.4 / 428 | 144–189 / 120k |
-| dispatcher | hidden | 0.8–1.4 / 51 | 1.0–2.7 / 200 | 77–126 / 60k |
-| viewer (0.5 %) | hidden | **1.0–1.6 / 51** | 9.9–12.5 / 2013 | 5.1–7.7 / 2013 |
-| rare | hidden | **0.7–0.9 / 20** | 0.4–0.7 / 20 | 0.3–0.6 / 20 |
+Each run is one transaction. It applies the app's own `_ORDERED_WALK_SETTINGS` with `SET LOCAL`, as `_OrderedWalk` does: `enable_seqscan`, `enable_bitmapscan`, `enable_sort` and `jit` off, `enable_indexscan` on. It then `PREPARE`s the statement under `plan_cache_mode = force_custom_plan` and under `force_generic_plan`. "deep" is a cursor at the middle of the scope's history.
 
-† For the heavy owner the custom plan walks `ix_environments_created_at_id` with `user_id` as a filter on the owned branch, even under the pin. Heap order follows `created_at`, so that walk is costed as cheaper. The generic plan uses the owner index.
+Each cell is ms / environment rows read, as a range over the custom and generic plans; "C / G" splits rows where the two plans differ.
+
+**Plan shape.** These hold in all 120 runs: Mine plans are Merge Append → Group; there is no `Sort`, no hashed SubPlan, no JIT, and no `Seq Scan` or `Bitmap Heap Scan` on environments or bookings; and the cursor is an `Index Cond` wherever it is given.
+
+| Scope | Released | Cursor | No label | Dense label | Sparse label |
+|---|---|---|---|---|---|
+| all | shown | first | 0.1 / 51 | 0.3 / 219 | 310.0–448.0 / C 381k / G 369k |
+| all | shown | deep | 0.1–0.3 / 51 | 0.3–0.4 / 222 | 157.3–202.2 / C 181k / G 169k |
+| all | hidden | first | 0.5–0.7 / 51 | 0.9–1.1 / 219 | 373.8–402.7 / 400k |
+| all | hidden | deep | 10.4–12.8 / 1627 | 13.6–18.2 / 5008 | 185.6–212.9 / 200k |
+| heavy (30 %) | shown | first | 0.3–0.5 / 52 | 0.4–0.9 / C 626 / G 212 † | 137.1–357.0 / C 400k / G 120k † |
+| heavy (30 %) | shown | deep | 0.4–0.7 / 52 | 0.5–1.0 / C 645 / G 216 † | 61.6–192.3 / C 200k / G 60k † |
+| heavy (30 %) | hidden | first | 0.9–1.0 / 52 | 1.2–1.4 / 212 | 113.0–113.7 / 120k |
+| heavy (30 %) | hidden | deep | 9.5–10.0 / 1270 | 13.0–15.5 / 4852 | 58.7–60.4 / 60k |
+| dispatcher | shown | first | 0.2 / 51 | 0.4 / 200 | 62.3–62.9 / 60k |
+| dispatcher | shown | deep | 0.2 / 51 | 0.4 / 186 | 33.5–35.6 / 30k |
+| dispatcher | hidden | first | 0.7–0.8 / 51 | 1.2 / 200 | 64.5–69.5 / 60k |
+| dispatcher | hidden | deep | 8.4 / 1155 | 13.9–15.0 / 5476 | 36.5–50.0 / 30k |
+| viewer (0.5 %) | shown | first | 0.2 / 51 | 0.6 / 217 | 3.6–4.0 / 2013 |
+| viewer (0.5 %) | shown | deep | 0.2–0.3 / 51 | 0.5–0.6 / 186 | 2.0 / 1006 |
+| viewer (0.5 %) | hidden | first | **0.7–1.0 / 51** | 7.0–8.9 / 2013 | 3.6–5.0 / 2013 |
+| viewer (0.5 %) | hidden | deep | 8.4–9.2 / 1006 | 3.6–3.9 / 1006 | 2.0 / 1006 |
+| rare (20 envs) | shown | first | 0.2 / 20 | 0.2 / 20 | 0.1 / 20 |
+| rare (20 envs) | shown | deep | 0.2 / 9 | 0.2 / 9 | 0.1–0.2 / 9 |
+| rare (20 envs) | hidden | first | **0.5–1.8 / 20** | 0.3 / 20 | 0.3–0.4 / 20 |
+| rare (20 envs) | hidden | deep | 0.4 / 9 | 0.3 / 9 | 0.2 / 9 |
+
+† The owned branch of the heavy owner's *custom* plan walks `ix_environments_created_at_id` with `user_id` as a `Filter`, under the pin. That walk is sort-free too, so the pin does not penalise it. Heap order follows `created_at`, so it is costed as cheaper. The generic plan uses the owner index, reading 212 rows for the dense label and 120k for the sparse label. That choice depends only on statistics, so it is why the spec guarantees Mine's page on every plan and its read bound only on the viewer-keyed path.
 
 Released-check spellings alone, 400k, first page, `jit = off` (`probe/hid.py`):
 
