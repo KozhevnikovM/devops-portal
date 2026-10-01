@@ -111,7 +111,7 @@ The options were:
 - a #485 scan budget, which means short pages and "Search older";
 - keeping it as it is.
 
-Keeping it is the measured decision. The default view carries no label. The cost is now scoped to the viewer's own history under Mine. And the bookings precedent can still be applied later behind the same spec wording, which already names the label as the only read not bounded beyond its scope.
+Keeping it is the measured decision. The default view carries no label. Under Mine, the cost is now scoped to the viewer's own history whenever the viewer-keyed path is used. And the bookings precedent can still be applied later behind the same spec wording, which already names the label as the only read not bounded beyond its scope.
 
 ### 6. How it is tested
 
