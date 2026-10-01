@@ -1,0 +1,65 @@
+{# The environments list section (#494): heading, filter controls, first page of rows, empty state
+   and the first Load more. Included by environments.html and rendered alone by
+   GET /environments/list, so a filter change replaces the whole section (outerHTML). #}
+<section id="environments-section">
+    <div class="flex items-center justify-between mb-3">
+        <h2 class="text-sm text-gray-400 uppercase tracking-widest">Environments</h2>
+        <div class="flex items-center gap-1">
+            <input
+                type="text" id="environments-label-filter" name="label" value="{{ label_filter or '' }}"
+                placeholder="Filter by name"
+                hx-get="/environments/list?filter={{ active_filter }}{% if show_released %}&show_released=1{% endif %}"
+                hx-trigger="keyup changed delay:400ms, search"
+                hx-target="#environments-section"
+                hx-swap="outerHTML"
+                class="text-xs px-3 py-1 rounded border bg-gray-800 text-gray-300 border-gray-700 focus:outline-none focus:border-green-500 w-36 mr-2"
+            >
+            <button
+                hx-get="/environments/list?filter=mine{% if show_released %}&show_released=1{% endif %}{% if label_filter %}&label={{ label_filter | urlencode }}{% endif %}"
+                hx-target="#environments-section"
+                hx-swap="outerHTML"
+                class="text-xs px-3 py-1 rounded border transition-colors {% if active_filter != 'all' %}bg-gray-700 text-green-400 border-green-700{% else %}bg-gray-800 text-gray-500 border-gray-700 hover:text-gray-300{% endif %}"
+            >Mine</button>
+            <button
+                hx-get="/environments/list?filter=all{% if show_released %}&show_released=1{% endif %}{% if label_filter %}&label={{ label_filter | urlencode }}{% endif %}"
+                hx-target="#environments-section"
+                hx-swap="outerHTML"
+                class="text-xs px-3 py-1 rounded border transition-colors {% if active_filter == 'all' %}bg-gray-700 text-green-400 border-green-700{% else %}bg-gray-800 text-gray-500 border-gray-700 hover:text-gray-300{% endif %}"
+            >All</button>
+            <button
+                hx-get="/environments/list?filter={{ active_filter }}{% if not show_released %}&show_released=1{% endif %}{% if label_filter %}&label={{ label_filter | urlencode }}{% endif %}"
+                hx-target="#environments-section"
+                hx-swap="outerHTML"
+                class="text-xs px-3 py-1 rounded border transition-colors ml-2 {% if show_released %}bg-gray-700 text-green-400 border-green-700{% else %}bg-gray-800 text-gray-500 border-gray-700 hover:text-gray-300{% endif %}"
+            >{% if show_released %}Hide released{% else %}Show released{% endif %}</button>
+        </div>
+    </div>
+    <div class="bg-gray-900 border border-gray-800 rounded-lg overflow-x-auto">
+        {% if environments %}
+        <table class="w-full text-sm">
+            <thead>
+                <tr class="border-b border-gray-700 text-left">
+                    <th class="px-4 py-2 text-xs text-gray-500 font-normal uppercase tracking-widest">Name</th>
+                    <th class="px-4 py-2 text-xs text-gray-500 font-normal uppercase tracking-widest">Status</th>
+                    <th class="px-4 py-2 text-xs text-gray-500 font-normal uppercase tracking-widest">Resources</th>
+                    <th class="px-4 py-2 text-xs text-gray-500 font-normal uppercase tracking-widest">Owner</th>
+                    <th class="px-4 py-2 text-xs text-gray-500 font-normal uppercase tracking-widest">Expires</th>
+                    <th class="px-4 py-2 text-xs text-gray-500 font-normal uppercase tracking-widest">Actions</th>
+                </tr>
+            </thead>
+            <tbody id="environments-tbody" hx-ext="sse" sse-connect="/events/stream">
+                {% for environment in environments %}
+                {% set is_first_row = loop.first %}
+                {% include "partials/environment_row.html" %}
+                {% endfor %}
+                {% include "partials/environment_load_more.html" %}
+            </tbody>
+        </table>
+        {% else %}
+        <table class="w-full text-sm">
+            <tbody id="environments-tbody" hx-ext="sse" sse-connect="/events/stream"></tbody>
+        </table>
+        <p class="text-gray-600 text-sm px-4 py-6">No environments yet — order one above.</p>
+        {% endif %}
+    </div>
+</section>

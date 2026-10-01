@@ -48,3 +48,18 @@ def decode_cursor(token: str | None) -> KeysetCursor:
     if created_at.tzinfo is None:
         raise InvalidCursorError("cursor timestamp has no timezone")
     return KeysetCursor(created_at=created_at, id=env_id)
+
+
+def filter_params(filter: str, show_released: bool, label: str | None) -> dict[str, str]:
+    """The list filters as query parameters, in canonical form (#494).
+
+    Shared by the Load more URLs and the page URL a list-section fragment pushes to history, so
+    both always echo the same filters the same way: `filter`, then `show_released=1` only when
+    shown, then `label` only when set.
+    """
+    params = {"filter": filter}
+    if show_released:
+        params["show_released"] = "1"
+    if label:
+        params["label"] = label
+    return params

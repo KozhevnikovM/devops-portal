@@ -34,13 +34,15 @@ Add `GET /book/vm/list`, `GET /book/namespace/list` and `GET /environments/list`
 
 `/list` vs `/rows`: `/rows` returns a *continuation* (rows + next control, appended with `outerHTML` on the Load more `<tr>`). `/list` returns a *replacement section*. They are separate contracts, so they get separate paths.
 
-### D2. `HX-Push-Url` response header carries the canonical page URL
+### D2. `HX-Push-Url` response header carries the canonical filter query, relative to the page
 
-The filter controls stop using `hx-push-url="true"`, which would push the fragment URL. The fragment endpoint sets the `HX-Push-Url` response header to `<page_path>?<canonical query>`, built on the server from the parsed parameters. The canonical query has `filter`, then `show_released=1` only when true, then `label` only when non-empty (`urlencode`). This is the same shape `_list_page` / `_list_context` already use for Load more URLs, so a small shared helper builds both.
+The filter controls stop using `hx-push-url="true"`, which would push the fragment URL. The fragment endpoint sets the `HX-Push-Url` response header to the query-only relative URL `?<canonical query>`, built on the server from the parsed parameters. The browser resolves it against the current document URL, so the page path and any prefix stay as they are. The canonical query has `filter`, then `show_released=1` only when true, then `label` only when non-empty (`urlencode`). This is the same shape `_list_page` / `_list_context` already use for Load more URLs, so a small shared helper builds both.
 
 Why server-side: the label `<input>` sends its current value as a request parameter. A static `hx-push-url="<url>"` attribute can't include the typed value, but the server sees it. htmx 1.9 honours `HX-Push-Url` on any swap response.
 
-`/` and `/book/vm` render the same page. The VM fragment always pushes `/book/vm?…`, matching `page_path` today.
+Why relative, not `<page_path>?…`: `docs/admin-guide.md` Option B serves the app under a subpath (`/dp`). nginx strips the prefix and adds it back only in HTML bodies (`sub_filter`) and `Location`/`Refresh` headers (`proxy_redirect`). An absolute `HX-Push-Url: /book/vm?…` would escape both, and the address bar would lose `/dp`, so reload and history-cache misses would 404. A query-only URL can't lose a prefix. Today's `hx-push-url="true"` avoided the problem only because it pushed the request URL, which had already been rewritten in the body. On `/`, the push gives `/?filter=…`, which serves the same VM page; on `/book/vm` it gives `/book/vm?filter=…`.
+
+*Alternatives considered:* an absolute header plus proxy docs (nginx can't rewrite arbitrary response headers without extra modules), and a page URL embedded in the body and pushed by a JS hook (client code for no gain).
 
 ### D3. Swap the whole section with `outerHTML`
 
@@ -72,3 +74,21 @@ The routes stay thin, the use-case and repository layers are untouched, and no n
 ## Migration Plan
 
 No data or config migration. Deploy is a normal app rollout. Rollback means reverting the commit. Old and new HTML both target endpoints that exist in either version, except that new HTML targets `/list`, which a rolled-back server would 404. A reload fixes that, and it only affects tabs opened during the rollback window.
+
+## Measurements
+
+`tests/integration/test_list_filter_response_cost.py` runs on the test Postgres. Dataset: 60 VM, 60 namespace and 60 environment rows matching the label, so every list offers Load more, plus 5 rows in every catalog. The request is the same filter for every row of the table: `?filter=all&show_released=1&label=<token>`. "Before" is the page route on `main` (task 1.1). "After" is the list-section fragment on this branch.
+
+| Page | User | Statements before → after | Response bytes before → after | Catalog reads before → after |
+|---|---|---|---|---|
+| VM | owner | 8 → 4 | 243,296 → 228,142 (−6.2%) | 4 → 0 |
+| VM | admin | 9 → 4 | 246,915 → 228,142 (−7.6%) | 5 → 0 |
+| Namespace | owner | 8 → 4 | 224,588 → 215,367 (−4.1%) | 4 → 0 |
+| Namespace | admin | 9 → 4 | 224,871 → 215,367 (−4.2%) | 5 → 0 |
+| Environments | owner | 6 → 2 | 164,619 → 155,127 (−5.8%) | 3 → 0 |
+| Environments | admin | 6 → 2 | 164,902 → 155,127 (−5.9%) | 3 → 0 |
+
+Reading the numbers:
+- **Statements and catalog reads** drop by about half, to the list read alone (plus queue positions on the bookings pages), whatever the catalog sizes.
+- **Bytes** drop by only about 4–8% here. The 50 rendered rows dominate the response, at roughly 4 KB of markup per row, so the page layout and form are a small share. The saving grows with catalog size, since every image, hardware config, namespace, static VM, role and blueprint is an `<option>` in the form.
+- **Row markup size** is unchanged by this change and is outside its scope.

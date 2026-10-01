@@ -381,11 +381,12 @@ Also accepted on the same-shaped `/book/vm` and `/book/namespace` pages.
 - **Load more.** When more bookings exist, a **Load more** row fetches `GET /book/vm/rows?cursor=…` or `GET /book/namespace/rows?cursor=…`. `GET /` uses `/book/vm/rows`. The request carries the same `filter`/`show_released`/`label`, and the resource types come from the path. The response is an HTML fragment: the next page's rows, plus a new **Load more** row if there is a further page. It replaces only the **Load more** row, so rows already shown aren't re-rendered.
 - **Cursor.** The `cursor` is an opaque token the server issues. A missing or malformed one returns `400`. Filters and visibility are re-applied on every request, so a hand-made cursor can't widen what you see.
 - **Filters.** Changing a filter starts again from the first page.
+- **Filter changes (#494).** The Mine/All, label and Show released controls fetch `GET /book/vm/list` or `GET /book/namespace/list`, with the same `filter`/`show_released`/`label`. The response is an HTML fragment containing the whole list section: filter controls, the first page of rows, the empty state and the first **Load more** row. It replaces the section in place, which drops any pages already appended. The response does no order-form catalog reads (images, hardware configs, namespaces, static VMs, roles). It sets `HX-Push-Url` to a query-only URL (`?filter=…`), so the address bar keeps the page's own path and any reverse-proxy prefix. Page URLs (`/`, `/book/vm`, `/book/namespace`) always return the full page, whatever `HX-*` request headers are sent, so reload, bookmarks and Back/Forward work as before.
 - **Bounded reads.** Each page reads a bounded number of rows, whatever the size of the booking history.
 - **Label filter (#485).** With a `label`, each request examines at most `BOOKINGS_LABEL_SCAN_SIZE` bookings (default 200) of the page's Mine/All, type and released range, and lists those whose label matches, up to the page size. A rare label can therefore give a short page, or an empty one, while older matches exist. The next-page row then reads **Search older bookings** instead of **Load more**, and its cursor continues after the last booking examined, which may not be one that was shown. An empty first page says no match was found among the most recent bookings. When the whole range has been examined, no next-page row is shown and the empty state says no bookings match. Following the rows to the end lists every match exactly once.
 - **JSON list.** `GET /api/bookings` is not paginated. Its order only gains the same id tiebreak for bookings created at the same instant.
 
-These `/book/*/rows` routes return HTML fragments and are absent from the schema.
+These `/book/*/rows` and `/book/*/list` routes return HTML fragments and are absent from the schema.
 
 ---
 
@@ -1502,7 +1503,10 @@ DELETE /api/environments/{id}?on_behalf_of=alice
 > `filter`/`show_released`/`label`, and appends the next page below the rows already shown. That
 > response is an HTML fragment: the rows, plus a new **Load more** row if there is a further page.
 > The `cursor` is an opaque token the server issues. A missing or malformed one returns `400`.
-> Changing a filter starts again from the first page. The JSON list (`GET /api/environments`) is not
+> Changing a filter starts again from the first page. The filter controls fetch
+> `GET /environments/list` (#494), with the same `filter`/`show_released`/`label`. It returns the whole list
+> section as an HTML fragment, without the order form or its catalog reads, and sets a query-only
+> `HX-Push-Url`. `GET /environments` always returns the full page. The JSON list (`GET /api/environments`) is not
 > paginated. The order form has an optional **Namespace** dropdown (default *"Blueprint default"*)
 > listing the available namespaces by `name (cluster)`; picking one overrides the blueprint's
 > namespace item (same single-namespace rule as the API — a bad choice renders the `400` inline).

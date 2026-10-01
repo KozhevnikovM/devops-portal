@@ -6,7 +6,7 @@ Changing a filter on the VM, namespace or environments page (Mine/All, the label
 
 - Add a dedicated **list-section fragment** endpoint per list page: `GET /book/vm/list`, `GET /book/namespace/list` and `GET /environments/list`. It takes the same `filter` / `show_released` / `label` parameters as the page. It returns the complete replacement list section: heading and filter controls, rows, empty state, and the first-page Load more / Search older bookings control. It reuses the existing list/projection/pagination path (`_list_page` / `_list_for`). It never reads an order-form catalog.
 - The filter controls target the new endpoint instead of the full page, and replace the whole section (`outerHTML`). They no longer use `hx-select`.
-- The fragment response sets `HX-Push-Url` to the canonical **full-page** URL for the new filters. The browser address bar, bookmarks, reload and Back/Forward therefore always point at the full page, never at the fragment.
+- The fragment response sets `HX-Push-Url` to a query-only relative URL (`?filter=…`) for the new filters. The browser resolves it against the page the user is on, keeping any reverse-proxy subpath prefix. The address bar, bookmarks, reload and Back/Forward therefore always point at the full page, never at the fragment.
 - Full-page routes (`/`, `/book/vm`, `/book/namespace`, `/environments`) always return the full page, whatever request headers are present. The choice between fragment and page depends only on the URL, never on `HX-Request`.
 - The list section markup moves into shared partials. The full page includes them, and the fragment endpoint renders them. The two cannot drift.
 - Load more (`…/rows`) is unchanged. It still appends later pages and carries the filters in effect.

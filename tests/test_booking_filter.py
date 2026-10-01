@@ -66,7 +66,7 @@ def test_default_filter_lists_mine(setup):
 
 
 def test_vm_filter_tabs_use_named_book_vm_path(setup):
-    """#192: the VM filter tabs target /book/vm, not the bare "/".
+    """#192: the VM filter tabs target /book/vm, not the bare "/" — now its list fragment (#494).
 
     The bare "/?filter=…" URL isn't matched by the reverse-proxy sub_filter rules, so it 404s
     behind a /dp subpath. Rendering the tabs against /book/vm (covered by the ="/book" rule)
@@ -90,8 +90,8 @@ def test_vm_filter_tabs_use_named_book_vm_path(setup):
         resp = client.get("/")
 
     assert resp.status_code == 200
-    assert 'hx-get="/book/vm?filter=all"' in resp.text
-    assert 'hx-get="/book/vm?filter=mine"' in resp.text
+    assert 'hx-get="/book/vm/list?filter=all"' in resp.text
+    assert 'hx-get="/book/vm/list?filter=mine"' in resp.text
     # The bare-"/" filter URL (unreachable behind the /dp proxy) is gone.
     assert 'hx-get="/?filter=' not in resp.text
 

@@ -21,7 +21,9 @@ from app.infrastructure.auth import require_user
 from app.infrastructure.database.session import get_async_session
 from app.presentation import deps
 from app.presentation.middleware.correlation_id import get_request_id
-from app.presentation.pagination import InvalidCursorError, decode_cursor, encode_cursor
+from app.presentation.pagination import (
+    InvalidCursorError, decode_cursor, encode_cursor, filter_params,
+)
 from app.presentation.templating import templates
 
 router = APIRouter()
@@ -96,11 +98,7 @@ async def _list_page(
     # The Load more URL echoes the filters in effect, so every page matches the first one.
     load_more_url = None
     if page.next_cursor:
-        query = {"cursor": encode_cursor(page.next_cursor), "filter": filter}
-        if show_released:
-            query["show_released"] = "1"
-        if label:
-            query["label"] = label
+        query = {"cursor": encode_cursor(page.next_cursor), **filter_params(filter, show_released, label)}
         load_more_url = f"{page_path}/rows?{urlencode(query)}"
     return {
         "bookings": page.items,
@@ -117,16 +115,30 @@ async def _list_page(
     }
 
 
-async def _render_bookings_page(
-    request, session, current_user, *, booking_type, page_path, active_nav, filter, show_released,
-    label=None,
+async def _list_section_context(
+    session, current_user, *, booking_type, page_path, filter, show_released, label,
 ):
+    """Template context of a bookings list section: the first page under the given filters.
+
+    Shared by the page and the list-section fragment (#494), so both render the same section.
+    """
     # The VM page lists both provisioned and static VMs; other pages list their one type.
     # Always the first page — a bookmarked or pushed URL opens at the top (#479).
     list_context = await _list_page(
         session, current_user,
         resource_types=_VM_PAGE_TYPES if booking_type == "VM" else _NAMESPACE_PAGE_TYPES,
         page_path=page_path, filter=filter, show_released=show_released, label=label,
+    )
+    return {"booking_type": booking_type, "page_path": page_path, **list_context}
+
+
+async def _render_bookings_page(
+    request, session, current_user, *, booking_type, page_path, active_nav, filter, show_released,
+    label=None,
+):
+    list_context = await _list_section_context(
+        session, current_user, booking_type=booking_type, page_path=page_path,
+        filter=filter, show_released=show_released, label=label,
     )
     vm_images = await _image_repo.list_active(session)
     hw_configs = await _hw_config_repo.list_active(session)
@@ -145,11 +157,29 @@ async def _render_bookings_page(
             "available_namespaces": available_namespaces,
             "available_static_vms": available_static_vms,
             "roles": roles,
-            "booking_type": booking_type,
-            "page_path": page_path,
             "active_nav": active_nav,
             **list_context,
         },
+    )
+
+
+async def _render_list_section(
+    request, session, current_user, *, booking_type, page_path, filter, show_released, label,
+):
+    """The list section alone, for a filter change (#494): no form, no catalog reads.
+
+    HX-Push-Url records the page URL for these filters, never this fragment's own URL, so reload,
+    bookmarks and Back/Forward always reach the full page. It is query-only, so the browser keeps
+    the page's path and any reverse-proxy subpath prefix, which a header escapes (nginx rewrites
+    only bodies and Location).
+    """
+    list_context = await _list_section_context(
+        session, current_user, booking_type=booking_type, page_path=page_path,
+        filter=filter, show_released=show_released, label=label,
+    )
+    return templates.TemplateResponse(
+        request, "partials/booking_list_section.html", list_context,
+        headers={"HX-Push-Url": f"?{urlencode(filter_params(filter, show_released, label))}"},
     )
 
 
@@ -186,6 +216,21 @@ async def vm_bookings_page(
     )
 
 
+@router.get("/book/vm/list", response_class=HTMLResponse, include_in_schema=False)
+async def vm_booking_list_section(
+    request: Request,
+    filter: str = "mine",
+    show_released: bool = False,
+    label: str | None = None,
+    session: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(require_user),
+):
+    return await _render_list_section(
+        request, session, current_user, booking_type="VM", page_path="/book/vm",
+        filter=filter, show_released=show_released, label=label,
+    )
+
+
 @router.get("/book/vm/rows", response_class=HTMLResponse, include_in_schema=False)
 async def vm_booking_rows_page(
     request: Request,
@@ -214,6 +259,21 @@ async def namespace_bookings_page(
     return await _render_bookings_page(
         request, session, current_user,
         booking_type="NAMESPACE", page_path="/book/namespace", active_nav="namespace",
+        filter=filter, show_released=show_released, label=label,
+    )
+
+
+@router.get("/book/namespace/list", response_class=HTMLResponse, include_in_schema=False)
+async def namespace_booking_list_section(
+    request: Request,
+    filter: str = "mine",
+    show_released: bool = False,
+    label: str | None = None,
+    session: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(require_user),
+):
+    return await _render_list_section(
+        request, session, current_user, booking_type="NAMESPACE", page_path="/book/namespace",
         filter=filter, show_released=show_released, label=label,
     )
 
