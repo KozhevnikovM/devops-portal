@@ -1,5 +1,6 @@
 import logging
 from datetime import datetime, timedelta, timezone
+from collections.abc import Sequence
 from typing import cast as type_cast
 from uuid import UUID
 
@@ -404,7 +405,8 @@ _UNPIN_ORDERED_WALK = text(
 
 
 class _OrderedWalk:
-    """`async with _OrderedWalk(session):` runs its body under the page key query's plan pin."""
+    """`async with _OrderedWalk(session):` runs its body under the ordered-walk plan pin (the page
+    key query, #479; the queue-position read, #495)."""
 
     def __init__(self, session: AsyncSession):
         self._session = session
@@ -575,14 +577,28 @@ def _oldest_queued_stmt(resource_type: str):
     )
 
 
-def _queue_rank_stmt(resource_type: str, created_at: datetime):
-    """Bookings of the type queued ahead of `created_at`. The literal QUEUED predicate lets
-    ix_bookings_queued_rank serve it, so it reads only the queue, never history (#479)."""
-    return select(func.count(BookingModel.id)).where(
-        BookingModel.resource_type == resource_type,
-        BOOKING_QUEUED,
-        BookingModel.created_at < created_at,
-    )
+def _queue_rank_stmt(newest_by_type: dict[str, datetime], booking_ids: list[UUID]):
+    """FIFO positions of `booking_ids` in one statement (#495).
+
+    One branch per resource type walks that type's queue in ix_bookings_queued_rank order (the
+    literal QUEUED predicate lets the partial index serve it, so history is never read, #479) up
+    to the newest requested booking of the type — each entry once, however many are requested.
+    rank() is 1 + the number of strictly earlier entries, so tied created_at share a position;
+    the id filter sits above the window, so it cannot change any rank.
+    """
+    branches = [
+        select(
+            BookingModel.id.label("id"),
+            func.rank().over(order_by=BookingModel.created_at).label("position"),
+        ).where(
+            BookingModel.resource_type == resource_type,
+            BOOKING_QUEUED,
+            BookingModel.created_at <= newest,
+        )
+        for resource_type, newest in newest_by_type.items()
+    ]
+    ranked = (branches[0] if len(branches) == 1 else union_all(*branches)).subquery()
+    return select(ranked.c.id, ranked.c.position).where(ranked.c.id.in_(booking_ids))
 
 
 def _assign_resource_and_ready(session, booking_model, resource_type: str, resource) -> None:
@@ -890,9 +906,26 @@ class BookingRepository:
             await _environment_repo().start_lease_if_ready(session, booking.environment_id)
         return _to_entity(booking)
 
-    async def queue_position(self, session: AsyncSession, resource_type: str, created_at: datetime) -> int:
-        result = await session.execute(_queue_rank_stmt(resource_type, created_at))
-        return result.scalar_one() + 1
+    async def queue_positions(
+        self, session: AsyncSession, bookings: Sequence[Booking | BookingListItem],
+    ) -> dict[UUID, int]:
+        """FIFO positions of the given (expected QUEUED) bookings, by id, in one statement.
+
+        A booking no longer QUEUED when this runs has no entry. No statement when empty.
+        Runs under the ordered-walk pin (#495 D5): when the queue is most of the table the
+        planner would otherwise prefer a Seq Scan + Sort that reads non-queued rows too.
+        """
+        if not bookings:
+            return {}
+        newest_by_type: dict[str, datetime] = {}
+        for b in bookings:
+            key = b.resource_type.value
+            newest_by_type[key] = max(b.created_at, newest_by_type.get(key, b.created_at))
+        async with _OrderedWalk(session):
+            result = await session.execute(
+                _queue_rank_stmt(newest_by_type, [b.id for b in bookings])
+            )
+            return {row.id: row.position for row in result}
 
     # Sync variants used by Celery workers
     def sync_get(self, session: Session, booking_id: UUID) -> Booking:

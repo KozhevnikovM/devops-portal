@@ -101,7 +101,7 @@ def test_booking_row_shows_via_marker_for_dispatched():
     try:
         with patch("app.presentation.routes.bookings._repo") as repo:
             repo.get = AsyncMock(return_value=booking)
-            repo.queue_position = AsyncMock(return_value=None)
+            repo.queue_positions = AsyncMock(return_value={})
             resp = cl.get(f"/bookings/{booking.id}/row")
     finally:
         app.dependency_overrides.clear()
@@ -117,7 +117,7 @@ def test_self_order_row_has_no_via_marker():
     try:
         with patch("app.presentation.routes.bookings._repo") as repo:
             repo.get = AsyncMock(return_value=booking)
-            repo.queue_position = AsyncMock(return_value=None)
+            repo.queue_positions = AsyncMock(return_value={})
             resp = cl.get(f"/bookings/{booking.id}/row")
     finally:
         app.dependency_overrides.clear()
@@ -134,7 +134,7 @@ def test_creating_dispatcher_sees_release_button_not_creds():
     try:
         with patch("app.presentation.routes.bookings._repo") as repo:
             repo.get = AsyncMock(return_value=booking)
-            repo.queue_position = AsyncMock(return_value=None)
+            repo.queue_positions = AsyncMock(return_value={})
             resp = cl.get(f"/bookings/{booking.id}/row")
     finally:
         app.dependency_overrides.clear()

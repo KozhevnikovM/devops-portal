@@ -28,7 +28,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.use_cases._permissions import can_manage
 from app.domain.entities import User
-from app.domain.enums import BookingStatus
 from app.domain.exceptions import BookingNotFoundError, EnvironmentNotFoundError
 from app.infrastructure.auth import require_user
 from app.infrastructure.database.session import AsyncSessionLocal, get_async_session
@@ -39,6 +38,7 @@ from app.infrastructure.events import (
     user_channel,
 )
 from app.presentation import deps
+from app.presentation.routes._queue import attach_queue_positions
 from app.presentation.routes.environments import _annotate
 from app.presentation.templating import templates
 
@@ -72,10 +72,7 @@ async def _render_booking_event(current_user: User, booking_id: str) -> str | No
             return None
         if not can_manage(owner_id=booking.user_id, created_by=booking.created_by, user=current_user):
             return None
-        if booking.status == BookingStatus.QUEUED:
-            booking.queue_position = await _booking_repo.queue_position(
-                session, booking.resource_type.value, booking.created_at
-            )
+        await attach_queue_positions(session, _booking_repo, [booking])
     html = templates.get_template("partials/booking_row.html").render(
         booking=booking, current_user=current_user,
     )

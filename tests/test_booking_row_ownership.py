@@ -68,7 +68,7 @@ def test_owner_gets_their_row():
     booking = _make_booking(str(owner.id))
     with patch("app.presentation.routes.bookings._repo") as mock_repo:
         mock_repo.get = AsyncMock(return_value=booking)
-        mock_repo.queue_position = AsyncMock(return_value=None)
+        mock_repo.queue_positions = AsyncMock(return_value={})
         resp = _client(owner).get(f"/bookings/{booking.id}/row")
     assert resp.status_code == 200
 
@@ -78,7 +78,7 @@ def test_admin_gets_foreign_row():
     booking = _make_booking("someone-else")
     with patch("app.presentation.routes.bookings._repo") as mock_repo:
         mock_repo.get = AsyncMock(return_value=booking)
-        mock_repo.queue_position = AsyncMock(return_value=None)
+        mock_repo.queue_positions = AsyncMock(return_value={})
         resp = _client(admin).get(f"/bookings/{booking.id}/row")
     assert resp.status_code == 200
 

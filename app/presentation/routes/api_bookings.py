@@ -14,7 +14,7 @@ from app.application.use_cases._permissions import can_manage
 from app.application.use_cases._roles import resolve_config_roles
 from app.domain.booking_list import BookingListItem
 from app.domain.entities import Booking, User
-from app.domain.enums import BookingStatus, ResourceType
+from app.domain.enums import ResourceType
 from app.domain.exceptions import (
     BookingError, BookingNotFoundError, BookingPermissionError, NamespaceUnavailableError,
     QuotaExceededError, RoleNotFoundError, StaticVMUnavailableError,
@@ -25,6 +25,7 @@ from app.infrastructure.database.session import get_async_session
 from app.presentation import deps
 from app.presentation.middleware.correlation_id import get_request_id
 from app.presentation.routes._dispatch import resolve_owner
+from app.presentation.routes._queue import attach_queue_positions
 
 router = APIRouter(prefix="/bookings", tags=["bookings"])
 
@@ -146,13 +147,6 @@ def _created(b: Booking) -> dict:
     return base
 
 
-async def _attach_queue_position(session: AsyncSession, booking: Booking) -> None:
-    if booking.status == BookingStatus.QUEUED:
-        booking.queue_position = await _repo.queue_position(
-            session, booking.resource_type.value, booking.created_at
-        )
-
-
 async def _resolve_catalog_id(session, id_, name, get_by_name, label):
     """Resolve a catalog entry to its id: an explicit id wins; else look up by name.
 
@@ -266,7 +260,7 @@ async def create_booking(
 
     # The owner is the target (when on behalf of) or the caller.
     booking.owner_username = body.on_behalf_of or current_user.username
-    await _attach_queue_position(session, booking)
+    await attach_queue_positions(session, _repo, [booking])
     return _created(booking)
 
 

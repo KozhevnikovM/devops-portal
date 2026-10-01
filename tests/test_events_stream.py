@@ -71,7 +71,7 @@ async def test_owner_receives_booking_event():
     booking = _booking(str(owner.id))
     with patch.object(mod, "_booking_repo") as mock_repo:
         mock_repo.get = AsyncMock(return_value=booking)
-        mock_repo.queue_position = AsyncMock(return_value=None)
+        mock_repo.queue_positions = AsyncMock(return_value={})
         chunk = await mod._render_booking_event(owner, str(booking.id))
 
     assert chunk is not None
@@ -87,7 +87,7 @@ async def test_admin_receives_foreign_booking_event():
     booking = _booking("someone-else")
     with patch.object(mod, "_booking_repo") as mock_repo:
         mock_repo.get = AsyncMock(return_value=booking)
-        mock_repo.queue_position = AsyncMock(return_value=None)
+        mock_repo.queue_positions = AsyncMock(return_value={})
         chunk = await mod._render_booking_event(admin, str(booking.id))
 
     assert chunk is not None
@@ -211,7 +211,7 @@ async def test_render_booking_event_opens_and_closes_its_own_short_lived_session
     with patch.object(mod, "_booking_repo") as mock_repo, \
             patch.object(mod, "AsyncSessionLocal", return_value=fake_session_cm) as mock_sessionmaker:
         mock_repo.get = AsyncMock(return_value=booking)
-        mock_repo.queue_position = AsyncMock(return_value=None)
+        mock_repo.queue_positions = AsyncMock(return_value={})
         chunk = await mod._render_booking_event(owner, str(booking.id))
 
     assert chunk is not None
@@ -390,7 +390,7 @@ class _Db:
         )
         self.booking_repo = self._stack.enter_context(patch.object(self._mod, "_booking_repo"))
         self.booking_repo.get = AsyncMock(return_value=self._booking)
-        self.booking_repo.queue_position = AsyncMock(return_value=None)
+        self.booking_repo.queue_positions = AsyncMock(return_value={})
         self.env_repo = self._stack.enter_context(patch.object(self._mod, "_env_repo"))
         self.env_repo.get = AsyncMock(return_value=self._environment)
         return self
@@ -422,7 +422,7 @@ async def test_unrelated_event_opens_no_session_and_looks_nothing_up(kind):
     assert chunks == []
     db.sessionmaker.assert_not_called()
     db.booking_repo.get.assert_not_awaited()
-    db.booking_repo.queue_position.assert_not_awaited()
+    db.booking_repo.queue_positions.assert_not_awaited()
     db.env_repo.get.assert_not_awaited()
 
 
@@ -530,7 +530,7 @@ def test_booking_row_has_sse_swap_when_non_terminal(_client):
     booking = _booking(str(user.id))  # PROVISIONING — non-terminal
     with patch("app.presentation.routes.bookings._repo") as mock_repo:
         mock_repo.get = AsyncMock(return_value=booking)
-        mock_repo.queue_position = AsyncMock(return_value=None)
+        mock_repo.queue_positions = AsyncMock(return_value={})
         resp = cl.get(f"/bookings/{booking.id}/row")
     assert resp.status_code == 200
     assert f'sse-swap="booking-{booking.id}"' in resp.text

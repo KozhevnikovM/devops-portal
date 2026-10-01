@@ -14,6 +14,7 @@ The one pragmatic concession (see `docs/refactor/repository-interfaces.md`): the
 `AsyncSession`/`Session` still appears in signatures — the established "use cases receive a session
 parameter" contract — rather than introducing a Unit-of-Work abstraction.
 """
+from collections.abc import Sequence
 from datetime import datetime
 from typing import Protocol, runtime_checkable
 from uuid import UUID
@@ -21,6 +22,7 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
+from app.domain.booking_list import BookingListItem
 from app.domain.entities import (
     Booking, Environment, EnvironmentBlueprint, HWConfig, Namespace, Role, StaticVM, VMImage,
 )
@@ -62,7 +64,9 @@ class BookingRepositoryPort(Protocol):
         self, session: AsyncSession, booking_id: UUID, label: str | None, actor_id: str,
     ) -> None: ...
     async def promote_next_queued(self, session: AsyncSession, resource_type: str) -> Booking | None: ...
-    async def queue_position(self, session: AsyncSession, resource_type: str, created_at: datetime) -> int: ...
+    async def queue_positions(
+        self, session: AsyncSession, bookings: Sequence[Booking | BookingListItem],
+    ) -> dict[UUID, int]: ...
     async def get_live_standalone_namespace_booking(
         self, session: AsyncSession, user_id: str, namespace_id: UUID,
     ) -> Booking | None: ...

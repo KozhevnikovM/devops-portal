@@ -182,7 +182,7 @@ def _render_page(user: User, bookings: list[Booking], *, filter: str = "mine") -
          patch(f"{_ROUTES}._static_vm_repo") as svm, \
          patch(f"{_ROUTES}._role_repo") as role:
         repo.list_page = AsyncMock(return_value=KeysetPage(items=bookings))
-        repo.queue_position = AsyncMock(return_value=None)
+        repo.queue_positions = AsyncMock(return_value={})
         for r in (img, hw, role):
             r.list_active = AsyncMock(return_value=[])
         for r in (ns, svm):
@@ -243,7 +243,7 @@ def test_row_refresh_embeds_no_secret():
     svm = _static_vm(owner)
     with patch(f"{_ROUTES}._repo") as repo:
         repo.get = AsyncMock(return_value=svm)
-        repo.queue_position = AsyncMock(return_value=None)
+        repo.queue_positions = AsyncMock(return_value={})
         resp = _client(owner).get(f"/bookings/{svm.id}/row")
 
     assert resp.status_code == 200

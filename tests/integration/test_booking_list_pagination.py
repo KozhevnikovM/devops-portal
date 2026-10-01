@@ -602,8 +602,10 @@ async def test_queue_rank_reads_only_the_queue(async_session):
         for i in range(5)
     ])
     await async_session.execute(text("ANALYZE bookings"))
-    stmt = _queue_rank_stmt("NAMESPACE", _BASE)
-    plan = await _explain_analyze(async_session, _sql(stmt))
+    # The bulk rank read (#495) as the repository runs it: under the ordered-walk pin.
+    stmt = _queue_rank_stmt({"NAMESPACE": _BASE}, queued)
+    async with _OrderedWalk(async_session):
+        plan = await _explain_analyze(async_session, _sql(stmt))
     scans = [n for n in _nodes(plan) if n.get("Relation Name") == "bookings"]
     assert [n["Index Name"] for n in scans] == ["ix_bookings_queued_rank"], plan
     total_queued = (await async_session.execute(text(

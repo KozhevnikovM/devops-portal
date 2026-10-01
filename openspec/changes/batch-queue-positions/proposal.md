@@ -4,7 +4,7 @@ A bookings page still runs one queue-position `COUNT` per `QUEUED` row (#495). `
 
 ## What Changes
 
-- Read the queue positions of all `QUEUED` rows on a bookings page in **one** statement. Run no rank statement when the page has no queued rows. The initial page, the filter-change list fragment (#494) and Load more (`…/rows`) all use this one path.
+- Read the queue positions of all `QUEUED` rows on a bookings page in **one** rank statement. It runs under the same transaction-local plan pin as #479's page query (two constant pin/restore statements), so the ordered queue walk is guaranteed even when the queue dominates the table. Run no rank statement, and no pin, when the page has no queued rows. The initial page, the filter-change list fragment (#494) and Load more (`…/rows`) all use this one path.
 - Keep the rank contract exactly as it is. Queues are global per resource type and do not depend on the viewer, owner filter or page. Position is `1 + (number of QUEUED bookings of the same type created strictly earlier)`, so bookings with tied timestamps share a position. No `row_number()` or id tie-break.
 - The bulk read returns only the requested bookings' positions. It walks each relevant type's queue once, in index order, up to the latest visible queued booking of that type. It does not run one correlated scan per row inside a single statement.
 - Single-booking paths use the same rank read with one booking, so list and row ranks cannot drift. These paths are the row refresh, the HTMX/JSON create responses, the SSE row update and the label edit (`PATCH /bookings/{id}/label`, which today loses the position on a queued row). Extend, release and force-release cannot leave a booking `QUEUED`, so they need no position. A row listed as `QUEUED` that is promoted or released before ranks are read gets no position. It shows "—" until its next live update, instead of a position from a different snapshot.
@@ -20,7 +20,7 @@ None.
 
 ### Modified Capabilities
 
-- `booking-listing`: adds a requirement that a page's queue positions are read together in a bounded number of statements. It also pins the rank semantics (global per type, tied timestamps share a position), the per-request work guarantee, the snapshot behaviour for rows whose status changed, and list/row parity.
+- `booking-listing`: modifies "Booking page work is bounded per request" so that the queue-position read may carry its own plan constraint, scoped to that read alone. Also adds a requirement that a page's queue positions are read together in a bounded number of statements. It also pins the rank semantics (global per type, tied timestamps share a position), the per-request work guarantee, the snapshot behaviour for rows whose status changed, and list/row parity.
 
 ## Impact
 
