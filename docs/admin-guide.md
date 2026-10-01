@@ -451,6 +451,7 @@ location /dp/ {
     sub_filter '="/auth/'    '="/dp/auth/';
     sub_filter '="/admin'    '="/dp/admin';
     sub_filter '="/book'     '="/dp/book';          # covers /book and /bookings
+    sub_filter '="/environments' '="/dp/environments';  # page, row refresh, /list and /rows fragments
     sub_filter '="/profile'  '="/dp/profile';
     sub_filter '="/api'      '="/dp/api';
 

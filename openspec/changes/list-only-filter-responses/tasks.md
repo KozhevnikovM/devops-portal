@@ -66,7 +66,18 @@
 
   Note the results in the PR.
 
+- [x] 6.2 (Code review.) Exercise the documented `/dp` subpath proxy for real. Run the Option B block from `docs/admin-guide.md` in an nginx container in front of the app, and drive the VM and environments pages in Chromium through `/dp`. Verify that:
+  - the filter `/list` request, Load more `/rows` and the pushed URL all stay under `/dp`;
+  - a cache-miss Back refetches the `/dp` page URL;
+  - reloading a filtered `/dp` URL opens the full page.
+
+  Verify also that the same run against the guide's previous config (no `/environments` rule) fails, with the environments filter request escaping to `/environments/list`.
+
 ## 7. Docs and quality
 
 - [x] 7.1 Update `docs/api-reference.md` next to the `/rows` fragment notes (bookings and environments) to describe `GET /book/vm/list`, `/book/namespace/list` and `/environments/list`: list-section HTML fragments with `HX-Push-Url`, absent from the schema. Verify: the doc renders and mentions all three.
-- [x] 7.2 Run the `py-review` skill on the changed Python files and fix the findings. Verify: ruff/mypy/bandit report clean for the changed files.
+- [x] 7.3 (Code review.) Add the missing `sub_filter '="/environments'` rule to the Option B proxy config in `docs/admin-guide.md`. Without it, the environments page's root-absolute URLs (including the `/environments/list` filter request) escape `/dp`. Add `tests/test_subpath_proxy_docs.py`, which reads the guide's rules and checks them against every root-absolute URL attribute in the templates and in the rendered list pages. Verify that it passes, and that removing the rule fails 9 cases: 5 templates (`base.html` nav, `booking_row.html`'s environment link, and the environment section, order-form and row partials), 3 rendered pages (`/`, `/environments`, `/environments/list`), and the rule-presence check.
+- [x] 7.2 Run the `py-review` skill on the changed Python files and fix the findings. Verify that the change introduces no ruff, mypy or bandit finding.
+  - New files report none.
+  - Modified files report exactly the findings they have on `main`, line for line. These are I001 import order and PIE807 in untouched test code, and a TRY004 in `_parse_vars_yaml`; fixing that one would change the exception type its callers catch.
+  - FastAPI's `Depends(...)`/`Form(...)` argument defaults are declared immutable in `ruff.toml` (`extend-immutable-calls`). B008 was a false positive on every route (244 in `app/`), not a defect. Rule selection is otherwise ruff's default.

@@ -84,27 +84,28 @@ async def seeded(async_session):
         async_session.add(EnvironmentBlueprintModel(name=f"{token}-bp-{i}", is_active=True))
     await async_session.flush()
 
-    common = dict(user_id=str(owner.id), ttl_minutes=60, expires_at=PERMANENT_EXPIRES_AT)
+    common = {"user_id": str(owner.id), "ttl_minutes": 60, "expires_at": PERMANENT_EXPIRES_AT}
     rows = []
     for i in range(_ROWS):
         created = _BASE - timedelta(seconds=i)
         status = "RELEASED" if i % 5 == 0 else "READY"
-        rows.append(dict(common, id=uuid4(), resource_type="VM", status=status,
-                         image_id=image_ids[0], image_name="ubuntu", hw_config_id=hw_ids[0],
-                         hw_config_name="small", vm_ip="10.1.0.1", vm_password=_PASSWORD,
-                         label=f"{token}-vm-{i}", created_at=created))
-        rows.append(dict(common, id=uuid4(), resource_type="NAMESPACE", status=status,
-                         label=f"{token}-ns-{i}", created_at=created))
+        rows.append({**common, "id": uuid4(), "resource_type": "VM", "status": status,
+                     "image_id": image_ids[0], "image_name": "ubuntu", "hw_config_id": hw_ids[0],
+                     "hw_config_name": "small", "vm_ip": "10.1.0.1", "vm_password": _PASSWORD,
+                     "label": f"{token}-vm-{i}", "created_at": created})
+        rows.append({**common, "id": uuid4(), "resource_type": "NAMESPACE", "status": status,
+                     "label": f"{token}-ns-{i}", "created_at": created})
     await async_session.execute(insert(BookingModel), rows)
 
     env_rows, child_rows = [], []
     for i in range(_ROWS):
         env_id = uuid4()
-        env_rows.append(dict(id=env_id, name=f"{token}-env-{i}", user_id=str(owner.id),
-                             ttl_minutes=60, expires_at=PERMANENT_EXPIRES_AT,
-                             construction_complete=True, created_at=_BASE - timedelta(seconds=i)))
-        child_rows.append(dict(common, id=uuid4(), resource_type="VM", status="READY",
-                               environment_id=env_id, created_at=_BASE - timedelta(seconds=i)))
+        env_rows.append({"id": env_id, "name": f"{token}-env-{i}", "user_id": str(owner.id),
+                         "ttl_minutes": 60, "expires_at": PERMANENT_EXPIRES_AT,
+                         "construction_complete": True,
+                         "created_at": _BASE - timedelta(seconds=i)})
+        child_rows.append({**common, "id": uuid4(), "resource_type": "VM", "status": "READY",
+                           "environment_id": env_id, "created_at": _BASE - timedelta(seconds=i)})
     await async_session.execute(insert(EnvironmentModel), env_rows)
     await async_session.execute(insert(BookingModel), child_rows)
     await async_session.flush()
