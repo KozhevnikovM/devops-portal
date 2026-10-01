@@ -1,0 +1,6 @@
+# FastAPI declares dependencies and form fields as argument defaults (`Depends(...)`, `Form(...)`).
+# They are markers FastAPI reads once at startup, not shared mutable defaults, so bugbear's B008
+# ("function call in argument defaults") does not apply to them. No other setting is changed:
+# rule selection stays ruff's default.
+[lint.flake8-bugbear]
+extend-immutable-calls = ["fastapi.Depends", "fastapi.Form"]

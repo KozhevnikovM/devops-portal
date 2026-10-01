@@ -17,7 +17,9 @@ from app.domain.exceptions import (
 from app.infrastructure.auth import require_user
 from app.infrastructure.database.session import get_async_session
 from app.presentation.middleware.correlation_id import get_request_id
-from app.presentation.pagination import InvalidCursorError, decode_cursor, encode_cursor
+from app.presentation.pagination import (
+    InvalidCursorError, decode_cursor, encode_cursor, filter_params,
+)
 from app.presentation.routes.api_environments import (
     _blueprint_repo, _derived_status, _env_repo, _namespace_repo, _order_use_case, _release_use_case,
     _update_name_use_case,
@@ -60,17 +62,31 @@ def _list_context(filter: str, show_released: bool, label: str | None, next_curs
     """
     load_more_url = None
     if next_cursor:
-        query = {"cursor": next_cursor, "filter": filter}
-        if show_released:
-            query["show_released"] = "1"
-        if label:
-            query["label"] = label
+        query = {"cursor": next_cursor, **filter_params(filter, show_released, label)}
         load_more_url = f"/environments/rows?{urlencode(query)}"
     return {
         "active_filter": filter,
         "show_released": show_released,
         "label_filter": label,
         "load_more_url": load_more_url,
+    }
+
+
+async def _list_section_context(
+    session, current_user, *, filter: str, show_released: bool, label: str | None,
+):
+    """Template context of the environments list section: the first page under the given filters.
+
+    Shared by the page and the list-section fragment (#494), so both render the same section.
+    """
+    # Always the first page — a bookmarked or pushed URL opens at the top (#467).
+    environments, next_cursor = await _list_for(
+        session, current_user, filter=filter, show_released=show_released, label=label,
+    )
+    return {
+        "environments": environments,
+        "current_user": current_user,
+        **_list_context(filter, show_released, label, next_cursor),
     }
 
 
@@ -83,8 +99,7 @@ async def environments_page(
     session: AsyncSession = Depends(get_async_session),
     current_user: User = Depends(require_user),
 ):
-    # Always the first page — a bookmarked or pushed URL opens at the top (#467).
-    environments, next_cursor = await _list_for(
+    list_context = await _list_section_context(
         session, current_user, filter=filter, show_released=show_released, label=label,
     )
     blueprints = await _blueprint_repo.list_active(session)
@@ -93,14 +108,35 @@ async def environments_page(
     return templates.TemplateResponse(
         request, "environments.html",
         {
-            "environments": environments,
             "blueprints": blueprints,
             "available_namespaces": available_namespaces,
             "held_namespaces": held_namespaces,
-            "current_user": current_user,
             "active_nav": "environment",
-            **_list_context(filter, show_released, label, next_cursor),
+            **list_context,
         },
+    )
+
+
+@router.get("/environments/list", response_class=HTMLResponse, include_in_schema=False)
+async def environment_list_section(
+    request: Request,
+    filter: str = "mine",
+    show_released: bool = False,
+    label: str | None = None,
+    session: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(require_user),
+):
+    """The list section alone, for a filter change (#494): no order form, no catalog reads.
+
+    HX-Push-Url records the page URL for these filters, never this fragment's own URL. It is
+    query-only, so the browser keeps the page's path and any reverse-proxy subpath prefix.
+    """
+    list_context = await _list_section_context(
+        session, current_user, filter=filter, show_released=show_released, label=label,
+    )
+    return templates.TemplateResponse(
+        request, "partials/environment_list_section.html", list_context,
+        headers={"HX-Push-Url": f"?{urlencode(filter_params(filter, show_released, label))}"},
     )
 
 

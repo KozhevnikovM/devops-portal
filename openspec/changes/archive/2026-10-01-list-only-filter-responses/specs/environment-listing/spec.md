@@ -14,7 +14,7 @@ Serving the fragment SHALL NOT read any order-form catalog. That means no bluepr
 
 Changing the Mine / All filter, the name filter or the Show released toggle on the environments page SHALL request the list-section fragment. It SHALL NOT request the full page. The returned section SHALL replace the page's list section as a whole. Every previously shown row SHALL be discarded, including rows appended by earlier Load more requests, together with any Load more control. No list section SHALL end up nested inside another.
 
-The fragment response SHALL tell the browser to record, as the current history entry, the full-page URL `/environments` with the filter parameters in effect. It SHALL NOT be the fragment's own URL.
+The fragment response SHALL tell the browser to record, as the current history entry, the environments page URL with the filter parameters in effect. That URL SHALL keep any path prefix under which the portal is served, for example behind a reverse proxy at a subpath. It SHALL NOT be the fragment's own URL.
 
 `GET /environments` SHALL always return the full page. This holds for ordinary navigation, reloads, direct URL access and history restoration. It holds whatever the request headers are, including `HX-Request` and `HX-History-Restore-Request`. Whether a response is a list fragment SHALL be decided by the requested path alone, never by request headers.
 
@@ -50,8 +50,12 @@ The list-section fragment SHALL require an authenticated user and SHALL refuse u
 
 #### Scenario: History records the page URL
 - **WHEN** a user selects All on the environments page
-- **THEN** the browser's current URL becomes `/environments` with the All filter
+- **THEN** the browser's current URL becomes the environments page URL with the All filter
 - **AND** it is not the fragment URL
+
+#### Scenario: History keeps a subpath prefix
+- **WHEN** the portal is served behind a reverse proxy at the subpath `/dp` and a user selects All on the environments page
+- **THEN** the browser's current URL becomes `/dp/environments` with the All filter
 
 #### Scenario: Back and Forward return the right list
 - **WHEN** a user toggles Show released, then selects All, then goes Back, then Forward

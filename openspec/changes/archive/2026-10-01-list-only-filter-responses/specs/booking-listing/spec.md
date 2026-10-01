@@ -14,7 +14,7 @@ Serving the fragment SHALL NOT read any order-form catalog. That means no images
 
 Changing the Mine / All filter, the label filter or the Show released toggle on a bookings page SHALL request that page's list-section fragment. It SHALL NOT request the full page. The returned section SHALL replace the page's list section as a whole. Every previously shown row SHALL be discarded, including rows appended by earlier next-page requests, together with any next-page control. No list section SHALL end up nested inside another.
 
-The fragment response SHALL tell the browser to record, as the current history entry, the full-page URL of the page for the filters in effect. That is the page's path with the same filter parameters. It SHALL NOT be the fragment's own URL. A reload, a bookmark or a direct visit to the recorded URL SHALL therefore open the full page with those filters.
+The fragment response SHALL tell the browser to record, as the current history entry, the URL of the page the user is on with the filter parameters in effect. That URL SHALL keep the page's path and any path prefix under which the portal is served, for example behind a reverse proxy at a subpath. It SHALL NOT be the fragment's own URL. A reload, a bookmark or a direct visit to the recorded URL SHALL therefore open the full page with those filters.
 
 The full-page routes SHALL always return the full page. This holds for ordinary navigation, reloads, direct URL access and history restoration. It holds whatever the request headers are, including `HX-Request` and `HX-History-Restore-Request`. Whether a response is a list fragment SHALL be decided by the requested path alone, never by request headers.
 
@@ -65,6 +65,10 @@ The list-section fragment SHALL require an authenticated user and SHALL refuse u
 - **WHEN** a user selects All with Show released on the namespace page
 - **THEN** the browser's current URL becomes the namespace page URL with the All filter and Show released
 - **AND** it is not the fragment URL
+
+#### Scenario: History keeps a subpath prefix
+- **WHEN** the portal is served behind a reverse proxy at the subpath `/dp` and a user selects All on the VM page at `/dp/book/vm`
+- **THEN** the browser's current URL becomes `/dp/book/vm` with the All filter
 
 #### Scenario: Back and Forward return the right list
 - **WHEN** a user selects All, then types a label, then goes Back, then Forward
