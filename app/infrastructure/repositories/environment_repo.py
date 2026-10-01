@@ -121,10 +121,14 @@ def _page_keys_stmt(
     page exists.
 
     All is one keyset walk of ix_environments_created_at_id. Mine is the union of owned and
-    dispatched, an OR that no index returns in page order, so it is one walk per scope, each on its
-    own index (ix_environments_owner_page, ix_environments_creator_page) and bounded by the viewer's
-    own history. The top `limit + 1` of the union is the top `limit + 1` of each walk's top
-    `limit + 1`; GROUP BY drops an environment the viewer both owns and dispatched.
+    dispatched, an OR that no index returns in page order, so it is one walk per scope. Each scope
+    can be read through its own viewer-keyed index (ix_environments_owner_page,
+    ix_environments_creator_page). When the planner takes that path, the read is bounded by the
+    viewer's own history. It may instead walk ix_environments_created_at_id and filter on the
+    viewer (measured for a heavy owner, and possible for anyone on stale statistics), which reads
+    other users' environments too. The page is the same on either path. The top `limit + 1` of the
+    union is the top `limit + 1` of each walk's top `limit + 1`; GROUP BY drops an environment the
+    viewer both owns and dispatched.
     """
     size = limit + 1
     scopes = [None] if user_id is None else [EnvironmentModel.user_id, EnvironmentModel.created_by]
