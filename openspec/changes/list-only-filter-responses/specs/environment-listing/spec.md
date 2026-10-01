@@ -37,7 +37,7 @@ The list-section fragment SHALL require an authenticated user and SHALL refuse u
 #### Scenario: Empty filter result shows the empty state
 - **WHEN** a user filters by a name that no visible environment has
 - **THEN** the response is a complete list section with the environments empty-state message and no Load more control
-- **AND** it still carries the live-update subscription, so an environment ordered afterwards can appear in it
+- **AND** it still carries the same live-update subscription as the full page's empty state
 
 #### Scenario: Filtering after Load more restarts the list
 - **WHEN** a user has activated Load more on the environments page and then toggles Show released

@@ -50,7 +50,7 @@
   - A non-admin's All environments list keeps row-action gating.
 
   Verify: `pytest tests/test_list_section_fragment.py`.
-- [ ] 5.6 Extend the 1.1 integration test to also measure `…/list` for the same request. Assert fewer statements and fewer bytes than the page, and zero statements touching `vm_images`, `hw_configs`, `static_vms`, `roles`, `environment_blueprints`, `environment_blueprint_items`, or a `namespaces` availability/held read. Verify: `TEST_POSTGRES_URL=… pytest -m integration tests/integration/test_list_filter_response_cost.py -s` passes. Record the before/after numbers in a "Measurements" section of `design.md` and in the PR description.
+- [ ] 5.6 Extend the 1.1 integration test to also measure `…/list` for the same request. Assert fewer statements and fewer bytes than the page. Assert that the call-counting spies on the order-form catalog repository methods (design D5) record zero calls on `…/list` and at least one on the page route. Do not ban statements by table name, because the list query legitimately joins `static_vms` and `namespaces`. Verify: `TEST_POSTGRES_URL=… pytest -m integration tests/integration/test_list_filter_response_cost.py -s` passes. Record the before/after numbers in a "Measurements" section of `design.md` and in the PR description.
 - [ ] 5.7 Run the full fast suite, `pytest tests/ -m "not integration"`, and verify it passes.
 
 ## 6. Runtime verification
