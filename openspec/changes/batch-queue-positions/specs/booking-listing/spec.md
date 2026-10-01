@@ -20,7 +20,7 @@ The queue-position read SHALL return positions only for the page's `QUEUED` book
 
 All positions on a page SHALL come from one consistent view of the queues. A booking that was listed as `QUEUED` but is no longer `QUEUED` when positions are read SHALL be shown with no position. It SHALL NOT be shown with a position from a different view.
 
-The single-row refresh, the live row update and the create responses SHALL compute a queued booking's position by the same rule. For the same booking and unchanged queue, the position in a list row SHALL equal the position in that booking's refreshed row.
+Every response that renders a booking's row SHALL, when the booking is `QUEUED` at render time, show its queue position by the same rule. This includes the single-row refresh, the live row update, the create responses and the label edit. A response for an action that leaves the booking in a status other than `QUEUED` (extend, release, admin force-release) shows no position. For the same booking and unchanged queue, the position in a list row SHALL equal the position in that booking's refreshed row.
 
 #### Scenario: One statement for many queued rows
 - **WHEN** a bookings page lists more than one `QUEUED` booking
@@ -65,6 +65,10 @@ The single-row refresh, the live row update and the create responses SHALL compu
 - **WHEN** the page's queue positions are read on PostgreSQL, on a dataset with a large active queue of one type and a large `RELEASED` and `FAILED` history
 - **THEN** the read examines only `QUEUED` booking index entries of the page's queued resource types, up to the newest queued booking on the page of each type
 - **AND** it examines each of those entries at most once, however many queued rows the page has
+
+#### Scenario: Label edit keeps the queue position
+- **WHEN** the owner saves a new label on a `QUEUED` booking that is third in its type's queue
+- **THEN** the returned row shows the new label and queue position 3
 
 #### Scenario: List and row positions match
 - **WHEN** a `QUEUED` booking's row is rendered from a bookings page and from the single-row refresh, with no change to the queue in between

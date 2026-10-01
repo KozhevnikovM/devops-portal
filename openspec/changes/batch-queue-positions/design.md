@@ -4,7 +4,7 @@ See proposal.md (Why). Current state:
 
 - `_list_page` (`app/presentation/routes/bookings.py`) awaits `_attach_queue_position` once per listed item. For a `QUEUED` item, that calls `BookingRepository.queue_position(resource_type, created_at)`. The query behind it, `_queue_rank_stmt`, is `SELECT count(id) FROM bookings WHERE resource_type = :t AND status = 'QUEUED' AND created_at < :c`, plus 1.
 - `ix_bookings_queued_rank` is a partial index on `(resource_type, created_at) WHERE status = 'QUEUED'` (migration 0035). Each count walks its type's queue from the head up to the booking. So K queued rows on a page cost K round trips and about K × (queue prefix) index entries.
-- The same per-booking call is repeated in `api_bookings._attach_queue_position` (create response), in `bookings.booking_row` / the create fragment, and in `events._render_booking_event` (SSE).
+- The same per-booking call is repeated in `api_bookings._attach_queue_position` (create response), in `bookings.booking_row` / the create fragment, and in `events._render_booking_event` (SSE). `update_booking_label` (`PATCH /bookings/{id}/label`) also re-renders the row and is available while a booking is `QUEUED`, but attaches no rank, so saving a label on a queued row shows "Queued — position —" on `main` today (PR #506 review).
 - The list items (`BookingListItem`) already carry `id`, `status`, `resource_type` and `created_at` from the list read. The rank read needs nothing else from them.
 - The page selection may run with planner constraints (#479 Decision 10). Those constraints are reset before later reads in the request, and the rank read is one of those later reads.
 
@@ -68,9 +68,11 @@ Today's behaviour is different: `count(created_at < c)` returns a number even fo
 
 `queue_position(resource_type, created_at)` is removed. A shared presentation helper does the work that `_attach_queue_position` did, for both one booking and a list of them: it filters the `QUEUED` items, calls `queue_positions` once and assigns `.queue_position`. Callers:
 - `_list_page`, which covers first page, filter fragment and Load more;
-- `booking_row` and the HTMX create response in `bookings.py`;
+- `booking_row`, the HTMX create response and `update_booking_label` in `bookings.py`;
 - the create response in `api_bookings.py`;
 - `_render_booking_event` in `events.py`.
+
+The rule for callers: any route that renders `booking_row.html` for a booking that may still be `QUEUED` goes through the helper. Extend (allowed only from `READY`), release (→ `RELEASED`) and admin force-release (→ `RELEASED`/`RELEASING`) cannot leave a booking `QUEUED`, so their responses do not need the helper.
 
 Using one SQL path for every surface makes list-vs-row parity hold by construction. For a single booking the window walks the same prefix as the old count, so its cost does not change.
 

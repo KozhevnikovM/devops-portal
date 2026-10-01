@@ -28,7 +28,7 @@
 
 - [ ] 3.1 Add one shared helper (design D3) that takes one booking or a list. It selects the `QUEUED` ones, calls `queue_positions` once and assigns `.queue_position`. Use it in:
   - `_list_page`;
-  - `booking_row` and the HTMX create response in `bookings.py`;
+  - `booking_row`, the HTMX create response and `update_booking_label` (`PATCH /bookings/{id}/label`) in `bookings.py`;
   - the create response in `api_bookings.py`;
   - `_render_booking_event` in `events.py`.
 
@@ -36,7 +36,8 @@
 - [ ] 3.2 Update the unit-test mocks from `queue_position = AsyncMock(...)` to `queue_positions = AsyncMock(return_value={...})`. They are in `test_booking_pagination`, `test_list_section_fragment`, `test_events_stream`, `test_booking_credentials_endpoint`, `test_booking_queue`, `test_dispatcher_ui`, `test_booking_row_ownership`, `test_dispatcher_visibility`, `test_audit_log_ui`, `test_provisioning_log_view`, `test_scoped_sse_channels` and `test_environment_child_row_actions`. Rewrite `test_queue_positions_are_looked_up_only_for_the_pages_queued_rows` so it asserts exactly one `queue_positions` await, carrying only the queued items. Add these tests:
   - zero awaits for a page with no queued rows;
   - one await on the `/list` fragment and on `…/rows` (Load more);
-  - a returned rank renders in the row, and a missing id renders "—".
+  - a returned rank renders in the row, and a missing id renders "—";
+  - `PATCH /bookings/{id}/label` on a `QUEUED` booking awaits `queue_positions` once and renders the new label with "Queued — position N"; on a `READY` booking it awaits nothing.
 
   Verify: `pytest tests/ -m "not integration"` passes.
 
@@ -53,7 +54,7 @@
   - on dataset (b), the rows examined do not grow with history size.
 
   Print the old-vs-new rows, buffers and round trips. Record them in design.md "Measurements" and in the PR description. State the guarantee: one statement, each prefix entry read once, still proportional to the queue prefix. Verify with `pytest -m integration tests/integration/test_queue_position_batch.py -s`.
-- [ ] 4.3 List/row parity. Extend `tests/integration/test_booking_list_projection.py::test_list_row_shows_log_link_roles_and_queue_position` (or add a sibling test) with several queued namespace and static-VM bookings, including a tie. Assert that each row's "Queued — position N" on the page equals the one from `GET /bookings/{id}/row`, as owner and as an admin on All. Verify with `pytest -m integration tests/integration/test_booking_list_projection.py`.
+- [ ] 4.3 List/row parity. Extend `tests/integration/test_booking_list_projection.py::test_list_row_shows_log_link_roles_and_queue_position` (or add a sibling test) with several queued namespace and static-VM bookings, including a tie. Assert that each row's "Queued — position N" on the page equals the one from `GET /bookings/{id}/row`, as owner and as an admin on All. For one queued booking, also assert that the `PATCH /bookings/{id}/label` response shows the same position. Verify with `pytest -m integration tests/integration/test_booking_list_projection.py`.
 
 ## 5. Wrap-up
 
