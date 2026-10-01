@@ -219,7 +219,7 @@ def world():
 
     booking_repo, env_repo = MagicMock(), MagicMock()
     booking_repo.get = AsyncMock(side_effect=get_booking)
-    booking_repo.queue_position = AsyncMock(return_value=None)
+    booking_repo.queue_positions = AsyncMock(return_value={})
     env_repo.get = AsyncMock(side_effect=get_environment)
 
     pubsubs: list[_BrokerPubSub] = []

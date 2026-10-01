@@ -45,7 +45,7 @@ def _row(user: User, booking: Booking) -> str:
     app.dependency_overrides[require_user] = lambda: user
     with patch("app.presentation.routes.bookings._repo") as repo:
         repo.get = AsyncMock(return_value=booking)
-        repo.queue_position = AsyncMock(return_value=1)
+        repo.queue_positions = AsyncMock(side_effect=lambda session, bookings: {b.id: 1 for b in bookings})
         resp = TestClient(app).get(f"/bookings/{booking.id}/row")
     assert resp.status_code == 200
     return resp.text

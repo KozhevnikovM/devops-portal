@@ -141,7 +141,7 @@ def test_dispatcher_sees_dispatched_booking_row():
     try:
         with patch("app.presentation.routes.bookings._repo") as repo:
             repo.get = AsyncMock(return_value=booking)
-            repo.queue_position = AsyncMock(return_value=None)
+            repo.queue_positions = AsyncMock(return_value={})
             resp = cl.get(f"/bookings/{booking.id}/row")
     finally:
         app.dependency_overrides.clear()

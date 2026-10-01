@@ -9,8 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.application.use_cases._permissions import can_manage, can_view_credentials
 from app.application.use_cases._roles import resolve_config_roles
 from app.config import settings
-from app.domain.booking_list import BookingListItem
-from app.domain.entities import Booking, User
+from app.domain.entities import User
 from app.domain.enums import BookingStatus, ResourceType
 from app.domain.exceptions import (
     BookingError, BookingNotFoundError, NamespaceUnavailableError, BookingPermissionError,
@@ -21,6 +20,7 @@ from app.infrastructure.auth import require_user
 from app.infrastructure.database.session import get_async_session
 from app.presentation import deps
 from app.presentation.middleware.correlation_id import get_request_id
+from app.presentation.routes._queue import attach_queue_positions
 from app.presentation.pagination import (
     InvalidCursorError, decode_cursor, encode_cursor, filter_params,
 )
@@ -71,21 +71,13 @@ _VM_PAGE_TYPES = [ResourceType.VM.value, ResourceType.STATIC_VM.value]
 _NAMESPACE_PAGE_TYPES = [ResourceType.NAMESPACE.value]
 
 
-async def _attach_queue_position(session, booking: BookingListItem | Booking) -> None:
-    """Populate FIFO rank for a QUEUED booking (display only)."""
-    if booking.status == BookingStatus.QUEUED:
-        booking.queue_position = await _repo.queue_position(
-            session, booking.resource_type.value, booking.created_at
-        )
-
-
 async def _list_page(
     session, current_user, *, resource_types, page_path, filter, show_released, label, after=None,
 ):
     """One keyset page of a bookings list (#479) → template context for its rows and Load more.
 
     Shared by the page (first page) and the Load more fragment (later pages), so both apply the
-    same visibility and filters. Queue positions are looked up for the page's rows only.
+    same visibility and filters. Queue positions are read for the page's rows only, in one statement.
     """
     page = await _repo.list_page(
         session,
@@ -93,8 +85,7 @@ async def _list_page(
         resource_types=resource_types, label=label, include_released=show_released,
         limit=settings.BOOKINGS_PAGE_SIZE, scan_size=settings.BOOKINGS_LABEL_SCAN_SIZE, after=after,
     )
-    for b in page.items:
-        await _attach_queue_position(session, b)
+    await attach_queue_positions(session, _repo, page.items)
     # The Load more URL echoes the filters in effect, so every page matches the first one.
     load_more_url = None
     if page.next_cursor:
@@ -386,7 +377,7 @@ async def create_booking(
             return await _render_form_error(request, session, current_user, quota_error=str(exc))
 
     booking.owner_username = current_user.username
-    await _attach_queue_position(session, booking)
+    await attach_queue_positions(session, _repo, [booking])
     return templates.TemplateResponse(
         request, "partials/booking_row.html", {"booking": booking, "current_user": current_user}, status_code=201
     )
@@ -407,7 +398,7 @@ async def booking_row(
     if not can_manage(owner_id=booking.user_id, created_by=booking.created_by, user=current_user):
         raise HTTPException(status_code=403, detail="Not the booking owner")
 
-    await _attach_queue_position(session, booking)
+    await attach_queue_positions(session, _repo, [booking])
     return templates.TemplateResponse(
         request, "partials/booking_row.html", {"booking": booking, "current_user": current_user}
     )
@@ -503,6 +494,8 @@ async def update_booking_label(
     except BookingError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
+    # A label can be edited while QUEUED: keep the row's position (#495).
+    await attach_queue_positions(session, _repo, [booking])
     return templates.TemplateResponse(
         request, "partials/booking_row.html", {"booking": booking, "current_user": current_user}
     )

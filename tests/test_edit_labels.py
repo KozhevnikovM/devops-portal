@@ -293,6 +293,38 @@ def test_htmx_patch_booking_label_returns_html(user_client):
     assert "renamed" in resp.text
 
 
+def test_htmx_patch_label_on_queued_booking_keeps_its_queue_position(user_client):
+    """A label can be edited while QUEUED; the returned row keeps its position (#495)."""
+    client, user = user_client
+    booking = _booking(status=BookingStatus.QUEUED, user_id=str(user.id), label="renamed")
+    with (
+        patch("app.presentation.routes.bookings._update_label_use_case") as uc,
+        patch("app.presentation.routes.bookings._repo") as repo,
+    ):
+        uc.execute = AsyncMock(return_value=booking)
+        repo.queue_positions = AsyncMock(return_value={booking.id: 3})
+        resp = client.patch(f"/bookings/{booking.id}/label", data={"label": "renamed"})
+    assert resp.status_code == 200
+    assert "renamed" in resp.text
+    assert "Queued — position 3" in resp.text
+    repo.queue_positions.assert_awaited_once()
+    assert repo.queue_positions.await_args.args[1] == [booking]
+
+
+def test_htmx_patch_label_on_ready_booking_reads_no_queue_position(user_client):
+    client, user = user_client
+    booking = _booking(user_id=str(user.id), label="renamed")
+    with (
+        patch("app.presentation.routes.bookings._update_label_use_case") as uc,
+        patch("app.presentation.routes.bookings._repo") as repo,
+    ):
+        uc.execute = AsyncMock(return_value=booking)
+        repo.queue_positions = AsyncMock(return_value={})
+        resp = client.patch(f"/bookings/{booking.id}/label", data={"label": "renamed"})
+    assert resp.status_code == 200
+    repo.queue_positions.assert_not_awaited()
+
+
 def test_api_patch_environment_name_returns_200(user_client):
     client, _ = user_client
     env = _env(name="renamed-stack")

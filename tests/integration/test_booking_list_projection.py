@@ -267,6 +267,62 @@ async def test_list_row_shows_log_link_roles_and_queue_position(async_session, s
     assert re.search(r"Queued — position \d+", queued_text)
 
 
+def _position(html: str, booking_id: UUID) -> str:
+    text, _, _ = _summarize(html, booking_id)
+    match = re.search(r"Queued — position (\S+)", text)
+    assert match, (booking_id, text)
+    return match.group(1)
+
+
+@pytest.mark.parametrize("viewer,list_filter", [("owner", "mine"), ("admin", "all")])
+async def test_queue_positions_match_between_list_row_and_label_responses(async_session, seeded,
+                                                                         viewer, list_filter):
+    """#495: a queued row's position is the same from the list, the row refresh and a label edit,
+    across namespace and static-VM queues, with a tie, and with a queued booking of another user
+    (counted in the owner's ranks but not listed on their Mine page)."""
+    ids, owner, other = seeded["ids"], seeded["owner"], seeded["other"]
+    base = datetime(2999, 6, 1, tzinfo=timezone.utc)
+    common = {"ttl_minutes": 240, "expires_at": base + timedelta(hours=4), "label": seeded["token"]}
+    extra = {
+        # Same creation time as ns_queued: the two share a position.
+        "ns_tied": dict(common, user_id=str(owner.id), resource_type="NAMESPACE", status="QUEUED",
+                        created_at=base - timedelta(seconds=4)),
+        "ns_later": dict(common, user_id=str(owner.id), resource_type="NAMESPACE", status="QUEUED",
+                         created_at=base - timedelta(milliseconds=3500)),
+        "svm_other": dict(common, user_id=str(other.id), resource_type="STATIC_VM",
+                          status="QUEUED", created_at=base - timedelta(seconds=9)),
+        "svm_queued": dict(common, user_id=str(owner.id), resource_type="STATIC_VM",
+                           status="QUEUED", created_at=base - timedelta(seconds=8)),
+    }
+    for key, values in extra.items():
+        ids[key] = uuid4()
+        await async_session.execute(insert(BookingModel).values(id=ids[key], **values))
+    await async_session.flush()
+
+    rows = {"/book/namespace": ["ns_queued", "ns_tied", "ns_later"], "/book/vm": ["svm_queued"]}
+    async with _client(async_session, seeded[viewer]) as client:
+        for page, keys in rows.items():
+            html = (await client.get(page, params={"filter": list_filter,
+                                                   "label": seeded["token"]})).text
+            for key in keys:
+                row = (await client.get(f"/bookings/{ids[key]}/row")).text
+                assert _position(html, ids[key]) == _position(row, ids[key]), (page, key)
+        ns_page = (await client.get("/book/namespace", params={"filter": list_filter,
+                                                               "label": seeded["token"]})).text
+        vm_page = (await client.get("/book/vm", params={"filter": list_filter,
+                                                        "label": seeded["token"]})).text
+        relabeled = (await client.patch(f"/bookings/{ids['ns_later']}/label",
+                                        data={"label": f"{seeded['token']}-renamed"})).text
+
+    tied = _position(ns_page, ids["ns_queued"])
+    assert tied != "—" and _position(ns_page, ids["ns_tied"]) == tied
+    assert int(_position(ns_page, ids["ns_later"])) == int(tied) + 2
+    # The other user's earlier queued static VM is ahead in the global queue for every viewer.
+    assert int(_position(vm_page, ids["svm_queued"])) >= 2
+    assert f"{seeded['token']}-renamed" in relabeled
+    assert _position(relabeled, ids["ns_later"]) == _position(ns_page, ids["ns_later"])
+
+
 _SECRETS = ("vm-pw", "svm-pw", "ssh-ed25519")
 
 

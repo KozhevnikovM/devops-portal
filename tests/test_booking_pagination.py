@@ -89,7 +89,7 @@ def repo():
         patch("app.presentation.routes.bookings._role_repo") as role,
     ):
         repo.list_page = AsyncMock(return_value=KeysetPage())
-        repo.queue_position = AsyncMock(return_value=1)
+        repo.queue_positions = AsyncMock(side_effect=lambda session, bookings: {b.id: 1 for b in bookings})
         img.list_active = AsyncMock(return_value=[])
         hw.list_active = AsyncMock(return_value=[])
         ns.list_available = AsyncMock(return_value=[])
@@ -225,9 +225,14 @@ def test_released_filter_and_cursor_apply_to_every_branch():
     assert "'RELEASED'" not in _keys_sql("u1", _VM_TYPES, include_released=True)
 
 
-def test_queue_rank_uses_the_literal_queued_predicate():
-    sql = str(_queue_rank_stmt("VM", datetime.now(timezone.utc)).compile(dialect=postgresql.dialect()))
-    assert "bookings.status = 'QUEUED'" in sql
+@pytest.mark.parametrize("types", [["NAMESPACE"], ["VM", "STATIC_VM"]])
+def test_queue_rank_uses_the_literal_queued_predicate(types):
+    """One rank() branch per resource type, each with the literal QUEUED predicate (#495)."""
+    now = datetime.now(timezone.utc)
+    stmt = _queue_rank_stmt({t: now for t in types}, [uuid4()])
+    sql = str(stmt.compile(dialect=postgresql.dialect()))
+    assert sql.count("bookings.status = 'QUEUED'") == len(types)
+    assert sql.count("rank() OVER (ORDER BY bookings.created_at)") == len(types)
 
 
 _PREVIOUS = {"enable_bitmapscan": "on", "enable_seqscan": "off", "enable_sort": "on",
@@ -420,11 +425,37 @@ def test_page_ignores_cursor_param(client, repo):
     assert repo.list_page.await_args.kwargs["after"] is None
 
 
-def test_queue_positions_are_looked_up_only_for_the_pages_queued_rows(client, repo, user):
-    items = [_booking(user, BookingStatus.QUEUED), _booking(user), _booking(user, BookingStatus.QUEUED)]
+# Every list surface: the page, the filter-change fragment (#494) and Load more (#495).
+_LIST_URLS = ["/book/vm", "/book/vm/list", f"/book/vm/rows?cursor={encode_cursor(_CURSOR)}"]
+
+
+@pytest.mark.parametrize("url", _LIST_URLS)
+def test_queue_positions_are_read_once_for_the_pages_queued_rows(client, repo, user, url):
+    queued = [_booking(user, BookingStatus.QUEUED),
+              _booking(user, BookingStatus.QUEUED, ResourceType.STATIC_VM)]
+    items = [queued[0], _booking(user), queued[1], _booking(user, BookingStatus.FAILED)]
     repo.list_page.return_value = KeysetPage(items=items, next_cursor=_CURSOR)
-    client.get("/book/vm")
-    assert repo.queue_position.await_count == 2
+    assert client.get(url).status_code == 200
+    repo.queue_positions.assert_awaited_once()
+    assert repo.queue_positions.await_args.args[1] == queued
+
+
+@pytest.mark.parametrize("url", _LIST_URLS)
+def test_no_queue_position_read_without_queued_rows(client, repo, user, url):
+    items = [_booking(user), _booking(user, BookingStatus.FAILED), _booking(user, BookingStatus.RELEASED)]
+    repo.list_page.return_value = KeysetPage(items=items, next_cursor=None)
+    assert client.get(url).status_code == 200
+    repo.queue_positions.assert_not_awaited()
+
+
+def test_rank_renders_and_a_missing_rank_renders_a_dash(client, repo, user):
+    """A row promoted before the rank read has no entry in the result (design D2)."""
+    ranked, promoted = _booking(user, BookingStatus.QUEUED), _booking(user, BookingStatus.QUEUED)
+    repo.list_page.return_value = KeysetPage(items=[ranked, promoted], next_cursor=None)
+    repo.queue_positions = AsyncMock(return_value={ranked.id: 7})
+    html = client.get("/book/vm").text
+    assert "Queued — position 7" in html
+    assert "Queued — position —" in html
 
 
 def test_no_load_more_on_single_page(client, repo, user):

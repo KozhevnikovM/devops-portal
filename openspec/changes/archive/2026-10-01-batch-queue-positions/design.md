@@ -44,7 +44,7 @@ WHERE id = ANY(:ids)
 There is one branch per distinct resource type among the visible queued rows: at most 2 on the VM page and 1 on the namespace page. `:max_tN` is the newest `created_at` of that type's visible queued rows.
 
 - `rank()` matches the current contract exactly. `rank()` is 1 + the number of rows that sort strictly before the row, so peers (tied `created_at`) share a rank, and so `rank() = 1 + count(created_at < c)`. `row_number()` would break ties arbitrarily and silently change the contract (#495 explicitly forbids that). `dense_rank()` would compress the gaps after a tie.
-- Each branch matches `ix_bookings_queued_rank` exactly: the literal `QUEUED` predicate, an equality on `resource_type`, and a range on `created_at`. The index returns rows already in `created_at` order, so the WindowAgg needs no Sort. Each queued entry up to `:max` is visited once, whatever the number of visible rows.
+- Each branch matches `ix_bookings_queued_rank` exactly: the literal `QUEUED` predicate, an equality on `resource_type`, and a range on `created_at`. Walked by that index, rows arrive in `created_at` order, so the WindowAgg needs no Sort. Each queued entry up to `:max` is visited once, whatever the number of visible rows. That index walk is guaranteed by D5, not left to the planner.
 - The outer `id = ANY(:ids)` filter sits above the window. PostgreSQL does not push a filter on a non-partition column below a window, and that is required for correct ranks. Only the requested ids are returned.
 - The `created_at <= :max` cut-off stops the walk at the newest visible queued row. Entries behind it cannot affect any requested rank, so they are not read.
 
@@ -78,13 +78,26 @@ Using one SQL path for every surface makes list-vs-row parity hold by constructi
 
 Where the helper lives: `app/presentation/routes/_queue.py`, or a function next to `_list_page` that `api_bookings` and `events` import. The implementation picks one module, but there must be exactly one helper.
 
+### D5. The rank read runs under the ordered-walk plan pin
+
+Measured during implementation: when `QUEUED` rows of a type are most of the table (dataset (a)), the planner's cheapest plan for a branch is a Seq Scan + Sort. It reads every bookings row, including non-queued ones, which breaks the spec's "examines only `QUEUED` entries". With sequential scans off, it picks a Bitmap Heap Scan + Sort instead. With bitmap scans also off, it picks the ordered Index Scan. On a history-dominated table (dataset (b)), the default plan is already the ordered Index Scan.
+
+So the rank statement runs inside the same `_OrderedWalk` pin/restore that #479 (Decision 10) uses for the page key query. That pin sets bitmap scans, sequential scans and sorts off, index scans on and JIT off. It is transaction-local, and it is restored to the exact previous values right after the statement. Under the pin, the per-type ordered index walk is the one plan that no disabled step penalises, whatever the statistics. The spec's `MODIFIED` "Booking page work is bounded per request" requirement lets the queue-position read carry its own constraint, which lasts for that read alone.
+
+Cost: two tiny extra statements (pin and restore) per request that has queued rows. They are constant, independent of the number of queued rows, and none run when there are no queued rows. The rank read itself is still one statement.
+
+**Alternatives considered:**
+- *A covering index `INCLUDE (id)`.* The planner chose the index-only walk by default on both datasets, but that is a cost choice, not a guarantee, and it needs a migration (see D4).
+- *Accept the planner's choice.* That would weaken the approved "only `QUEUED` entries" guarantee to "when history dominates".
+
 ### D4. No new index
 
 The plan is an Index Scan on `ix_bookings_queued_rank`. The index does not contain `id`, so each prefix entry costs a heap visit. Those visits touch only queued rows, which are a small, hot set, and never history. A covering `INCLUDE (id)` could make the scan index-only. That is deferred: it would need a migration, and the measurements in task 1 / 4 should show first whether the heap visits matter. If they do, it goes in a follow-up.
 
 ## Risks / Trade-offs
 
-- [The planner chooses a Seq Scan or a Sort for a branch on a tiny table] → The integration plan test runs on a dataset big enough to make the index the obvious choice. It asserts the plan reads only `ix_bookings_queued_rank` (no `Seq Scan on bookings`, no `Sort` under the WindowAgg), with rows-examined ≤ the queue prefix of each type.
+- [The planner chooses a Seq Scan or a Sort for a branch when the queue dominates the table] → Observed, so it is pinned away (D5). The integration plan test runs the statement under the same pin, on both the queue-dominated and the history-dominated dataset. It asserts the plan reads only `ix_bookings_queued_rank` (no `Seq Scan`, no `Sort`), with rows examined ≤ the queue prefix of each type. A test also asserts that the settings are restored after the read.
+- [Dead index entries from churned queue rows (promotions, rollbacks) inflate buffers until vacuum] → This affects the old and the new path alike. The cost probes `VACUUM ANALYZE bookings` before seeding, so the recorded numbers compare like with like.
 - [The window rank differs from the count rank in some edge case (NULL `created_at`, timezone)] → `created_at` is `NOT NULL` and `timestamptz` in both forms. An integration parity test compares the bulk result against the old count expression over a randomized queue with forced ties.
 - [The snapshot rule shows "—" for a row the user just saw as queued] → The window is milliseconds wide, and the row's live update corrects it. This is documented in the spec.
 - [The test churn of replacing `queue_position` mocks] → Mechanical. `queue_positions = AsyncMock(return_value={})` is the drop-in replacement.
@@ -95,6 +108,23 @@ Code-only, no schema change. Rollback is a plain revert.
 
 ## Measurements
 
-To be filled during implementation (tasks 1.1 and 4.2): round trips, `EXPLAIN (ANALYZE, BUFFERS)` rows and shared buffers hit/read, for old and new, on
-- (a) a large active queue (thousands of `QUEUED` of one type) with a full page of queued rows, and
-- (b) a small queue with a large `RELEASED`/`FAILED` history.
+Measured by `tests/integration/test_queue_position_batch.py -s` on PostgreSQL. The table is `VACUUM ANALYZE`d before each dataset is seeded. The old side is the pre-#495 per-row `COUNT`, run once per visible queued row; the new side is the bulk statement under the D5 pin. "Rows" is the number of index entries the scans return on `bookings`. "Buffers" is shared hit + read for the plan, summed over all statements on the old side.
+
+Each page has 50 `QUEUED` rows, the newest of their type.
+
+| Dataset | Type | Old: round trips / rows / buffers | New: round trips / rows / buffers |
+|---|---|---|---|
+| (a) 5,000 queued namespaces, 200 queued static VMs, no history | NAMESPACE | 50 / 262,500 / 5,050 | 1 / 5,000 / 123 |
+| (a) | STATIC_VM | 50 / 8,725 / 389 | 1 / 200 / 8 |
+| (b) 60 + 60 queued, 20,000 `RELEASED`/`FAILED` namespaces | NAMESPACE | 50 / 1,725 / 107 | 1 / 60 / 3 |
+| (b) | STATIC_VM | 50 / 1,725 / 124 | 1 / 60 / 3 |
+
+Whole `/book/namespace` page (All): 59 statements on `main`, 50 of them rank `COUNT`s. After the change: 12 statements, of which 1 is the rank read and 2 are its pin/restore. A page with no queued rows runs no rank statement and no pin.
+
+Guarantee, as stated in the spec:
+- one rank statement per request;
+- each `QUEUED` entry of a visible type, up to the newest visible queued row of that type, is read exactly once;
+- no history and no other type is read;
+- the guarantee holds under the pin whatever the statistics, including the queue-dominated dataset (a), where the unpinned plan was a Seq Scan + Sort.
+
+The work is still proportional to that queue prefix, not constant.

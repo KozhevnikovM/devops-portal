@@ -274,7 +274,7 @@ def _render_row(status, provisioning_log=None):
     client = _client(make_fake_admin())
     with patch("app.presentation.routes.bookings._repo") as repo:
         repo.get = AsyncMock(return_value=booking)
-        repo.queue_position = AsyncMock(return_value=None)
+        repo.queue_positions = AsyncMock(return_value={})
         resp = client.get(f"/bookings/{booking.id}/row")
     return booking, resp
 

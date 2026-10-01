@@ -94,7 +94,7 @@ def repos():
         patch("app.presentation.routes.environments._namespace_repo") as env_ns,
     ):
         booking_repo.list_page = AsyncMock(return_value=KeysetPage())
-        booking_repo.queue_position = AsyncMock(return_value=1)
+        booking_repo.queue_positions = AsyncMock(side_effect=lambda session, bookings: {b.id: 1 for b in bookings})
         env_repo.list_page = AsyncMock(return_value=EnvironmentPage())
         for parent, name in [(img, "list_active"), (hw, "list_active"), (ns, "list_available"),
                              (svm, "list_available"), (role, "list_active"), (bp, "list_active"),

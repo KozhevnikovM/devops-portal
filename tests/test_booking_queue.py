@@ -194,11 +194,10 @@ def test_queued_row_shows_position_and_cancel(client):
     cl, fake_user = client
     queued = _booking(BookingStatus.QUEUED, user_id=str(fake_user.id))
     queued.owner_username = fake_user.username
-    queued.queue_position = 2
 
     with patch("app.presentation.routes.bookings._repo") as mock_repo:
         mock_repo.get = AsyncMock(return_value=queued)
-        mock_repo.queue_position = AsyncMock(return_value=2)
+        mock_repo.queue_positions = AsyncMock(side_effect=lambda session, bookings: {b.id: 2 for b in bookings})
         resp = cl.get(f"/bookings/{queued.id}/row")
 
     assert resp.status_code == 200
