@@ -1,8 +1,9 @@
-## Purpose
+# progress-persistence Specification
 
+## Purpose
 Defines how progress output from provisioning and teardown tasks (Terraform, SSH-wait, startup-script and Ansible output) is written to a booking's status message and capped provisioning log. Writes are batched so noisy output causes a bounded number of database commits, while progress stays fresh, ordered and complete, and never overrides a lifecycle outcome.
 
-## ADDED Requirements
+## Requirements
 
 ### Requirement: Progress output is persisted in bounded batches
 
@@ -115,6 +116,24 @@ Persisting progress SHALL set the booking's status message only while the bookin
 #### Scenario: Concurrent producers append without loss
 - **WHEN** a provisioning producer and a teardown producer persist batches for the same booking concurrently
 - **THEN** the provisioning log contains both batches in full, each in its own recording order
+
+### Requirement: Provisioning never overwrites a released booking's status message
+
+The provisioning task SHALL write its own status messages only while it still owns the booking, that is while the booking's status is PENDING, RETRY, PROVISIONING or CONFIGURING. Those messages are the clear at the step boundary after the Terraform apply, a configuration-error message, and a failure message. The ownership check and the write SHALL be one atomic database operation, so a release that lands between the task's own read and its write cannot have teardown's status message overwritten. Once a release has moved the booking to RELEASING, or a teardown has already settled it as RELEASED or FAILED, the provisioning task SHALL leave the status message unchanged and SHALL NOT configure the VM. It SHALL hand the booking off to teardown only while the status is RELEASING.
+
+#### Scenario: Teardown writes progress right after the provisioning lock is released
+- **WHEN** the provisioning lock is released after the Terraform apply, and a waiting teardown immediately moves the booking to RELEASING and records its own progress before provisioning clears the status message
+- **THEN** the booking's status message is still teardown's progress message
+- **AND** provisioning does not configure the VM and hands off to teardown
+
+#### Scenario: Teardown settles the booking before provisioning continues
+- **WHEN** a teardown moves the booking to RELEASING and then settles it as FAILED with its own failure message, all between the provisioning lock's release and provisioning's next write
+- **THEN** the booking stays FAILED with teardown's failure message
+- **AND** provisioning neither configures the VM nor dispatches another teardown
+
+#### Scenario: Normal step-boundary clear
+- **WHEN** the Terraform apply finishes and the booking is still PROVISIONING
+- **THEN** the provisioning task clears the status message as before
 
 ### Requirement: Progress buffers are isolated per attempt
 

@@ -5,11 +5,13 @@ from uuid import UUID
 
 from app.application.ports import SyncBookingRepositoryPort
 from app.config import settings
+from app.domain.booking_status import TEARDOWN_PROGRESS_STATUSES
 from app.domain.enums import BookingStatus, ResourceType
 from app.infrastructure import provisioning_lock
 from app.infrastructure.celery_app import celery_app
 from app.infrastructure.database.session import SyncSessionLocal
 from app.infrastructure.logging_config import request_id_ctx_var
+from app.infrastructure.progress_recorder import ProgressRecorder, recorder_from_settings
 from app.infrastructure.repositories.booking_repo import BookingRepository
 from app.infrastructure.repositories.image_repo import ImageRepository
 from app.infrastructure.repositories.hw_config_repo import HWConfigRepository
@@ -93,13 +95,26 @@ def teardown_vm_task(
             "vm_password":      booking.vm_password or "",
         }
 
+        # Progress output is buffered and persisted in batches (#444); one recorder per execution,
+        # closed in the `finally` below. Every lifecycle write first flushes it (a barrier).
+        recorder: ProgressRecorder | None = None
+
+        def _lifecycle(work):
+            if recorder is not None:
+                recorder.flush()
+            return _run(work)
+
         try:
             _run(lambda s: repo.sync_update_status(s, booking_uuid, BookingStatus.RELEASING))
             logger.info("Teardown started for booking %s (force=%s)", booking_id, force)
-
-            def _on_progress(msg: str) -> None:
-                # Each progress write gets its own short-lived session/connection.
-                _run(lambda s: repo.sync_record_progress(s, booking_uuid, msg))
+            recorder = recorder_from_settings(
+                # Each flush gets its own short-lived session/connection; none is held between.
+                lambda chunk, last: _run(lambda s: repo.sync_append_progress(
+                    s, booking_uuid, chunk, last, TEARDOWN_PROGRESS_STATUSES,
+                )),
+                label=booking_id,
+            )
+            _on_progress = recorder.record
 
             if not settings.USE_STUB_TERRAFORM and not force:
                 _wait_for_apply_to_finish(provisioning_lock.get_client(), booking_id)
@@ -107,8 +122,8 @@ def teardown_vm_task(
             # No DB connection is held across the (minutes-long) terraform destroy.
             asyncio.run(terraform.destroy(workspace_id, config, api_token, on_progress=_on_progress, force=force))
 
-            _run(lambda s: repo.sync_set_status_message(s, booking_uuid, None))
-            _run(lambda s: repo.sync_update_status(s, booking_uuid, BookingStatus.RELEASED))
+            _lifecycle(lambda s: repo.sync_set_status_message(s, booking_uuid, None))
+            _lifecycle(lambda s: repo.sync_update_status(s, booking_uuid, BookingStatus.RELEASED))
             logger.info("Teardown complete for booking %s", booking_id)
 
         except Exception as exc:
@@ -116,18 +131,21 @@ def teardown_vm_task(
             if force:
                 logger.warning("Force teardown: marking booking %s as RELEASED despite error", booking_id)
                 try:
-                    _run(lambda s: repo.sync_set_status_message(s, booking_uuid, None))
-                    _run(lambda s: repo.sync_update_status(s, booking_uuid, BookingStatus.RELEASED))
+                    _lifecycle(lambda s: repo.sync_set_status_message(s, booking_uuid, None))
+                    _lifecycle(lambda s: repo.sync_update_status(s, booking_uuid, BookingStatus.RELEASED))
                 except Exception:
                     pass
                 return
             is_last_attempt = self.request.retries >= self.max_retries
             if is_last_attempt:
                 try:
-                    _run(lambda s: repo.sync_set_status_message(s, booking_uuid, "Teardown failed — see audit log"))
-                    _run(lambda s: repo.sync_update_status(s, booking_uuid, BookingStatus.FAILED))
+                    _lifecycle(lambda s: repo.sync_set_status_message(s, booking_uuid, "Teardown failed — see audit log"))
+                    _lifecycle(lambda s: repo.sync_update_status(s, booking_uuid, BookingStatus.FAILED))
                 except Exception:
                     pass
             raise self.retry(exc=exc)
+        finally:
+            if recorder is not None:
+                recorder.close()
     finally:
         request_id_ctx_var.reset(request_id_token)
