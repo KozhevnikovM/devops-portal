@@ -12,16 +12,11 @@ An environment row whose derived status is not RELEASED SHALL also carry:
 
 A RELEASED environment row SHALL carry neither.
 
-An environment with more children than `RECONCILE_MAX_CHILDREN_PER_ENVIRONMENT` SHALL be rendered in full by the list, as today. Its row SHALL:
-- show a "not refreshed automatically — reload to update" hint;
-- be marked as excluded from reconciliation;
-- keep its live row update subscription.
-
 An environment row's version SHALL change whenever anything the row displays changes. That covers its name, its blueprint, its derived status, its owner and creator names, its expiry, and each child's label, status, resource display fields and config-failed marker. It SHALL be computed only from list-safe values, never from a child's credential, provisioning log or other secret.
 
 The environments list section (on the page and in its list-section fragment) SHALL contain exactly one reconciliation poller for `GET /environments/reconcile`. It SHALL carry the filters in effect and the configured batch limits, plus a newer-rows indicator that is hidden until reconciliation reports newer environments. This SHALL hold for the empty state too. Load more fragments, order responses and single-row renderings SHALL NOT contain a poller.
 
-Reconciling an environment SHALL read its children together with the other requested environments, in one batch. It SHALL NOT issue a read per environment, and it SHALL read at most `RECONCILE_MAX_CHILDREN_PER_ENVIRONMENT + 1` children of each.
+Reconciling an environment SHALL read its children together with the other requested environments, in one batch. It SHALL NOT issue a read per environment, and it SHALL read at most `C_eff + 1` children of each, where `C_eff` is the effective environment child limit (environment-lifecycle). Every displayed non-RELEASED environment SHALL take part in reconciliation, whatever its number of children.
 
 The single-row refresh (`GET /environments/{id}/row`) SHALL keep its current owner / creator / admin authorization and response.
 
@@ -31,10 +26,6 @@ The single-row refresh (`GET /environments/{id}/row`) SHALL keep its current own
 - **AND** every row carries a list key
 - **AND** the PROVISIONING and READY rows carry a live update subscription and a row version
 - **AND** the RELEASED row carries neither
-
-#### Scenario: Oversized environment is excluded from the start
-- **WHEN** the environments page lists a PROVISIONING environment with `RECONCILE_MAX_CHILDREN_PER_ENVIRONMENT + 1` children
-- **THEN** its row shows all its children, the "not refreshed automatically" hint and the exclusion marker, and keeps its live update subscription
 
 #### Scenario: Child change changes the version
 - **WHEN** one child of a READY environment moves to RELEASING
