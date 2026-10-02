@@ -388,7 +388,7 @@ Also accepted on the same-shaped `/book/vm` and `/book/namespace` pages.
   - one `r=<booking id>.<row version>` per row in a bounded batch of the displayed rows;
   - `newest=<list key>` of the first displayed row.
 
-  The browser picks the batch: in-flight rows first, plus a reserved share for READY/FAILED rows, rotating through every loaded page. The server enforces at most `RECONCILE_MAX_IDS` ids (default 50). Exceeding it, a repeated id, or a malformed id, version or `newest` returns `400` before anything is read.
+  The browser picks the batch: in-flight rows first, plus a reserved share for READY/FAILED rows, rotating through every loaded page. The server enforces at most `RECONCILE_MAX_IDS` ids (default 50). Exceeding it, a repeated id, or a malformed id, version or `newest` returns `400` before any database work, authentication included. So a malformed request gets `400` whether or not it is authenticated.
 
   Every id is re-checked against what the list would show. Under Mine that is the viewer's own or dispatched rows; under All, every row of the page's kinds. The response is HTML made of out-of-band `<tr>` updates:
   - rows whose version changed;
@@ -1528,8 +1528,10 @@ DELETE /api/environments/{id}?on_behalf_of=alice
 > on the bookings pages (#497). The list section sends one `GET /environments/reconcile` request every
 > 60 s, with the same parameters, limits and `400` cases. Each environment's children are read with
 > a bound of the effective child limit + 1 (see `ENVIRONMENT_MAX_CHILDREN`). An environment found
-> over it, which is only possible through a direct database edit, is answered with a "could not be
-> refreshed — reload the page" row rather than read further. The JSON list (`GET /api/environments`) is not
+> over it is answered with a "could not be refreshed — reload the page" row rather than read further,
+> and the limit is recomputed. That happens for an environment the previous app version ordered
+> during a deploy, or after a direct database edit. The row stays reconciled and is shown in full
+> once the limit covers it. The JSON list (`GET /api/environments`) is not
 > paginated. The order form has an optional **Namespace** dropdown (default *"Blueprint default"*)
 > listing the available namespaces by `name (cluster)`; picking one overrides the blueprint's
 > namespace item (same single-namespace rule as the API — a bad choice renders the `400` inline).
@@ -1572,7 +1574,9 @@ variable names must match `[a-zA-Z_][a-zA-Z0-9_]*` → `400` otherwise. Names ar
 **Admin write endpoints:** `POST` / `PATCH /{id}` (replaces the item set) / `DELETE /{id}`
 (deactivate). A VM item needs `image_name` + `hw_config_name`; bad `resource_type` → `400`;
 more items than `ENVIRONMENT_MAX_CHILDREN` (default 25) → `422`, and the blueprint is left
-unchanged (#497); duplicate `name` → `409`.
+unchanged (#497). A `PATCH` without `items` counts the stored ones, so renaming, re-describing or
+reactivating a blueprint saved earlier with more items is also `422`. `PATCH {"is_active": false}`
+and `DELETE` always succeed, so it can be retired. Duplicate `name` → `409`.
 
 ---
 

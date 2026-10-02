@@ -2,7 +2,7 @@ from urllib.parse import urlencode
 from uuid import UUID
 
 import yaml
-from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -25,8 +25,7 @@ from app.presentation.pagination import (
     InvalidCursorError, decode_cursor, encode_cursor, filter_params,
 )
 from app.presentation.reconcile import (
-    InvalidReconcileRequestError, has_newer, parse_reconcile_request, reconcile_poller_context,
-    row_version,
+    ReconcileRequest, has_newer, reconcile_poller_context, reconcile_request, row_version,
 )
 from app.presentation.templating import templates
 
@@ -209,20 +208,16 @@ def new_rows_context(*, page_path: str, filter, show_released, label, show: bool
 
 
 async def _render_reconcile(
-    request, session, current_user, *, resource_types, page_path, rows, newest, filter,
+    request, session, current_user, req: ReconcileRequest, *, resource_types, page_path, filter,
     show_released, label,
 ):
     """Page row reconciliation for a bookings list (#497): out-of-band updates of the requested
     rows that changed, removals for those no longer visible here, and the newer-rows indicator.
 
-    The request is validated before anything is read. Then a fixed number of statements, whatever
-    the batch size: one scoped batch read (authorization is the query — the page's kinds and, for
+    The request was validated by the `reconcile_request` dependency before any database work. Then
+    a fixed number of statements, whatever the batch size: one scoped batch read (authorization is the query — the page's kinds and, for
     Mine, the owner/creator rule), at most one queue-rank read, and one keys-only newest probe.
     """
-    try:
-        req = parse_reconcile_request(rows, newest, max_ids=settings.RECONCILE_MAX_IDS)
-    except InvalidReconcileRequestError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
     user_id = None if filter == "all" else str(current_user.id)
     items = await _repo.list_items_by_ids(
         session, list(req.versions), user_id=user_id, resource_types=resource_types,
@@ -293,8 +288,7 @@ async def vm_booking_rows_page(
 @router.get("/book/vm/reconcile", response_class=HTMLResponse, include_in_schema=False)
 async def vm_booking_reconcile(
     request: Request,
-    r: list[str] = Query(default=[]),
-    newest: str | None = None,
+    req: ReconcileRequest = Depends(reconcile_request),   # first: validated before session/auth
     filter: str = "mine",
     show_released: bool = False,
     label: str | None = None,
@@ -302,8 +296,8 @@ async def vm_booking_reconcile(
     current_user: User = Depends(require_user),
 ):
     return await _render_reconcile(
-        request, session, current_user, resource_types=_VM_PAGE_TYPES, page_path="/book/vm",
-        rows=r, newest=newest, filter=filter, show_released=show_released, label=label,
+        request, session, current_user, req, resource_types=_VM_PAGE_TYPES, page_path="/book/vm",
+        filter=filter, show_released=show_released, label=label,
     )
 
 
@@ -358,8 +352,7 @@ async def namespace_booking_rows_page(
 @router.get("/book/namespace/reconcile", response_class=HTMLResponse, include_in_schema=False)
 async def namespace_booking_reconcile(
     request: Request,
-    r: list[str] = Query(default=[]),
-    newest: str | None = None,
+    req: ReconcileRequest = Depends(reconcile_request),   # first: validated before session/auth
     filter: str = "mine",
     show_released: bool = False,
     label: str | None = None,
@@ -367,9 +360,8 @@ async def namespace_booking_reconcile(
     current_user: User = Depends(require_user),
 ):
     return await _render_reconcile(
-        request, session, current_user, resource_types=_NAMESPACE_PAGE_TYPES,
-        page_path="/book/namespace",
-        rows=r, newest=newest, filter=filter, show_released=show_released, label=label,
+        request, session, current_user, req, resource_types=_NAMESPACE_PAGE_TYPES,
+        page_path="/book/namespace", filter=filter, show_released=show_released, label=label,
     )
 
 

@@ -153,3 +153,10 @@
 
   Verify: grep finds no remaining "60s fallback poll" claims in `docs/api-reference.md` and `docs/admin-guide.md`.
 - [x] 9.3 Run the `py-review` skill on the changed Python, and the full unit suite `pytest tests/ -m "not integration"`. Verify: both are clean.
+
+## 10. Code review fixes (#513)
+
+- [x] 10.1 Keep the fast suite free of the database: the lifespan test stubs `_start_environment_child_limit`, the one startup seam for the child limit; the real query is covered by `tests/integration/test_environment_child_limit_startup.py`. Verify: `pytest tests/test_openapi_hides_html.py` passes without Postgres.
+- [x] 10.2 Validate the reconcile request in a first FastAPI dependency (`reconcile_request`), before `get_async_session` and `require_user`. Verify: tests through the real auth path (Bearer key and session cookie, auth not overridden) get 400 with no session opened and no user or Redis lookup; a valid request still authenticates.
+- [x] 10.3 Count the stored items on every blueprint update without `items`, except a pure deactivation, and on admin activation. Deactivate and delete stay allowed. Verify: metadata-only `PATCH` (name / description / `is_active: true`) and admin activate of a legacy oversized blueprint are rejected with no persistence call; deactivation and delete succeed.
+- [x] 10.4 Keep `C_eff` current: `EnvironmentChildLimit` refreshes at startup, every `ENVIRONMENT_CHILD_LIMIT_REFRESH_SECONDS`, and when a reconcile meets a larger environment; the "reload required" row stays in the rotation. Verify: unit tests for raise / drop-back / DB failure / interval / prompt refresh / an environment the old slot ordered after startup; the reconcile endpoint test asserts the refresh request and the live placeholder row.

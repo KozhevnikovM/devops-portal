@@ -459,12 +459,13 @@ class EnvironmentRepository:
         ]
 
     # ── Sync helpers (Celery beat — env-aware TTL enforcement) ──────────────────
-    def sync_live_children_over(self, session: Session, limit: int) -> tuple[int, int]:
+    async def live_children_over(self, session: AsyncSession, limit: int) -> tuple[int, int]:
         """(largest child count of any not-fully-released environment, how many exceed `limit`) (#497).
 
-        `(0, 0)` when no environment is live. Read once at startup to size the effective child limit: environments ordered before
-        ENVIRONMENT_MAX_CHILDREN existed may exceed it. Fully released environments never change
-        again, so they don't count. The inner scan uses ix_bookings_environment_id_unreleased.
+        `(0, 0)` when no environment is live. Sizes the effective child limit: environments ordered
+        before ENVIRONMENT_MAX_CHILDREN existed, or by an older app version still serving during a
+        deploy, may exceed it. Fully released environments never change again, so they don't
+        count. The inner scan uses ix_bookings_environment_id_unreleased.
         """
         live_envs = (
             select(BookingModel.environment_id)
@@ -477,9 +478,9 @@ class EnvironmentRepository:
             .group_by(BookingModel.environment_id)
             .subquery()
         )
-        largest, over = session.execute(
+        largest, over = (await session.execute(
             select(func.coalesce(func.max(counts.c.n), 0), func.count().filter(counts.c.n > limit))
-        ).one()
+        )).one()
         return largest, over
 
     def sync_list_expired(self, session: Session) -> list[Environment]:

@@ -14,7 +14,7 @@ from app.infrastructure.database.session import AsyncSessionLocal, SyncSessionLo
 from app.infrastructure.logging_config import configure_logging
 from app.infrastructure.passwords import hash_password_blocking, shutdown_executor
 from app.infrastructure.repositories.booking_repo import BookingRepository
-from app.infrastructure.repositories.environment_repo import EnvironmentRepository
+from app.infrastructure.environment_child_limit import EnvironmentChildLimit
 from app.infrastructure.repositories.user_repo import UserRepository
 from app.presentation.middleware.correlation_id import CorrelationIdMiddleware
 from app.presentation.middleware.csrf_origin import CSRFOriginMiddleware
@@ -51,10 +51,12 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     _seed_admin_user()
-    app.state.environment_child_limit = _effective_environment_child_limit()
+    refresher = await _start_environment_child_limit(app)
     _recover_in_progress_bookings()
     _recover_stuck_releases()
     yield
+    if refresher is not None:
+        refresher.cancel()
     shutdown_executor()
 
 
@@ -82,26 +84,16 @@ def _seed_admin_user() -> None:
         logger.info("seeded admin user '%s'", settings.ADMIN_USERNAME)
 
 
-def _effective_environment_child_limit() -> int:
-    """C_eff = max(ENVIRONMENT_MAX_CHILDREN, the largest live environment) (#497).
+async def _start_environment_child_limit(app: FastAPI) -> asyncio.Task | None:
+    """Compute the effective environment child limit and keep it current (#497 D3a).
 
-    Blueprint saves and orders enforce ENVIRONMENT_MAX_CHILDREN, but environments ordered before
-    it existed may exceed it. Raising the limit to fit them (rather than failing startup or
-    excluding them) keeps page reconciliation's per-environment child read bounded by a value fixed
-    for this process while still covering every live environment. It drains back to the configured
-    limit on a restart after those environments are released.
+    See app/infrastructure/environment_child_limit.py. The first value is computed before serving;
+    the returned task refreshes it until shutdown.
     """
-    configured = settings.ENVIRONMENT_MAX_CHILDREN
-    with SyncSessionLocal() as session:
-        largest, over = EnvironmentRepository().sync_live_children_over(session, configured)
-    if largest > configured:
-        logger.warning(
-            "%d live environment(s) exceed ENVIRONMENT_MAX_CHILDREN=%d (largest: %d children); "
-            "using %d as the effective child limit until they are released",
-            over, configured, largest, largest,
-        )
-        return largest
-    return configured
+    limit = EnvironmentChildLimit(settings.ENVIRONMENT_MAX_CHILDREN)
+    await limit.refresh()
+    app.state.environment_child_limit = limit
+    return asyncio.create_task(limit.run(settings.ENVIRONMENT_CHILD_LIMIT_REFRESH_SECONDS))
 
 
 def _recover_in_progress_bookings() -> None:

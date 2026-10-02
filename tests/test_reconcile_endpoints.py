@@ -340,9 +340,11 @@ def test_environment_batch_read_is_scoped(client, repos, user, filter, mine):
     assert call.kwargs["child_limit"] == settings.ENVIRONMENT_MAX_CHILDREN
 
 
-def test_environment_child_limit_comes_from_startup(client, repos):
+def test_environment_child_limit_comes_from_the_app(client, repos):
+    from types import SimpleNamespace
+
     from app.main import app
-    app.state.environment_child_limit = 31
+    app.state.environment_child_limit = SimpleNamespace(value=31, request_refresh=lambda: None)
     try:
         client.get(f"/environments/reconcile?r={_token(uuid4())}")
     finally:
@@ -375,13 +377,22 @@ def test_environment_at_the_child_limit_is_rendered_in_full(client, repos, user)
 
 
 def test_environment_over_the_limit_fails_closed(client, repos, user, caplog):
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+
+    from app.main import app
     ok = _env(user, minutes=1)
     big = _env(user, children=[], name="huge")
     gone = uuid4()
     repos["environment"].list_items_by_ids.return_value = ([ok], [big])
-    with caplog.at_level(logging.ERROR, logger="app.presentation.routes.environments"):
-        html = client.get(f"/environments/reconcile?r={_token(ok.id)}&r={_token(big.id)}"
-                          f"&r={_token(gone)}").text
+    refresh = Mock()
+    app.state.environment_child_limit = SimpleNamespace(value=4, request_refresh=refresh)
+    try:
+        with caplog.at_level(logging.WARNING, logger="app.presentation.routes.environments"):
+            html = client.get(f"/environments/reconcile?r={_token(ok.id)}&r={_token(big.id)}"
+                              f"&r={_token(gone)}").text
+    finally:
+        del app.state.environment_child_limit
     rows = _oob_rows(html)
     assert rows[f"environment-{ok.id}"] == "true"           # the rest is reconciled normally
     assert rows[f"environment-{gone}"] == "delete"
@@ -389,8 +400,11 @@ def test_environment_over_the_limit_fails_closed(client, repos, user, caplog):
     big_tr = big_tr[:big_tr.index("</tr>")]
     assert "could not be refreshed" in big_tr and "reload the page" in big_tr
     assert f'data-key="{list_key(big)}"' in big_tr
-    assert "data-live" not in big_tr and "sse-swap" not in big_tr   # leaves the rotation
+    # Stays in the rotation with a version no row has, so it is rendered in full once the
+    # (now recomputed) limit covers it.
+    assert 'data-live="inflight"' in big_tr and 'data-row-version="0000000000000000"' in big_tr
     assert str(big.id) in caplog.text and "child limit" in caplog.text
+    refresh.assert_called_once()
     assert repos["environment"].list_items_by_ids.await_count == 1   # nothing more was read
 
 
@@ -413,3 +427,54 @@ def test_access_log_filter(line, suppressed):
     from app.main import _SuppressRowPolling
     record = logging.LogRecord("uvicorn.access", logging.INFO, __file__, 1, line, None, None)
     assert _SuppressRowPolling().filter(record) is not suppressed
+
+
+# ── D2 on the real dependency path: validation before the session and authentication ─────
+@pytest.mark.parametrize("path", _ALL_PATHS)
+@pytest.mark.parametrize("query", [
+    "&".join(f"r={_token(uuid4())}" for _ in range(settings.RECONCILE_MAX_IDS + 1)),
+    "r=not-a-uuid.0000000000000000",
+    "newest=!!not-a-cursor",
+], ids=["over-the-cap", "malformed-id", "malformed-newest"])
+def test_invalid_request_is_rejected_before_session_and_auth(path, query):
+    from app.infrastructure.database.session import get_async_session
+    from app.main import app
+    opened = []
+
+    async def _session():
+        opened.append(True)
+        yield AsyncMock()
+
+    app.dependency_overrides[get_async_session] = _session   # auth itself is NOT overridden
+    try:
+        with patch("app.infrastructure.auth._user_repo") as users, \
+             patch("app.infrastructure.auth._get_redis") as redis:
+            users.get_by_key_hash = AsyncMock()
+            users.get = AsyncMock()
+            by_key = TestClient(app, follow_redirects=False).get(
+                f"{path}?{query}", headers={"Authorization": "Bearer dp_whatever"})
+            cookie_client = TestClient(app, follow_redirects=False)
+            cookie_client.cookies.set("session_id", "s")
+            by_cookie = cookie_client.get(f"{path}?{query}")
+    finally:
+        app.dependency_overrides.clear()
+    assert by_key.status_code == by_cookie.status_code == 400
+    assert opened == []
+    users.get_by_key_hash.assert_not_called()
+    users.get.assert_not_called()
+    redis.assert_not_called()
+
+
+def test_valid_request_still_authenticates(repos):
+    from app.infrastructure.database.session import get_async_session
+    from app.main import app
+    app.dependency_overrides[get_async_session] = lambda: AsyncMock()
+    try:
+        with patch("app.infrastructure.auth._user_repo") as users:
+            users.get_by_key_hash = AsyncMock(return_value=None)
+            resp = TestClient(app, follow_redirects=False).get(
+                f"/book/vm/reconcile?r={_token(uuid4())}", headers={"Authorization": "Bearer dp_bad"})
+    finally:
+        app.dependency_overrides.clear()
+    users.get_by_key_hash.assert_awaited_once()
+    assert resp.status_code in (302, 401)

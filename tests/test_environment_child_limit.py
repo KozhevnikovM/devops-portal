@@ -180,21 +180,140 @@ def test_admin_update_blueprint_over_the_limit_leaves_it_unchanged(admin_client)
     repo.update.assert_not_called()
 
 
-# ── startup: effective limit ──────────────────────────────────────────────────
-def test_effective_limit_raised_by_legacy_live_environment(caplog):
-    from app import main
-    with patch("app.main.SyncSessionLocal"), \
-         patch.object(main.EnvironmentRepository, "sync_live_children_over", return_value=(LIMIT + 7, 2)), \
-         caplog.at_level("WARNING", logger="app.main"):
-        assert main._effective_environment_child_limit() == LIMIT + 7
+# ── effective limit: computed at startup and kept current ─────────────────────
+class _Session:
+    async def __aenter__(self):
+        return object()
+
+    async def __aexit__(self, *exc):
+        return False
+
+
+def _limit(stats):
+    from app.infrastructure.environment_child_limit import EnvironmentChildLimit
+    repo = MagicMock()
+    repo.live_children_over = AsyncMock(side_effect=stats if isinstance(stats, Exception) else None,
+                                        return_value=None if isinstance(stats, Exception) else stats)
+    return EnvironmentChildLimit(LIMIT, repo=repo, session_factory=_Session), repo
+
+
+@pytest.mark.asyncio
+async def test_effective_limit_raised_by_a_live_environment_over_it(caplog):
+    limit, _ = _limit((LIMIT + 7, 2))
+    with caplog.at_level("WARNING", logger="app.infrastructure.environment_child_limit"):
+        assert await limit.refresh() == LIMIT + 7
+    assert limit.value == LIMIT + 7
     assert f"2 live environment(s) exceed ENVIRONMENT_MAX_CHILDREN={LIMIT}" in caplog.text
     assert f"largest: {LIMIT + 7} children" in caplog.text
 
 
-def test_effective_limit_is_the_configured_one_otherwise(caplog):
-    from app import main
-    with patch("app.main.SyncSessionLocal"), \
-         patch.object(main.EnvironmentRepository, "sync_live_children_over", return_value=(3, 0)), \
-         caplog.at_level("WARNING", logger="app.main"):
-        assert main._effective_environment_child_limit() == LIMIT
+@pytest.mark.asyncio
+async def test_effective_limit_is_the_configured_one_otherwise(caplog):
+    limit, _ = _limit((3, 0))
+    with caplog.at_level("WARNING", logger="app.infrastructure.environment_child_limit"):
+        assert await limit.refresh() == LIMIT
     assert "ENVIRONMENT_MAX_CHILDREN" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_effective_limit_drops_back_once_legacy_environments_are_released():
+    limit, repo = _limit((LIMIT + 7, 1))
+    await limit.refresh()
+    repo.live_children_over.return_value = (2, 0)
+    assert await limit.refresh() == LIMIT
+
+
+@pytest.mark.asyncio
+async def test_effective_limit_keeps_its_value_when_the_database_fails(caplog):
+    limit, repo = _limit((LIMIT + 3, 1))
+    await limit.refresh()
+    repo.live_children_over.side_effect = RuntimeError("db down")
+    assert await limit.refresh() == LIMIT + 3
+
+
+@pytest.mark.asyncio
+async def test_refresh_loop_runs_on_its_interval_and_promptly_when_asked():
+    import asyncio
+    limit, repo = _limit((LIMIT, 0))
+    task = asyncio.create_task(limit.run(interval_seconds=0.05))
+    try:
+        await asyncio.sleep(0.12)
+        periodic = repo.live_children_over.await_count
+        assert periodic >= 2                                   # on its interval
+        slow = asyncio.create_task(limit.run(interval_seconds=60))
+        before = repo.live_children_over.await_count
+        limit.request_refresh()                                # e.g. reconciliation met a bigger env
+        await asyncio.sleep(0.02)
+        assert repo.live_children_over.await_count > before
+        slow.cancel()
+    finally:
+        task.cancel()
+
+
+@pytest.mark.asyncio
+async def test_old_slot_environment_is_covered_after_the_next_refresh():
+    # Blue-green: this process computed C_eff at startup; then the previous version, still serving,
+    # ordered an environment larger than it. The next refresh raises C_eff to cover it.
+    limit, repo = _limit((3, 0))
+    await limit.refresh()
+    assert limit.value == LIMIT
+    repo.live_children_over.return_value = (LIMIT + 4, 1)
+    limit.request_refresh()
+    assert await limit.refresh() == LIMIT + 4
+
+
+# ── blueprint updates keep the limit; deactivation stays allowed ──────────────
+def _oversized_blueprint():
+    return _blueprint(_ns_items(LIMIT + 1))
+
+
+@pytest.mark.parametrize("prefix", ["/api", "/api/v1"])
+@pytest.mark.parametrize("body", [{"name": "renamed"}, {"description": "x"}, {"is_active": True}])
+def test_metadata_patch_of_an_oversized_legacy_blueprint_is_rejected(admin_client, prefix, body):
+    from uuid import uuid4
+    with patch("app.presentation.routes.api._blueprint_repo") as repo:
+        repo.get = AsyncMock(return_value=_oversized_blueprint())
+        repo.update = AsyncMock()
+        resp = admin_client.patch(f"{prefix}/environment-blueprints/{uuid4()}", json=body)
+    assert resp.status_code == 422
+    assert f"at most {LIMIT} items" in resp.json()["detail"]
+    repo.update.assert_not_called()
+
+
+def test_metadata_patch_of_a_blueprint_within_the_limit_is_saved(admin_client):
+    from uuid import uuid4
+
+    from tests.test_environment_blueprint_catalog import _bp
+    with patch("app.presentation.routes.api._blueprint_repo") as repo:
+        repo.get = AsyncMock(return_value=_blueprint(_ns_items(LIMIT)))
+        repo.update = AsyncMock(return_value=_bp(name="renamed"))
+        resp = admin_client.patch(f"/api/environment-blueprints/{uuid4()}", json={"name": "renamed"})
+    assert resp.status_code == 200
+    repo.update.assert_awaited_once()
+
+
+def test_deactivating_an_oversized_legacy_blueprint_is_allowed(admin_client):
+    from uuid import uuid4
+
+    from tests.test_environment_blueprint_catalog import _bp
+    with patch("app.presentation.routes.api._blueprint_repo") as repo:
+        repo.get = AsyncMock(return_value=_oversized_blueprint())
+        repo.update = AsyncMock(return_value=_bp(is_active=False))
+        repo.deactivate = AsyncMock()
+        patched = admin_client.patch(f"/api/environment-blueprints/{uuid4()}", json={"is_active": False})
+        deleted = admin_client.delete(f"/api/environment-blueprints/{uuid4()}")
+    assert patched.status_code == 200
+    assert deleted.status_code == 204
+    repo.get.assert_not_called()
+
+
+def test_admin_activating_an_oversized_legacy_blueprint_is_rejected(admin_client):
+    from uuid import uuid4
+    with patch("app.presentation.routes.admin._blueprint_repo") as repo:
+        repo.get = AsyncMock(return_value=_oversized_blueprint())
+        repo.activate = AsyncMock()
+        resp = admin_client.post(f"/admin/catalog/blueprints/{uuid4()}/activate")
+    assert resp.status_code == 200
+    assert resp.headers.get("HX-Retarget") == "#blueprint-create-error"
+    assert f"at most {LIMIT} items" in resp.text
+    repo.activate.assert_not_called()

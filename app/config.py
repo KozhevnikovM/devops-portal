@@ -72,6 +72,9 @@ class Settings(BaseSettings):
     # Most children an environment may have (#497): enforced on blueprint save and on order, so
     # reconciliation's bounded per-environment child read always sees every child.
     ENVIRONMENT_MAX_CHILDREN: int = Field(25, ge=1)
+    # How often the effective child limit is recomputed over live environments (#497): it covers
+    # environments an older app version ordered during a deploy, without a restart.
+    ENVIRONMENT_CHILD_LIMIT_REFRESH_SECONDS: int = Field(300, ge=1)
 
     # Live row updates (SSE): progress-only row-changed notifications (one per Ansible/script
     # output line) are coalesced per booking to at most one per window, plus a trailing publish

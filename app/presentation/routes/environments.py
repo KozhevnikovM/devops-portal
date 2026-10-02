@@ -22,8 +22,8 @@ from app.presentation.pagination import (
     InvalidCursorError, decode_cursor, encode_cursor, filter_params,
 )
 from app.presentation.reconcile import (
-    InvalidReconcileRequestError, environment_row_version, has_newer, parse_reconcile_request,
-    reconcile_poller_context,
+    ReconcileRequest, environment_row_version, has_newer, reconcile_poller_context,
+    reconcile_request,
 )
 from app.presentation.routes.api_environments import (
     _blueprint_repo, _derived_status, _env_repo, _namespace_repo, _order_use_case, _release_use_case,
@@ -107,9 +107,10 @@ def new_rows_context(*, filter, show_released, label, show: bool = False) -> dic
     }
 
 
-def _child_limit(request: Request) -> int:
-    """The effective environment child limit computed at startup (#497 D3a)."""
-    return getattr(request.app.state, "environment_child_limit", settings.ENVIRONMENT_MAX_CHILDREN)
+def _child_limit(request: Request):
+    """The effective environment child limit kept current by the app (#497 D3a), or None when the
+    app runs without its lifespan (then the configured limit applies)."""
+    return getattr(request.app.state, "environment_child_limit", None)
 
 
 @router.get("/environments", response_class=HTMLResponse)
@@ -165,8 +166,7 @@ async def environment_list_section(
 @router.get("/environments/reconcile", response_class=HTMLResponse, include_in_schema=False)
 async def environment_reconcile(
     request: Request,
-    r: list[str] = Query(default=[]),
-    newest: str | None = None,
+    req: ReconcileRequest = Depends(reconcile_request),   # first: validated before session/auth
     filter: str = "mine",
     show_released: bool = False,
     label: str | None = None,
@@ -176,27 +176,28 @@ async def environment_reconcile(
     """Page row reconciliation for the environments list (#497) — see bookings._render_reconcile.
 
     Children come from the bounded child read (at most the effective child limit + 1 each). An
-    environment over the limit breaks an invariant the write paths enforce, so only a direct
-    database edit produces one: it fails closed with a "reload required" row and nothing more is
-    read for it, so the request stays within its statement and child bounds.
+    environment over the current limit (one the previous app version ordered during a deploy since
+    the limit was last computed, or a direct database edit) fails closed: a "reload required" row,
+    nothing more read for it, so the request stays within its statement and child bounds — and the
+    limit is recomputed, so a later tick renders it in full.
     """
-    try:
-        req = parse_reconcile_request(r, newest, max_ids=settings.RECONCILE_MAX_IDS)
-    except InvalidReconcileRequestError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
     user_id = None if filter == "all" else str(current_user.id)
+    limit = _child_limit(request)
+    child_limit = limit.value if limit is not None else settings.ENVIRONMENT_MAX_CHILDREN
     items, over_limit = await _env_repo.list_items_by_ids(
-        session, list(req.versions), user_id=user_id, child_limit=_child_limit(request),
+        session, list(req.versions), user_id=user_id, child_limit=child_limit,
     )
     probe = await _env_repo.newest_key(
         session, user_id=user_id, label=label, include_released=show_released,
     )
     for env in over_limit:
-        logger.error(
-            "environment %s has more children than the effective child limit (%d); "
-            "not reconciled — the child-limit invariant was broken outside the application",
-            env.id, _child_limit(request),
+        logger.warning(
+            "environment %s has more children than the effective child limit (%d); answered "
+            "'reload required' until the limit is recomputed",
+            env.id, child_limit,
         )
+    if over_limit and limit is not None:
+        limit.request_refresh()
     visible = {e.id for e in items} | {e.id for e in over_limit}
     return templates.TemplateResponse(request, "partials/environment_reconcile.html", {
         "current_user": current_user,

@@ -1,12 +1,14 @@
 {#- Page reconciliation response for the environments list (#497) — see booking_reconcile.html.
-    An environment over the child limit (only possible through a direct database edit) is not
-    rendered: its row becomes a bounded "reload required" placeholder that leaves the rotation. -#}
+    An environment over the current child limit is not rendered: its row becomes a bounded
+    "reload required" placeholder. It stays live, with a version no row has, so once the limit has
+    been recomputed to cover it a later tick renders it in full. -#}
 {% with oob = True %}{% include "partials/new_rows_indicator.html" %}{% endwith %}
 {% for environment in changed %}
 {% with oob = True %}{% include "partials/environment_row.html" %}{% endwith %}
 {% endfor %}
 {% for environment in over_limit %}
 <tr id="environment-{{ environment.id }}" data-key="{{ list_key(environment) }}" hx-swap-oob="true"
+    sse-swap="environment-{{ environment.id }}" data-row-version="{{ '0' * 16 }}" data-live="inflight"
     class="border-b border-gray-800 last:border-0 align-top">
     <td class="px-4 py-3 text-gray-200">{{ environment.name }}</td>
     <td colspan="5" class="px-4 py-3 text-xs text-amber-400">

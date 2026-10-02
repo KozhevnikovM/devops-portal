@@ -83,6 +83,11 @@ def test_application_lifespan_starts_and_health_endpoint_responds(monkeypatch):
     monkeypatch.setattr(main, "_recover_in_progress_bookings", lambda: None)
     monkeypatch.setattr(main, "_recover_stuck_releases", lambda: None)
 
+    async def _no_child_limit(app):
+        return None
+
+    monkeypatch.setattr(main, "_start_environment_child_limit", _no_child_limit)
+
     with TestClient(app) as client:
         response = client.get("/health")
 

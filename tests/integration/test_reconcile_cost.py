@@ -13,6 +13,7 @@ a removal; a request built for All is answered with All's visibility (the server
 import re
 from contextlib import ExitStack
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
@@ -94,7 +95,7 @@ async def seeded(async_session):
 
 @pytest.fixture(autouse=True)
 def _app_state():
-    app.state.environment_child_limit = _CHILD_LIMIT
+    app.state.environment_child_limit = SimpleNamespace(value=_CHILD_LIMIT, request_refresh=lambda: None)
     yield
     del app.state.environment_child_limit
     app.dependency_overrides.clear()

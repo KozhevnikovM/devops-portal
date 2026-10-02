@@ -1,4 +1,4 @@
-"""Integration: the startup query behind the effective environment child limit (#497).
+"""Integration: the query behind the effective environment child limit (#497).
 
 `C_eff = max(ENVIRONMENT_MAX_CHILDREN, L)`, where L is the most children of any environment that is
 not fully released. Fully released environments never change again, so they don't count.
@@ -33,7 +33,7 @@ async def _seed_env(session, statuses):
 
 
 async def _stats(session, limit):
-    return await session.run_sync(lambda s: _repo.sync_live_children_over(s, limit))
+    return await _repo.live_children_over(session, limit)
 
 
 async def test_live_environment_over_the_limit_is_counted(async_session):

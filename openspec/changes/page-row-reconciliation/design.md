@@ -80,7 +80,7 @@ A small presentation helper (`app/presentation/reconcile.py`) parses `r`:
 - A version that is not `[0-9a-f]{16}` → 400.
 - A malformed `newest` → 400, via strict `decode_cursor` like the Load more cursor.
 
-All of these run before a session is used. Rejecting rather than truncating means a buggy client fails loudly in tests instead of silently under-reconciling.
+All of these run before a session is used. The parser is a FastAPI dependency (`reconcile_request`) declared as the routes' first parameter. FastAPI resolves dependencies in declaration order, so it runs before `get_async_session` and before `require_user`, whose user lookup is a database read (#513 review). A malformed request therefore gets 400 whether or not it is authenticated. That reveals nothing, since the response depends only on the query string. Rejecting rather than truncating means a buggy client fails loudly in tests instead of silently under-reconciling.
 
 `RECONCILE_MAX_IDS` defaults to 50 and is validated in `app/config.py` as `1 ≤ value ≤ min(BOOKINGS_PAGE_SIZE, ENVIRONMENTS_PAGE_SIZE)`. One reconcile therefore never reads more than a list page. `RECONCILE_SETTLED_MIN` (R) defaults to 10 and is validated as `1 ≤ value < RECONCILE_MAX_IDS`. The reserve is `min(S, R)`. Zero is rejected because, with `R = 0` and at least `B` rows in flight, settled rows would never be sent and the settled bound's denominator would be 0 (PR #512 review). Both values are rendered onto the poller element (D6), so the client uses the server's numbers, and the server still enforces the cap itself.
 
@@ -124,23 +124,26 @@ The round-1 fix bounded the read and *excluded* oversized environments from reco
 **Invariant.** Every environment that is not fully released has at most `C_eff` children.
 - *Why it can be enforced cheaply:* children are created only by `order_environment`, one per blueprint item, and adoption replaces an item rather than adding one. No other path sets `bookings.environment_id`.
 - *Write side* (environment-lifecycle spec). One domain validator, `validate_environment_size(item_count, limit)` in `app/domain/validation.py`, raises `EnvironmentTooLargeError`, a subclass of `EnvironmentItemError`, so existing order error mapping turns it into a 400. It is called:
-  - by the admin blueprint create/edit routes and the JSON `POST`/`PATCH /environment-blueprints`, which respond 422 with the admin form error;
+  - by the admin blueprint create/edit routes and the JSON `POST`/`PATCH /environment-blueprints`, which respond 422 with the admin form error. A `PATCH` without `items` validates the *stored* items, so a metadata-only update of a legacy oversized blueprint is rejected too. The one exception is a pure `{"is_active": false}`;
+  - by the admin *activate* route. Deactivate and delete are never validated, so an oversized blueprint can always be retired (#513 review);
   - by `order_environment`, before any reservation, which covers blueprints saved earlier.
-- *Legacy policy* (no data migration). At startup, `lifespan` runs one query and sets `C_eff = max(C, L)`, where L is the largest child count among not-fully-released environments:
+- *Legacy and cross-version policy* (no data migration). `C_eff = max(C, L)`, where L is the largest child count among not-fully-released environments. Computing it once at startup was not enough (#513 review). In a blue-green deploy the new slot starts while the old slot still serves, and the old code doesn't enforce C. An environment the old slot orders after the new slot started would then look like an invariant violation until a restart. So `app/infrastructure/environment_child_limit.py` keeps `C_eff` current:
 
   ```sql
-  SELECT max(n) FROM (
+  SELECT max(n), count(*) FILTER (WHERE n > :c) FROM (
       SELECT count(*) AS n FROM bookings
       WHERE environment_id IN (SELECT environment_id FROM bookings
                                WHERE status <> 'RELEASED' AND environment_id IS NOT NULL)
       GROUP BY environment_id) t
   ```
 
-  - The inner query uses `ix_bookings_environment_id_unreleased`, and the cost is proportional to the live children, once per process.
-  - A warning is logged when L > C.
-  - `C_eff` is stored on the app state and read by the reconcile routes. Every uvicorn worker computes its own, which is the same value.
-  - Operators can bring `C_eff` back to C by releasing the legacy environments and restarting. Nothing blocks startup, and no order or blueprint changes.
+  - It runs once in `lifespan` before serving, then in a background task every `ENVIRONMENT_CHILD_LIMIT_REFRESH_SECONDS` (default 300). A reconciliation request that meets an environment over `C_eff` also wakes it immediately.
+  - The inner query uses `ix_bookings_environment_id_unreleased`, and the cost is proportional to the live children, once per refresh. It runs in its own short session, never inside a reconciliation request, so the D3 statement budget is untouched. A request reads `C_eff` once.
+  - A warning is logged when L > C. A failed refresh keeps the previous value.
+  - Each uvicorn worker keeps its own value. They converge within one interval.
+  - `C_eff` drains back to C once the legacy environments are released, without a restart. Nothing blocks startup, and no order or blueprint changes.
   - Fully released environments are excluded. Their rows are final and never reconciled (D5).
+  - The deploy procedure needs no extra step. After cut-over, the old slot receives no traffic, so it creates nothing new, and anything it created before is covered by the next refresh at the latest.
 
 **Reconcile read.** One statement takes at most `C_eff + 1` children per requested environment:
 
@@ -154,12 +157,13 @@ CROSS JOIN LATERAL (
 
 - The lateral has no `ORDER BY`. The `LIMIT` over `ix_bookings_environment_id` therefore stops after `C_eff + 1` index entries, with no sort over all children. The children are then ordered by `created_at` in Python, the row's existing order.
 - By the invariant, at most `C_eff` children come back for every environment, so every visible environment is rendered in full and nothing is excluded. Children examined are at most `B × (C_eff + 1)`, and rendered output is at most B rows × `C_eff` children.
-- If `C_eff + 1` come back, the invariant was broken outside the application, for example by a direct DB insert. This is unsupported data, and the route **fails closed** for that environment (#512 review, round 3):
-  - it logs an error naming the environment;
+- If `C_eff + 1` come back, the environment appeared after `C_eff` was last computed: one the old slot ordered during a deploy, or a direct DB insert. The route **fails closed** for that environment (#512 review, round 3):
+  - it logs a warning naming the environment;
   - it performs no further read;
-  - it answers the id with a "reload required" OOB row: `<tr id="environment-<id>" data-key=… hx-swap-oob="true">`. The row is built from the environment's own list fields only, holds the "could not be refreshed — reload the page" message, and has no `data-live`, so it leaves the rotation.
+  - it wakes the `C_eff` refresh;
+  - it answers the id with a "reload required" OOB row: `<tr id="environment-<id>" data-key=… hx-swap-oob="true">`. The row is built from the environment's own list fields only and holds the "could not be refreshed — reload the page" message. It keeps `sse-swap`, `data-live="inflight"` and a version no row has (`0000000000000000`), so it stays in the rotation (#513 review). Once the refresh covers the environment, the next tick renders it in full.
 
-  The D3 budget and the child bound hold for every request with no exception. Convergence is guaranteed for application-valid data, which the D3a invariant enforces. A page reload renders the environment through the list path as before.
+  The D3 budget and the child bound hold for every request with no exception. Convergence takes at most one refresh interval longer for such an environment.
 
   *Rejected:* a fallback to the unbounded `_children` read (round 2). It reopened exactly the unbounded server work that #497 forbids.
 

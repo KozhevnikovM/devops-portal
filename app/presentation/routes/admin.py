@@ -1020,9 +1020,15 @@ async def admin_activate_blueprint(
     current_user: User = Depends(require_admin),
 ):
     try:
+        # A blueprint saved before ENVIRONMENT_MAX_CHILDREN existed may exceed it (#497): it can
+        # be retired, but not made orderable again until its items fit.
+        existing = await _blueprint_repo.get(session, blueprint_id)
+        validate_environment_size(len(existing.items), settings.ENVIRONMENT_MAX_CHILDREN)
         await _blueprint_repo.activate(session, blueprint_id)
     except NotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
+    except EnvironmentTooLargeError as exc:
+        return _blueprint_error(str(exc))
     return await _blueprint_table(request, session, current_user)
 
 

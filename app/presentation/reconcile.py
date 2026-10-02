@@ -14,6 +14,8 @@ from enum import Enum
 from urllib.parse import urlencode
 from uuid import UUID
 
+from fastapi import HTTPException, Query
+
 from app.config import settings
 from app.domain.booking_list import BookingListItem
 from app.domain.enums import BookingStatus
@@ -149,3 +151,19 @@ def reconcile_poller_context(url: str, filter: str, show_released: bool, label: 
         "reconcile_max": settings.RECONCILE_MAX_IDS,
         "reconcile_settled_min": settings.RECONCILE_SETTLED_MIN,
     }
+
+
+def reconcile_request(
+    r: list[str] = Query(default=[]),
+    newest: str | None = None,
+) -> ReconcileRequest:
+    """FastAPI dependency: the validated reconciliation request, or 400.
+
+    Declared first in the reconcile routes, so FastAPI resolves it before the session and the
+    (database-backed) authentication — an oversized or malformed request is refused before any
+    database work at all (#497 D2).
+    """
+    try:
+        return parse_reconcile_request(r, newest, max_ids=settings.RECONCILE_MAX_IDS)
+    except InvalidReconcileRequestError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
