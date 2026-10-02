@@ -25,7 +25,8 @@ from app.presentation.pagination import (
     InvalidCursorError, decode_cursor, encode_cursor, filter_params,
 )
 from app.presentation.reconcile import (
-    InvalidReconcileRequestError, has_newer, parse_reconcile_request, row_version,
+    InvalidReconcileRequestError, has_newer, parse_reconcile_request, reconcile_poller_context,
+    row_version,
 )
 from app.presentation.templating import templates
 
@@ -123,7 +124,12 @@ async def _list_section_context(
         resource_types=_VM_PAGE_TYPES if booking_type == "VM" else _NAMESPACE_PAGE_TYPES,
         page_path=page_path, filter=filter, show_released=show_released, label=label,
     )
-    return {"booking_type": booking_type, "page_path": page_path, **list_context}
+    return {
+        "booking_type": booking_type, "page_path": page_path, **list_context,
+        **new_rows_context(page_path=page_path, filter=filter, show_released=show_released,
+                           label=label),
+        **reconcile_poller_context(f"{page_path}/reconcile", filter, show_released, label),
+    }
 
 
 async def _render_bookings_page(

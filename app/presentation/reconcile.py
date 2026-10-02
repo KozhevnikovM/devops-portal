@@ -11,12 +11,14 @@ import re
 from dataclasses import dataclass, fields
 from datetime import datetime
 from enum import Enum
+from urllib.parse import urlencode
 from uuid import UUID
 
+from app.config import settings
 from app.domain.booking_list import BookingListItem
 from app.domain.enums import BookingStatus
 from app.domain.pagination import KeysetCursor
-from app.presentation.pagination import InvalidCursorError, decode_cursor, encode_cursor
+from app.presentation.pagination import InvalidCursorError, decode_cursor, encode_cursor, filter_params
 
 VERSION_LENGTH = 16  # hex characters (64 bits of SHA-256)
 
@@ -132,3 +134,13 @@ def has_newer(probe: KeysetCursor | None, newest_displayed: KeysetCursor | None)
     if newest_displayed is None:
         return True
     return (probe.created_at, probe.id) > (newest_displayed.created_at, newest_displayed.id)
+
+
+def reconcile_poller_context(url: str, filter: str, show_released: bool, label: str | None) -> dict:
+    """Template context of a list section's reconciliation poller: its URL carries the filters in
+    effect, and its batch limits are the server's own (which the server still enforces)."""
+    return {
+        "reconcile_url": f"{url}?{urlencode(filter_params(filter, show_released, label))}",
+        "reconcile_max": settings.RECONCILE_MAX_IDS,
+        "reconcile_settled_min": settings.RECONCILE_SETTLED_MIN,
+    }

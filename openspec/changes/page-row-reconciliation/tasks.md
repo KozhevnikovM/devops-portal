@@ -90,14 +90,14 @@
 
 ## 6. List section poller and indicator (design D6)
 
-- [ ] 6.1 In `partials/booking_list_section.html`:
+- [x] 6.1 In `partials/booking_list_section.html`:
   - Add the `<thead>` indicator row `<tr id="bookings-new-rows">`.
   - Add the hidden poller `<div id="bookings-reconcile" hx-get="<page_path>/reconcile?<filter_params>" hx-trigger="every 60s" hx-swap="none" hx-sync="this:drop" hx-request='{"timeout": 30000}' data-rows="#bookings-list" data-reconcile-max=… data-reconcile-settled-min=…>`.
   - Add a partial for the indicator content: a button doing `hx-get="<page_path>/list?…" hx-target="#bookings-section" hx-swap="outerHTML"`.
 
   Verify: the tests assert exactly one poller on the page, on `/list`, and after appending two `/rows` pages (none in `/rows`, `/row` or the create response), and that the poller URL carries the filters in effect.
-- [ ] 6.2 Do the same for `partials/environment_list_section.html`, including in the empty state. Verify: equivalent tests, plus an empty-section test.
-- [ ] 6.3 Rebuild Tailwind if new utility classes are used. Verify: `npx tailwindcss … --minify` succeeds and the classes are present in the output.
+- [x] 6.2 Do the same for `partials/environment_list_section.html`, including in the empty state. Verify: equivalent tests, plus an empty-section test.
+- [x] 6.3 Rebuild Tailwind if new utility classes are used. Verify: `npx tailwindcss … --minify` succeeds and the classes are present in the output.
 
 ## 7. Client script (design D7)
 

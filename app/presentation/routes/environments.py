@@ -23,6 +23,7 @@ from app.presentation.pagination import (
 )
 from app.presentation.reconcile import (
     InvalidReconcileRequestError, environment_row_version, has_newer, parse_reconcile_request,
+    reconcile_poller_context,
 )
 from app.presentation.routes.api_environments import (
     _blueprint_repo, _derived_status, _env_repo, _namespace_repo, _order_use_case, _release_use_case,
@@ -93,6 +94,7 @@ async def _list_section_context(
         "current_user": current_user,
         **_list_context(filter, show_released, label, next_cursor),
         **new_rows_context(filter=filter, show_released=show_released, label=label),
+        **reconcile_poller_context("/environments/reconcile", filter, show_released, label),
     }
 
 
