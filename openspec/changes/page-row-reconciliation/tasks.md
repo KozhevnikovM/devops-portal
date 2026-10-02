@@ -1,8 +1,11 @@
 ## 1. Baseline and settings
 
-- [ ] 1.1 Add `RECONCILE_MAX_IDS` (default 50) and `RECONCILE_SETTLED_MIN` (default 10) to `app/config.py`, with validation as follows (design D2):
+- [ ] 1.1 Add `RECONCILE_MAX_IDS` (default 50), `RECONCILE_SETTLED_MIN` (default 10) and `RECONCILE_MAX_CHILDREN_PER_ENVIRONMENT` (default 20) to `app/config.py`, with validation as follows (design D2):
   - `1 ≤ RECONCILE_MAX_IDS ≤ min(BOOKINGS_PAGE_SIZE, ENVIRONMENTS_PAGE_SIZE)`
-  - `0 ≤ RECONCILE_SETTLED_MIN < RECONCILE_MAX_IDS`
+  - `1 ≤ RECONCILE_SETTLED_MIN < RECONCILE_MAX_IDS`
+  - `RECONCILE_MAX_CHILDREN_PER_ENVIRONMENT ≥ 1`
+
+  A test asserts that `RECONCILE_SETTLED_MIN = 0` is rejected.
 
   Verify: a unit test asserts out-of-range values raise at settings load. `pytest tests/ -m "not integration" -k config` passes.
 - [ ] 1.2 Record the baseline background request count: on `main`, render a VM page with 1, 50 and 150 (three loaded pages) non-terminal rows and count the `hx-trigger="every 60s"` attributes. Verify: the numbers are noted for the code PR description.
@@ -10,7 +13,11 @@
 ## 2. Repository batch reads (design D3)
 
 - [ ] 2.1 Extract `list_page`'s phase-2 hydration in `BookingRepository` into `list_items_by_ids(session, ids, *, user_id, resource_types)`. It applies `resource_type IN :types`, plus `_owner_filter(user_id)` when `user_id` is given. `list_page` reuses the same statement builder. Declare it on `BookingRepositoryPort`. Verify: the existing pagination tests pass unchanged (`pytest tests/test_booking_pagination.py`), and new unit tests cover Mine, All and type scoping on a fake/SQLite-free statement-shape test.
-- [ ] 2.2 Do the same for `EnvironmentRepository.list_items_by_ids(session, ids, *, user_id)`: environments by id with the Mine-OR rule, plus the existing `_children_batch`, shared with `list_page`. Declare it on `EnvironmentRepositoryPort`. Verify: `pytest tests/test_environment_pagination.py` passes, plus new scoping tests.
+- [ ] 2.2 Do the same for `EnvironmentRepository.list_items_by_ids(session, ids, *, user_id)`: environments by id with the Mine-OR rule, plus a new bounded children read (design D3a). The read is one statement, `unnest(:ids)` lateral with `LIMIT M + 1` per environment and no `ORDER BY`, over list-safe child columns only. Children are ordered by `created_at` in Python, and an environment is reported oversized when M + 1 children come back. `list_page` keeps `_children_batch`. Also add `newest_key(...)` to both repositories and ports: the phase-1 key statement with `limit=1` under `_OrderedWalk`, returning `(created_at, id) | None` (design D8). Declare both on the ports. Verify:
+  - `pytest tests/test_environment_pagination.py` passes;
+  - new scoping tests;
+  - a statement-shape test asserts that the children statement has a per-environment `LIMIT` and selects no secret column;
+  - `newest_key` issues exactly one data statement.
 - [ ] 2.3 Integration: `tests/integration/test_reconcile_batch_reads.py`. Against real Postgres, it checks:
   - returned rows equal the visible subset for Mine, All and a wrong type;
   - Show released and label are not applied;
@@ -30,11 +37,18 @@
 - [ ] 3.4 Update `partials/booking_row.html` and `partials/environment_row.html`:
   - Remove `hx-get`/`hx-trigger`/`hx-swap` from the `<tr>`.
   - Use `is_final` (RELEASED only).
-  - Non-final rows carry `sse-swap`, `data-row-version`, `data-key` (`encode_cursor(created_at, id)`) and `data-live="inflight"|"settled"`. Final rows carry none.
+  - **Every** row carries `data-key` (`encode_cursor(created_at, id)`), RELEASED rows included.
+  - Non-final rows also carry `sse-swap`, `data-row-version` and `data-live="inflight"|"settled"`.
+  - Non-final environment rows also carry the `<span id="environment-<id>-sync">` placeholder. It is pre-filled with the reload hint and `data-reconcile-skip` when the row has more than M children.
+  - Final rows carry only `data-key`.
 
   Verify:
   - Update `tests/test_events_stream.py` (row attribute tests), `tests/test_environment_ui.py::test_environment_row_poll` and `_ACTION_ATTRS` in `tests/integration/test_booking_list_projection.py` to the new contract.
-  - A new test asserts, for PROVISIONING/READY/FAILED/RELEASED rows, no `hx-trigger` on any row, and the expected attributes per status.
+  - A new test asserts, for PROVISIONING/READY/FAILED/RELEASED rows:
+    - no `hx-trigger` on any row;
+    - `data-key` on all four rows;
+    - the expected other attributes per status;
+    - an oversized environment row carries the hint and `data-reconcile-skip`.
   - `pytest tests/ -m "not integration"` passes.
 
 ## 4. Reconcile endpoints (design D1, D2, D3, D8)
@@ -49,7 +63,7 @@
   - parses the parameters;
   - runs one `list_items_by_ids` call with the page's types and the Mine/All scope;
   - runs one `attach_queue_positions` call;
-  - runs one newest probe (`list_page(limit=1)` or a keys-only variant with the page filters);
+  - runs one keys-only newest probe (`newest_key`, design D8: the phase-1 key statement with `limit=1` under `_OrderedWalk`, never `list_page`);
   - renders OOB `<tr>`s for changed rows, `delete` directives for missing ids, and the `bookings-new-rows` indicator row first.
 
   Verify:
@@ -60,7 +74,11 @@
   - Unauthenticated requests are refused.
   - The routes are absent from `/openapi.json`.
   - Order-form catalog repos are not called.
-- [ ] 4.3 Add `GET /environments/reconcile` in `routes/environments.py` with the same contract, using `list_items_by_ids`, `_annotate` and the environments probe. Verify: the same test set for environments, plus child status changes being returned.
+- [ ] 4.3 Add `GET /environments/reconcile` in `routes/environments.py` with the same contract, using `list_items_by_ids` with the bounded children read (design D3a), `_annotate` and the environments `newest_key` probe. Oversized ids get the sync-placeholder directive with `data-reconcile-skip`. Verify:
+  - the same test set as for bookings, plus child status changes being returned;
+  - an environment with exactly M children is rendered with all of them;
+  - one with M + 5 children gets only the hint directive, no row;
+  - the children statement is bounded per environment: the integration test in 7.1 counts the child rows fetched as ≤ M + 1 for that environment.
 - [ ] 4.4 Add the reconcile paths to the uvicorn access-log filter in `app/main.py`. Verify: a unit test of the filter predicate.
 
 ## 5. List section poller and indicator (design D6)
@@ -78,7 +96,7 @@
 
 - [ ] 6.1 Add `app/static/js/row_reconcile.js` and load it in `base.html` after htmx. It provides:
   - `selectBatch` (pure, exported on `window.rowReconcile`);
-  - `htmx:configRequest`, which adds `r`/`newest` and records the sent versions on the request;
+  - `htmx:configRequest`, which skips rows containing `[data-reconcile-skip]`, adds `r`, takes `newest` from the first `tr[data-key]` whatever its status, and records the sent versions on the request;
   - `htmx:beforeSwap`, which drops responses for pollers no longer in the document;
   - `htmx:oobBeforeSwap`, which skips rows whose version changed since the request.
 
@@ -88,8 +106,13 @@
   - one request per tick;
   - every row is sent within the spec bound;
   - in-flight rows are prioritized;
-  - the settled reserve is honoured;
+  - the settled reserve of `min(S, R)` is honoured, including 60 in-flight + 30 settled with B = 50 and R = 10, where every settled row is sent within 3 ticks;
+  - skipped (oversized) rows are never sent;
   - one prepend case is handled.
+
+  Add a list-key test (in `tests/test_reconcile_endpoints.py`) covering:
+  - with Show released on and a RELEASED first row, the request's `newest` is that row's key, and the response's indicator is hidden when nothing newer exists;
+  - the same after a reconcile response renders the first row RELEASED.
 
   Add `tests/js/row_reconcile.test.mjs`, which runs the same fixture table against the JS with `node --test`, skipped in CI. Verify: `pytest tests/test_reconcile_convergence.py` passes, and `node --test tests/js/` passes locally.
 
@@ -97,7 +120,8 @@
 
 - [ ] 7.1 `tests/integration/test_reconcile_cost.py`: seed 1, 50 and 150 bookings (and environments with children), then count statements (`before_cursor_execute`) for reconcile requests with 1 id and with `RECONCILE_MAX_IDS` ids, including queued bookings. Assert:
   - equal statement counts for both sizes;
-  - ≤ 3 statements per request;
+  - at most 7 statements per bookings request and 5 per environments request, counting the `_OrderedWalk` pin and restore (design D3);
+  - for an environment with M + 5 children, at most M + 1 child rows fetched;
   - no catalog repo call.
 
   Also record response bytes for a fully changed and an unchanged batch. Verify: `pytest -m integration tests/integration/test_reconcile_cost.py -s`. The numbers are appended to a "Measurements" section in design.md and the PR.

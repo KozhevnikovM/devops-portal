@@ -73,14 +73,23 @@ The server SHALL enforce, independently of the client:
 
 A request that violates any of these SHALL be rejected with status 400 and SHALL NOT read any row. A request SHALL NOT be truncated silently.
 
-A valid request SHALL cost a bounded, row-count-independent number of database statements:
-- one batch read of the requested rows through the list's projection
-- for environments, one batch read of their children
-- at most one queue-position statement, and none when no requested row is queued
-- one newest-row probe through the page's first-page selection
+A valid request SHALL execute a fixed maximum number of database statements, independent of the number of requested ids. The count includes every statement sent, including the transaction-local planner settings applied and restored around an ordered index walk. The request SHALL consist of:
+- exactly one batch read of the requested rows through the list's projection
+- for environments, exactly one batch read of their children
+- for bookings, at most one queue-position read, and none when no requested row is queued
+- exactly one newest-row probe, which reads only the newest matching row's list key in a single statement and hydrates no row
 - no order-form catalog read and no per-row query
 
-It SHALL return at most one rendered row or removal directive per requested id. The rows and environment children it reads SHALL be no more than the list page read would load for the same ids.
+The resulting maximum is 7 statements for a bookings page and 5 for the environments page. The planner-settings statements are counted with the walks they wrap.
+
+It SHALL return at most one rendered row or directive per requested id.
+
+Environment children SHALL have a hard server-enforced bound of `RECONCILE_MAX_CHILDREN_PER_ENVIRONMENT` children per environment (a configured value, default 20):
+- The children read SHALL examine and return at most `RECONCILE_MAX_CHILDREN_PER_ENVIRONMENT + 1` children of each requested environment, and therefore at most `RECONCILE_MAX_IDS × (RECONCILE_MAX_CHILDREN_PER_ENVIRONMENT + 1)` children per request, however many children an environment has.
+- An environment found to have more children than the bound SHALL NOT be rendered by reconciliation. Instead, its id SHALL receive a "not refreshed automatically" directive. The directive marks the row with a visible hint to reload the page, and removes the row from further reconciliation. The row keeps its live row update subscription.
+- A list rendering of such an environment SHALL show the same hint and mark the row as excluded from reconciliation from the start.
+
+A response therefore renders at most `RECONCILE_MAX_IDS` rows, each with at most `RECONCILE_MAX_CHILDREN_PER_ENVIRONMENT` children.
 
 Reconciliation SHALL require an authenticated user and SHALL refuse unauthenticated requests the same way the list pages do. It SHALL NOT be listed in the OpenAPI schema.
 
@@ -93,8 +102,22 @@ Reconciliation SHALL require an authenticated user and SHALL refuse unauthentica
 - **THEN** the server responds 400 and reads no row
 
 #### Scenario: Statement count does not grow with batch size
-- **WHEN** reconciliation requests are made with 1 id and with `RECONCILE_MAX_IDS` ids, including queued bookings
-- **THEN** both requests execute the same number of database statements
+- **WHEN** bookings reconciliation requests are made with 1 id and with `RECONCILE_MAX_IDS` ids, each including a queued booking
+- **THEN** both requests execute the same number of database statements, and neither executes more than 7
+
+#### Scenario: Environment statement count is fixed
+- **WHEN** environments reconciliation requests are made with 1 id and with `RECONCILE_MAX_IDS` ids
+- **THEN** both requests execute the same number of database statements, and neither executes more than 5
+
+#### Scenario: Environment over the child bound
+- **WHEN** a displayed environment has `RECONCILE_MAX_CHILDREN_PER_ENVIRONMENT + 5` children and its id is reconciled
+- **THEN** the children read examines at most `RECONCILE_MAX_CHILDREN_PER_ENVIRONMENT + 1` of its children
+- **AND** the response does not render that environment but marks its row "not refreshed automatically — reload to update"
+- **AND** later reconciliation requests from that page do not include its id
+
+#### Scenario: Environment at the child bound
+- **WHEN** a displayed environment has exactly `RECONCILE_MAX_CHILDREN_PER_ENVIRONMENT` children and has changed
+- **THEN** reconciliation renders it with all of its children
 
 #### Scenario: Unauthenticated reconciliation is refused
 - **WHEN** a reconciliation request is made without an authenticated session or API key
@@ -138,7 +161,7 @@ Every displayed booking row whose status is not RELEASED, and every displayed en
 - subscribe to its live row update
 - take part in reconciliation
 
-This includes READY and FAILED rows, because they can still change, for example READY → RELEASING on TTL expiry or a release from elsewhere. A row whose rendered state is RELEASED SHALL leave both, since it can no longer change.
+This includes READY and FAILED rows, because they can still change, for example READY → RELEASING on TTL expiry or a release from elsewhere. A row whose rendered state is RELEASED SHALL leave both, since it can no longer change. It SHALL still carry its list key. An environment row over the child bound SHALL keep its live row update subscription but SHALL NOT take part in reconciliation (see "Reconciliation requests are bounded by the server").
 
 For a reconciled row:
 - A row that has become RELEASED SHALL be rendered once in its RELEASED state, even when Show released is off. It SHALL NOT be removed for that reason.
@@ -168,14 +191,16 @@ Rows that a page shows SHALL keep their order: reconciliation SHALL replace rows
 The client SHALL choose each request's batch from the displayed non-RELEASED rows:
 - **In-flight rows** (any status other than READY, FAILED and RELEASED; for environments, any derived status other than READY, FAILED and RELEASED) SHALL be taken first, in rotating order.
 - **Settled rows** (READY or FAILED) SHALL fill the remaining capacity, in rotating order.
-- At least `RECONCILE_SETTLED_MIN` slots of each batch (default 10) SHALL go to settled rows whenever settled rows are displayed.
+- `min(S, RECONCILE_SETTLED_MIN)` slots of each batch SHALL be reserved for settled rows, where S is the number of displayed settled rows. `RECONCILE_SETTLED_MIN` is a configured value with `1 ≤ RECONCILE_SETTLED_MIN < RECONCILE_MAX_IDS` (default 10). Whenever a settled row is displayed, at least one settled row is therefore sent in every batch, however many rows are in flight.
+- Slots that neither class uses SHALL go to the other class.
+- An environment row excluded for exceeding the child bound SHALL be in neither class.
 - Rotation SHALL continue from where the previous batch ended. Every displayed row of a class SHALL therefore be sent once before any row of that class is sent again.
 
 With interval T, batch size B, reserved settled share R, I in-flight rows and S settled rows, a change to a displayed row SHALL be reflected no later than the following delay after the change, plus one request's response time:
 - **in-flight row**: ⌈I / (B − min(S, R))⌉ × T
 - **settled row**: ⌈S / max(min(S, R), B − I)⌉ × T
 
-In particular, a row converges within one interval only while all rows of its class fit in one batch. The system SHALL NOT promise that every loaded row is refreshed every interval. Live row updates remain the fast path whenever they are delivered.
+Because R ≥ 1, both denominators are at least 1 whenever their class is non-empty. Every displayed non-RELEASED row that is not excluded by the child bound therefore converges within a finite, stated delay. In particular, a row converges within one interval only while all rows of its class fit in one batch. The system SHALL NOT promise that every loaded row is refreshed every interval. Live row updates remain the fast path whenever they are delivered.
 
 #### Scenario: First page converges every interval
 - **WHEN** a page shows 50 rows (B = 50) and a row's change notification is lost
@@ -186,15 +211,37 @@ In particular, a row converges within one interval only while all rows of its cl
 - **THEN** the row reflects the change within ⌈145 / 45⌉ = 4 intervals
 - **AND** an in-flight row's lost change is reflected within one interval
 
+#### Scenario: Settled rows are not starved by many in-flight rows
+- **WHEN** a page shows 60 in-flight rows and 30 settled rows, with B = 50 and R = 10, and a settled row's change notification is lost
+- **THEN** every batch contains 10 settled rows, and the row reflects the change within ⌈30 / 10⌉ = 3 intervals
+
+#### Scenario: Settled reserve of zero is rejected
+- **WHEN** the service is configured with `RECONCILE_SETTLED_MIN = 0`
+- **THEN** the configuration is rejected at startup
+
 ### Requirement: Newer matching rows are signalled, not inserted
 
-Each reconciliation response SHALL tell the page whether a matching row newer than the newest displayed row exists. This SHALL be decided by one bounded probe through the page's first-page selection for the filters in effect, including its label-scan bound. When the page displays no row, the indicator SHALL be shown if any matching row exists.
+Each reconciliation response SHALL tell the page whether a matching row newer than the newest displayed row exists. This SHALL be decided by one bounded probe through the page's first-page selection for the filters in effect, including its label-scan bound.
+
+**The newest displayed row**
+- It SHALL be the first row the list section shows, whatever its status. A RELEASED row counts too, for example under Show released, or after reconciliation rendered a row as RELEASED.
+- Every displayed row SHALL therefore carry its list key, including RELEASED rows and rows excluded from reconciliation.
+- The request SHALL omit the newest-row key only when the section displays no row at all.
+- When the page displays no row, the indicator SHALL be shown if any matching row exists.
 
 When a newer matching row exists, the page SHALL show an indicator. Activating the indicator SHALL reload the list section with the filters in effect, as a filter change does. Reconciliation itself SHALL NOT insert rows, replace loaded pages or scan history beyond the first-page selection. Rows the user's own tab prepends, for example a newly ordered booking, SHALL count as displayed.
 
 #### Scenario: Booking ordered in another tab
 - **WHEN** user U orders a VM in one tab while another tab shows U's Mine VM list
 - **THEN** the other tab's next reconciliation shows the newer-rows indicator, and the list is unchanged until U activates it
+
+#### Scenario: Newest displayed row is RELEASED
+- **WHEN** Show released is on, the first displayed row is a RELEASED booking, and no newer matching booking exists
+- **THEN** the request carries that row's list key and the newer-rows indicator stays hidden
+
+#### Scenario: First row becomes RELEASED
+- **WHEN** the first displayed row is rendered as RELEASED by reconciliation while Show released is off, and no newer matching booking exists
+- **THEN** later requests still carry that row's list key and the newer-rows indicator stays hidden
 
 #### Scenario: Own order is not signalled
 - **WHEN** U orders a VM from the page's form and the new row is prepended to the list

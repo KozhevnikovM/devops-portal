@@ -22,10 +22,12 @@ The dependencies are in place. #494 provides the list-section fragment contract,
 
 **Server-enforced bounds**
 - At most `RECONCILE_MAX_IDS` ids per request (default 50, the page size). An oversized, duplicated or malformed id list is rejected with 400, so a client cannot exceed the cap.
-- The rows are read through the existing list-safe projection: one batch read by id, at most one queue-rank statement (#495 helper), and one bounded newest-row probe through the existing first-page walk. There are no form-catalog reads and no per-row queries.
+- The rows are read through the existing list-safe projection: one batch read by id, at most one queue-rank read (#495 helper), and one keys-only newest-row probe through the existing first-page key walk. There are no form-catalog reads and no per-row queries.
+- The statement count is fixed whatever the batch size: at most 7 for a bookings page and 5 for environments, counting the plan-pin statements.
+- Environment children have a hard bound of `RECONCILE_MAX_CHILDREN_PER_ENVIRONMENT` (default 20). The children read stops after that many plus one per environment. An environment over the bound is not rendered by reconciliation: its row shows a visible "reload to update" hint and leaves the rotation.
 
 **Bounded, stated convergence**
-- The client rotates through the displayed rows in batches. In-flight rows go first, and a reserved share of each batch goes to settled (READY/FAILED) rows.
+- The client rotates through the displayed rows in batches. In-flight rows go first, and a reserved share of `min(S, RECONCILE_SETTLED_MIN)` slots per batch goes to settled (READY/FAILED) rows, where S is the number of settled rows displayed. The reserve is at least 1, so settled rows are never starved.
 - The worst-case delay before a change shows up is a stated function of the number of displayed rows, the batch size and the interval. A row converges within one interval only while its class fits in a single batch.
 
 **Visibility separate from management**
@@ -37,7 +39,7 @@ The dependencies are in place. #494 provides the list-section fragment contract,
 - Every row that is not RELEASED is live: it keeps or gains `sse-swap` and is included in reconciliation. This adds READY and FAILED rows, so READY → RELEASING now converges.
 - A RELEASED row is rendered once in its final state and then leaves reconciliation.
 - Rows are never removed for no longer matching the label or Show released filter. They are removed only when deleted or not visible.
-- Newer matching rows are detected with one bounded first-page probe. It shows an indicator that reloads the list section on click. Loaded pages are never replaced silently.
+- Newer matching rows are detected with one bounded first-page probe, compared with the list key of the first displayed row. Every displayed row carries its key, RELEASED rows included. It shows an indicator that reloads the list section on click. Loaded pages are never replaced silently.
 
 **Client guarantees**
 - No overlapping reconciliation requests, and one timer per list section.
@@ -71,9 +73,9 @@ None.
   - `booking_repo` / `environment_repo` expose their existing phase-2 hydration (list projection by ids) as a public batch read, also declared on the ports.
   - Templates: the row partials drop `hx-get`/`hx-trigger`, gain `data-row-version`/`data-key`, and keep `sse-swap` on every non-RELEASED row. The list-section partials gain one poller element and a new-rows indicator row.
   - A new static `row_reconcile.js` (about 100 lines) builds the batch and guards against stale responses.
-  - `app/config.py` gains `RECONCILE_MAX_IDS` (default 50, validated ≤ page size) and `RECONCILE_SETTLED_MIN` (default 10, validated < `RECONCILE_MAX_IDS`). The 60 s interval stays a template constant, as today.
+  - `app/config.py` gains `RECONCILE_MAX_IDS` (default 50, validated ≤ page size), `RECONCILE_SETTLED_MIN` (default 10, validated `1 ≤ R < RECONCILE_MAX_IDS`) and `RECONCILE_MAX_CHILDREN_PER_ENVIRONMENT` (default 20, ≥ 1). The 60 s interval stays a template constant, as today.
   - `app/main.py`'s access-log filter also suppresses the reconcile path.
 - **HTTP surface**: three new HTML-only GET routes (`include_in_schema=False`, `require_user`). The JSON API is unchanged.
-- **Load**: per-tab background requests drop from one per non-terminal row per minute to one per list section per minute. Per-request DB work is bounded by `RECONCILE_MAX_IDS` and is at most a list page's worth of statements.
+- **Load**: per-tab background requests drop from one per non-terminal row per minute to one per list section per minute. Per-request DB work is a fixed statement count (≤ 7 / ≤ 5), with rows bounded by `RECONCILE_MAX_IDS` and environment children by `RECONCILE_MAX_IDS × (RECONCILE_MAX_CHILDREN_PER_ENVIRONMENT + 1)`.
 - **Tests**: new unit/API tests cover caps, authorization (forged and foreign ids under Mine/All), changed-only responses, removals, the probe and the template contract. An integration test counts statements for 1 row, 50 rows and several loaded pages. A small JS-level rotation test, or a documented manual browser check, covers the client. Existing tests asserting `hx-trigger="every 60s"` are updated.
 - **Docs**: `docs/api-reference.md` (row endpoints, `/events/stream`, new reconcile fragments) and `docs/admin-guide.md` (the nginx/SSE note and the rolling-deploy note).

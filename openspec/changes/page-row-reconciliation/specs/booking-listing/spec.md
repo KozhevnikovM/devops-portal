@@ -4,12 +4,13 @@
 
 A booking row rendered by any path (the page, the list-section fragment, a next-page fragment, the order response, a single-row refresh, a label edit, an action response or a live row update) SHALL NOT carry a periodic request of its own.
 
-A booking row whose status is not RELEASED SHALL carry:
+Every displayed booking row, whatever its status, SHALL carry its list key. The page uses the key of its first displayed row to detect newer bookings.
+
+A booking row whose status is not RELEASED SHALL also carry:
 - its live row update subscription
 - its row version
-- its list key
 
-A RELEASED row SHALL carry none of them.
+A RELEASED row SHALL carry neither.
 
 A row's version SHALL change whenever anything the row displays changes. That covers its state, its display fields, its owner and creator names, its label, its TTL and expiry, its queue position and its credentials availability. It SHALL be computed only from list-safe values, never from a credential or other secret.
 
@@ -20,8 +21,9 @@ The single-row refresh (`GET /bookings/{id}/row`) SHALL keep its current owner /
 #### Scenario: No per-row timer
 - **WHEN** a VM page lists a PROVISIONING booking, a READY booking and a RELEASED booking
 - **THEN** no row carries a periodic request
-- **AND** the PROVISIONING and READY rows carry a live update subscription, a row version and a list key
-- **AND** the RELEASED row carries none of them
+- **AND** every row carries a list key
+- **AND** the PROVISIONING and READY rows carry a live update subscription and a row version
+- **AND** the RELEASED row carries neither
 
 #### Scenario: One poller after Load more
 - **WHEN** a user loads three pages of bookings
