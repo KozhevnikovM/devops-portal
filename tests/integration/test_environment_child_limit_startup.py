@@ -53,3 +53,41 @@ async def test_fully_released_environment_does_not_count(async_session):
     limit, _ = await _stats(async_session, 0)
     await _seed_env(async_session, [BookingStatus.RELEASED] * (limit + 7))
     assert await _stats(async_session, limit) == (limit, 0)
+
+
+# ── plan: the periodic query reads live children only, through the partial index ──────────────
+def test_not_released_is_a_literal_not_a_bound_parameter():
+    from sqlalchemy.dialects import postgresql
+
+    from app.infrastructure.repositories.environment_repo import _live_children_stmt
+    compiled = _live_children_stmt(25).compile(dialect=postgresql.dialect())
+    assert "'RELEASED'" in str(compiled)
+    assert "RELEASED" not in {str(v) for v in compiled.params.values()}
+
+
+async def test_generic_plan_uses_the_unreleased_partial_index(async_session):
+    """As a prepared statement under a forced generic plan (parameter values unknown when planned),
+    under the same ordered-walk pin the repository applies, the live-children scan is the partial
+    index and no step scans the bookings table."""
+    from sqlalchemy import text
+
+    from app.infrastructure.repositories._ordered_walk import _OrderedWalk
+    from app.infrastructure.repositories.environment_repo import _live_children_stmt
+
+    await _seed_env(async_session, [BookingStatus.READY, BookingStatus.RELEASED])
+    await async_session.execute(text("ANALYZE bookings"))
+    conn = await async_session.connection()
+    compiled = _live_children_stmt(25).compile(dialect=conn.dialect)    # asyncpg: $1, $2 …
+    values = ", ".join(f"'{v}'" if isinstance(v, str) else str(v)
+                       for v in (compiled.params[name] for name in compiled.positiontup))
+    # A prepared statement planned generically: parameter values unknown at planning time.
+    await conn.exec_driver_sql(f"PREPARE live_children AS {compiled}")
+    await async_session.execute(text("SET LOCAL plan_cache_mode = force_generic_plan"))
+    try:
+        async with _OrderedWalk(async_session):
+            result = await conn.exec_driver_sql(f"EXPLAIN EXECUTE live_children({values})")
+            plan = "\n".join(row[0] for row in result)
+    finally:
+        await conn.exec_driver_sql("DEALLOCATE live_children")
+    assert "ix_bookings_environment_id_unreleased" in plan, plan
+    assert "Seq Scan on bookings" not in plan, plan

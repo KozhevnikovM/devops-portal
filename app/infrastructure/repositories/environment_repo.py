@@ -14,7 +14,7 @@ from app.domain.exceptions import EnvironmentNotFoundError
 from app.domain.lease import Lease, lease_can_start
 from app.domain.pagination import EnvironmentPage, KeysetCursor
 from app.infrastructure.database.models import (
-    BookingModel, EnvironmentModel, NamespaceModel, StaticVMModel, UserModel,
+    BOOKING_NOT_RELEASED, BookingModel, EnvironmentModel, NamespaceModel, StaticVMModel, UserModel,
 )
 from app.infrastructure.repositories._ordered_walk import _OrderedWalk
 from app.infrastructure.repositories.booking_repo import _to_entity as _booking_to_entity
@@ -203,6 +203,24 @@ def _to_child_item(row) -> EnvironmentChildItem:
         static_vm_host=row.static_vm_host, image_name=row.image_name, vm_ip=row.vm_ip,
         config_failed=row.config_failed,
     )
+
+
+def _live_children_stmt(limit: int):
+    """Largest child count of any environment with a non-RELEASED child, and how many exceed
+    `limit` (#497 D3a). The not-RELEASED test is the literal BOOKING_NOT_RELEASED, never a bound
+    parameter: PostgreSQL can't prove a partial index's predicate from a parameter under a generic
+    plan, and this query must use ix_bookings_environment_id_unreleased (#479)."""
+    live_envs = (
+        select(BookingModel.environment_id)
+        .where(BookingModel.environment_id.is_not(None), BOOKING_NOT_RELEASED)
+    )
+    counts = (
+        select(func.count().label("n"))
+        .where(BookingModel.environment_id.in_(live_envs))
+        .group_by(BookingModel.environment_id)
+        .subquery()
+    )
+    return select(func.coalesce(func.max(counts.c.n), 0), func.count().filter(counts.c.n > limit))
 
 
 def _to_entity(m: EnvironmentModel, bookings=None, owner_username=None, created_by_username=None) -> Environment:
@@ -465,22 +483,12 @@ class EnvironmentRepository:
         `(0, 0)` when no environment is live. Sizes the effective child limit: environments ordered
         before ENVIRONMENT_MAX_CHILDREN existed, or by an older app version still serving during a
         deploy, may exceed it. Fully released environments never change again, so they don't
-        count. The inner scan uses ix_bookings_environment_id_unreleased.
+        count. Runs periodically on every worker, so it is pinned like the page walks: under the
+        ordered-walk pin, with the literal not-RELEASED predicate, it reads the live children
+        through ix_bookings_environment_id_unreleased and never scans released history.
         """
-        live_envs = (
-            select(BookingModel.environment_id)
-            .where(BookingModel.environment_id.is_not(None),
-                   BookingModel.status != BookingStatus.RELEASED.value)
-        )
-        counts = (
-            select(func.count().label("n"))
-            .where(BookingModel.environment_id.in_(live_envs))
-            .group_by(BookingModel.environment_id)
-            .subquery()
-        )
-        largest, over = (await session.execute(
-            select(func.coalesce(func.max(counts.c.n), 0), func.count().filter(counts.c.n > limit))
-        )).one()
+        async with _OrderedWalk(session):
+            largest, over = (await session.execute(_live_children_stmt(limit))).one()
         return largest, over
 
     def sync_list_expired(self, session: Session) -> list[Environment]:

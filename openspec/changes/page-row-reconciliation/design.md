@@ -138,7 +138,7 @@ The round-1 fix bounded the read and *excluded* oversized environments from reco
   ```
 
   - It runs once in `lifespan` before serving, then in a background task every `ENVIRONMENT_CHILD_LIMIT_REFRESH_SECONDS` (default 300). A reconciliation request that meets an environment over `C_eff` also wakes it immediately.
-  - The inner query uses `ix_bookings_environment_id_unreleased`, and the cost is proportional to the live children, once per refresh. It runs in its own short session, never inside a reconciliation request, so the D3 statement budget is untouched. A request reads `C_eff` once.
+  - The inner query uses `ix_bookings_environment_id_unreleased`. The not-RELEASED test is the literal `BOOKING_NOT_RELEASED`, never a bound parameter, so even a generic prepared plan can prove the partial-index predicate (#479). The query also runs under the ordered-walk pin, so it never falls back to a sequential scan of released history (#513 review; pinned by an `EXPLAIN EXECUTE` test under `force_generic_plan`). The cost is proportional to the live children, once per refresh. It runs in its own short session, never inside a reconciliation request, so the D3 statement budget is untouched. A request reads `C_eff` once.
   - A warning is logged when L > C. A failed refresh keeps the previous value.
   - Each uvicorn worker keeps its own value. They converge within one interval.
   - `C_eff` drains back to C once the legacy environments are released, without a restart. Nothing blocks startup, and no order or blueprint changes.
