@@ -108,7 +108,7 @@
   - `htmx:oobBeforeSwap`, which skips rows whose version changed since the request.
 
   Ensure the Docker frontend stage copies it like the other static JS. Verify: the page HTML includes the script, and `docker compose build` serves it at `/static/js/row_reconcile.js`.
-- [ ] 7.2 Add the Python oracle `tests/reconcile_oracle.py` mirroring `selectBatch`, and the convergence test `tests/test_reconcile_convergence.py`. For stable sets of 1, 50 and 150 rows (with in-flight/settled mixes), the test asserts:
+- [x] 7.2 Add the Python oracle `tests/reconcile_oracle.py` mirroring `selectBatch`, and the convergence test `tests/test_reconcile_convergence.py`. For stable sets of 1, 50 and 150 rows (with in-flight/settled mixes), the test asserts:
   - batch size ≤ max;
   - one request per tick;
   - every row is sent within the spec bound;
@@ -120,11 +120,11 @@
   - with Show released on and a RELEASED first row, the request's `newest` is that row's key, and the response's indicator is hidden when nothing newer exists;
   - the same after a reconcile response renders the first row RELEASED.
 
-  Add `tests/js/row_reconcile.test.mjs`, which runs the same fixture table against the JS with `node --test`, skipped in CI. Verify: `pytest tests/test_reconcile_convergence.py` passes, and `node --test tests/js/` passes locally.
+  Add `tests/js/row_reconcile.test.mjs`, which runs the same fixture table against the JS with `node --test`, skipped in CI. Verify: `pytest tests/test_reconcile_convergence.py` passes, and `node --test tests/js/*.test.mjs` passes locally.
 
 ## 8. Integration measurements
 
-- [ ] 8.1 `tests/integration/test_reconcile_cost.py`: seed 1, 50 and 150 bookings (and environments with children), then count statements (`before_cursor_execute`) for reconcile requests with 1 id and with `RECONCILE_MAX_IDS` ids, including queued bookings. Assert:
+- [x] 8.1 `tests/integration/test_reconcile_cost.py`: seed 1, 50 and 150 bookings (and environments with children), then count statements (`before_cursor_execute`) for reconcile requests with 1 id and with `RECONCILE_MAX_IDS` ids, including queued bookings. Assert:
   - equal statement counts for both sizes;
   - at most 7 statements per bookings request and 5 per environments request, counting the `_OrderedWalk` pin and restore (design D3);
   - for an environment with exactly `C_eff` children, at most `C_eff + 1` child rows fetched;
@@ -132,7 +132,7 @@
   - no catalog repo call.
 
   Also record response bytes for a fully changed and an unchanged batch. Verify: `pytest -m integration tests/integration/test_reconcile_cost.py -s`. The numbers are appended to a "Measurements" section in design.md and the PR.
-- [ ] 8.2 Integration test for filter change and authorization in flight:
+- [x] 8.2 Integration test for filter change and authorization in flight:
   - a Mine request for a row whose ownership does not match returns a delete directive;
   - a request built for All, sent after switching to Mine, still returns only All-visible rows (the server is stateless). The client-side discard is covered by 9.1.
 

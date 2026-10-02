@@ -284,3 +284,30 @@ They assert:
 ## Migration Plan
 
 There is no data migration, and no settings are required (defaults apply). Rollout is a normal deploy. Rollback reverts the commit: old templates poll `/row` again, and tabs opened with new HTML stop reconciling until reload.
+
+## Measurements
+
+Background requests per tab come from rendering the VM page. The "before" figure is the templates on `main` (task 1.3). The "after" figure is this change.
+
+| Displayed in-flight rows | Before: per-row 60 s polls | After: reconciliation requests per 60 s |
+|---|---|---|
+| 1 | 1 | 1 |
+| 50 | 50 | 1 |
+| 150 (three loaded pages) | 150 | 1 |
+
+`tests/integration/test_reconcile_cost.py` runs on the test Postgres. The seed has 150 VM bookings (mixed QUEUED / PROVISIONING / READY / FAILED) and 150 environments with 2 children each, plus one environment at the child limit and one over it. Every statement the session sends is counted, including the ordered-walk pin and restore.
+
+| Request | Statements | Response bytes |
+|---|---|---|
+| Bookings, 1 id (queued) | 7 | 4,091 |
+| Bookings, 50 ids, all changed | 7 | 200,206 |
+| Bookings, rotation over 150 rows (3 × 50 ids) | 7 each | ~200,200 each |
+| Bookings, 50 ids, none changed | 7 | 486 |
+| Environments, 1 id | 5 | 4,170 |
+| Environments, 50 ids, all changed | 5 | 183,884 |
+| Environments, rotation over 150 rows (3 × 50 ids) | 5 each | ~184,000 each |
+
+Reading the numbers:
+- The statement count is the same for 1 id and 50 ids, and it is at the stated maximum (7 / 5). No order-form catalog is read.
+- In the steady state, nothing has changed and a request returns only the empty indicator row (under 0.5 KB). Before this change, the same page sent one `/row` request per in-flight row per minute, each returning a full row (about 4 KB).
+- An environment over the child limit stays within the bound: at most `C_eff + 1` of its children are read, it gets the "reload required" row, and the other environments in the same request are reconciled normally.
