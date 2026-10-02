@@ -10,16 +10,20 @@
     Managed by environment — release it there
 </a>
 {%- endmacro %}
-{% set is_terminal = booking.status.value in ('READY', 'FAILED', 'RELEASED') %}
+{#- Every row but a RELEASED one is live (#497): it takes live updates and page reconciliation
+    (data-row-version / data-live). Every row carries its list key, which page reconciliation
+    reads from the first displayed row to tell whether newer bookings exist. -#}
+{% set live = live_class(booking.status) %}
 <tr
     id="booking-{{ booking.id }}"
     class="border-b border-gray-800 last:border-0 hover:bg-gray-800/40 transition-colors"
-    {% if not is_terminal %}
+    data-key="{{ list_key(booking) }}"
+    {% if live %}
         sse-swap="booking-{{ booking.id }}"
-        hx-get="/bookings/{{ booking.id }}/row"
-        hx-trigger="every 60s"
-        hx-swap="outerHTML"
+        data-row-version="{{ row_version(booking) }}"
+        data-live="{{ live }}"
     {% endif %}
+    {% if oob is defined and oob %}hx-swap-oob="true"{% endif %}
 >
     <td class="px-4 py-3 text-gray-400 text-xs">{{ booking.id | string | truncate(8, True, '') }}…</td>
     <td class="px-4 py-3 text-gray-400 text-xs">

@@ -34,8 +34,10 @@ from app.presentation.pagination import encode_cursor
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio(loop_scope="session")]
 
 _repo = BookingRepository()
+# The row's own live/reconciliation markers count too (#497): a list row and the refreshed row must
+# carry the same version and list key, or page reconciliation would re-render rows forever.
 _ACTION_ATTRS = ("href", "hx-get", "hx-post", "hx-put", "hx-patch", "hx-delete", "hx-confirm",
-                 "sse-swap", "hx-trigger")
+                 "sse-swap", "data-row-version", "data-key", "data-live")
 _ROLES = [
     {"name": "nginx", "ansible_role": "nginx", "vars": {"port": 8080}, "secret_vars": {}},
     {"name": "docker", "ansible_role": "docker", "vars": {}, "secret_vars": {"token": "gAAAA-cipher"}},

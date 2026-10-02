@@ -36,14 +36,14 @@
 
 ## 4. Row version and row markup (design D4, D5)
 
-- [ ] 4.1 Add `app/presentation/reconcile.py` with:
+- [x] 4.1 Add `app/presentation/reconcile.py` with:
   - `row_version(booking_list_item)`: 16-hex SHA-256 over `dataclasses.astuple`;
   - `environment_row_version(env)`: environment list fields, derived status, and the explicit child tuple.
 
   Verify: table-driven unit tests show that each displayed booking field, environment field and child field changes the version, and that a child's password or provisioning-log change does not.
-- [ ] 4.2 Make every booking row render path produce a `BookingListItem` (or equivalent) for the version, so that list, `/rows`, `/list`, `/row`, SSE, create, label and action responses all emit the same `data-row-version` for the same state. Verify: a parity test renders one booking through `/book/vm`, `/book/vm/rows`, `/bookings/{id}/row` and the SSE renderer and asserts equal `data-row-version` and `data-key`.
-- [ ] 4.3 Do the same for environment row render paths (page, `/environments/list`, `/environments/rows`, `/environments/{id}/row`, SSE, order, rename). Verify: an equivalent parity test.
-- [ ] 4.4 Update `partials/booking_row.html` and `partials/environment_row.html`:
+- [x] 4.2 Make every booking row render path produce a `BookingListItem` (or equivalent) for the version, so that list, `/rows`, `/list`, `/row`, SSE, create, label and action responses all emit the same `data-row-version` for the same state. Verify: a parity test renders one booking through `/book/vm`, `/book/vm/rows`, `/bookings/{id}/row` and the SSE renderer and asserts equal `data-row-version` and `data-key`.
+- [x] 4.3 Do the same for environment row render paths (page, `/environments/list`, `/environments/rows`, `/environments/{id}/row`, SSE, order, rename). Verify: an equivalent parity test.
+- [x] 4.4 Update `partials/booking_row.html` and `partials/environment_row.html`:
   - Remove `hx-get`/`hx-trigger`/`hx-swap` from the `<tr>`.
   - Use `is_final` (RELEASED only).
   - **Every** row carries `data-key` (`encode_cursor(created_at, id)`), RELEASED rows included.

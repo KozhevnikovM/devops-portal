@@ -203,5 +203,6 @@ def test_queued_row_shows_position_and_cancel(client):
     assert resp.status_code == 200
     assert "Queued — position 2" in resp.text
     assert "Cancel" in resp.text
-    # QUEUED is non-terminal → keeps polling for promotion
-    assert 'hx-get="/bookings/' in resp.text
+    # QUEUED is in flight → live and reconciled by the page, with no per-row poll (#497)
+    assert 'data-live="inflight"' in resp.text
+    assert 'hx-trigger=' not in resp.text
