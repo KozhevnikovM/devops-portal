@@ -391,7 +391,7 @@ class EnvironmentRepository:
 
     async def list_items_by_ids(
         self, session: AsyncSession, ids: list[UUID], *, user_id: str | None, child_limit: int,
-    ) -> tuple[list[Environment], set[UUID]]:
+    ) -> tuple[list[Environment], list[Environment]]:
         """The given environments visible on a page, with their children, in two statements (#497).
 
         `user_id=None` is the All scope, otherwise Mine (owned or dispatched). Ids outside the scope
@@ -400,11 +400,11 @@ class EnvironmentRepository:
 
         Children come from the bounded, list-safe read: at most `child_limit + 1` per environment.
         An environment that returns more than `child_limit` breaks the child invariant (only
-        possible through a direct database edit); it is returned in the second element instead,
+        possible through a direct database edit); it is returned in the second list instead,
         without children, and nothing more is read for it.
         """
         if not ids:
-            return [], set()
+            return [], []
         stmt = _with_usernames().where(EnvironmentModel.id.in_(list(ids))).order_by(
             EnvironmentModel.created_at.desc(), EnvironmentModel.id.desc(),
         )
@@ -414,17 +414,19 @@ class EnvironmentRepository:
             )
         rows = (await session.execute(stmt)).all()
         if not rows:
-            return [], set()
+            return [], []
         children: dict[UUID, list[EnvironmentChildItem]] = {model.id: [] for model, _, _ in rows}
         result = await session.execute(_bounded_children_stmt(list(children), child_limit + 1))
         for row in result.all():
             children[row.environment_id].append(_to_child_item(row))
-        over_limit = {env_id for env_id, kids in children.items() if len(kids) > child_limit}
-        items = [
-            _to_entity(model, bookings=sorted(children[model.id], key=lambda c: c.created_at),
-                       owner_username=owner, created_by_username=creator)
-            for model, owner, creator in rows if model.id not in over_limit
-        ]
+        items, over_limit = [], []
+        for model, owner, creator in rows:
+            kids = children[model.id]
+            if len(kids) > child_limit:
+                over_limit.append(_to_entity(model, owner_username=owner, created_by_username=creator))
+            else:
+                items.append(_to_entity(model, bookings=sorted(kids, key=lambda c: c.created_at),
+                                        owner_username=owner, created_by_username=creator))
         return items, over_limit
 
     async def newest_key(

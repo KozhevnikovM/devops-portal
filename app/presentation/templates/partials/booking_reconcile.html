@@ -1,0 +1,11 @@
+{#- Page reconciliation response for a bookings list (#497): out-of-band rows only. The indicator
+    row comes first so the response always starts with a <tr> (htmx parses it in table context).
+    Changed rows are re-rendered in place; a row that no longer exists or isn't visible on this
+    page gets the same bare removal directive either way. -#}
+{% with oob = True %}{% include "partials/new_rows_indicator.html" %}{% endwith %}
+{% for booking in changed %}
+{% with oob = True %}{% include "partials/booking_row.html" %}{% endwith %}
+{% endfor %}
+{% for row_id in removed %}
+<tr id="booking-{{ row_id }}" hx-swap-oob="delete"></tr>
+{% endfor %}

@@ -1,0 +1,17 @@
+{#- Newer-rows indicator of a list section (#497). Lives in the table head, so rows prepended into
+    the tbody never land above it; page reconciliation replaces it by id (out-of-band). It is
+    empty until reconciliation finds a matching row newer than the newest one displayed; its
+    button then reloads the list section with the filters in effect — an explicit reset, never an
+    automatic one. Inputs: new_rows_id, new_rows_url, section_id, colspan, noun, show_new_rows. -#}
+<tr id="{{ new_rows_id }}"{% if oob is defined and oob %} hx-swap-oob="true"{% endif %}>
+    {%- if show_new_rows is defined and show_new_rows %}
+    <td colspan="{{ colspan }}" class="px-4 py-2 text-center bg-blue-950/40 border-b border-blue-900/60">
+        <button
+            hx-get="{{ new_rows_url }}"
+            hx-target="#{{ section_id }}"
+            hx-swap="outerHTML"
+            class="text-xs px-3 py-1 rounded border bg-blue-900 text-blue-200 border-blue-700 hover:bg-blue-800 transition-colors"
+        >Newer {{ noun }} available — refresh list</button>
+    </td>
+    {%- endif %}
+</tr>

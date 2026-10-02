@@ -1,5 +1,6 @@
 """Browser (HTMX) pages for environments. The JSON API lives in api_environments.py; these
 return HTML fragments and reuse the same use cases, so the two never drift."""
+import logging
 from urllib.parse import urlencode
 from uuid import UUID
 
@@ -20,6 +21,9 @@ from app.presentation.middleware.correlation_id import get_request_id
 from app.presentation.pagination import (
     InvalidCursorError, decode_cursor, encode_cursor, filter_params,
 )
+from app.presentation.reconcile import (
+    InvalidReconcileRequestError, environment_row_version, has_newer, parse_reconcile_request,
+)
 from app.presentation.routes.api_environments import (
     _blueprint_repo, _derived_status, _env_repo, _namespace_repo, _order_use_case, _release_use_case,
     _update_name_use_case,
@@ -28,6 +32,7 @@ from app.application.use_cases._permissions import can_manage
 from app.presentation.templating import templates
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 def _annotate(env):
@@ -87,7 +92,22 @@ async def _list_section_context(
         "environments": environments,
         "current_user": current_user,
         **_list_context(filter, show_released, label, next_cursor),
+        **new_rows_context(filter=filter, show_released=show_released, label=label),
     }
+
+
+def new_rows_context(*, filter, show_released, label, show: bool = False) -> dict:
+    """Template context of the environments section's newer-rows indicator (#497)."""
+    return {
+        "new_rows_id": "environments-new-rows", "section_id": "environments-section", "colspan": 6,
+        "noun": "environments", "show_new_rows": show,
+        "new_rows_url": f"/environments/list?{urlencode(filter_params(filter, show_released, label))}",
+    }
+
+
+def _child_limit(request: Request) -> int:
+    """The effective environment child limit computed at startup (#497 D3a)."""
+    return getattr(request.app.state, "environment_child_limit", settings.ENVIRONMENT_MAX_CHILDREN)
 
 
 @router.get("/environments", response_class=HTMLResponse)
@@ -138,6 +158,52 @@ async def environment_list_section(
         request, "partials/environment_list_section.html", list_context,
         headers={"HX-Push-Url": f"?{urlencode(filter_params(filter, show_released, label))}"},
     )
+
+
+@router.get("/environments/reconcile", response_class=HTMLResponse, include_in_schema=False)
+async def environment_reconcile(
+    request: Request,
+    r: list[str] = Query(default=[]),
+    newest: str | None = None,
+    filter: str = "mine",
+    show_released: bool = False,
+    label: str | None = None,
+    session: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(require_user),
+):
+    """Page row reconciliation for the environments list (#497) — see bookings._render_reconcile.
+
+    Children come from the bounded child read (at most the effective child limit + 1 each). An
+    environment over the limit breaks an invariant the write paths enforce, so only a direct
+    database edit produces one: it fails closed with a "reload required" row and nothing more is
+    read for it, so the request stays within its statement and child bounds.
+    """
+    try:
+        req = parse_reconcile_request(r, newest, max_ids=settings.RECONCILE_MAX_IDS)
+    except InvalidReconcileRequestError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    user_id = None if filter == "all" else str(current_user.id)
+    items, over_limit = await _env_repo.list_items_by_ids(
+        session, list(req.versions), user_id=user_id, child_limit=_child_limit(request),
+    )
+    probe = await _env_repo.newest_key(
+        session, user_id=user_id, label=label, include_released=show_released,
+    )
+    for env in over_limit:
+        logger.error(
+            "environment %s has more children than the effective child limit (%d); "
+            "not reconciled — the child-limit invariant was broken outside the application",
+            env.id, _child_limit(request),
+        )
+    visible = {e.id for e in items} | {e.id for e in over_limit}
+    return templates.TemplateResponse(request, "partials/environment_reconcile.html", {
+        "current_user": current_user,
+        "changed": [e for e in map(_annotate, items) if environment_row_version(e) != req.versions[e.id]],
+        "over_limit": over_limit,
+        "removed": [row_id for row_id in req.versions if row_id not in visible],
+        **new_rows_context(filter=filter, show_released=show_released, label=label,
+                           show=has_newer(probe, req.newest)),
+    })
 
 
 @router.get("/environments/rows", response_class=HTMLResponse, include_in_schema=False)

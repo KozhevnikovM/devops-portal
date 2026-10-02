@@ -30,11 +30,17 @@ from app.tasks.provision import provision_vm_task
 from app.tasks.teardown import teardown_vm_task
 
 
+def _is_background_row_request(message: str) -> bool:
+    """Single-row refreshes and page reconciliation (#497): one per list section per minute per
+    tab, so they would drown the access log."""
+    return "/row " in message or "/reconcile?" in message or "/reconcile " in message
+
+
 class _SuppressRowPolling(logging.Filter):
-    """Drop uvicorn access-log entries for the frequent row-polling endpoint."""
+    """Drop uvicorn access-log entries for the frequent background row requests."""
 
     def filter(self, record: logging.LogRecord) -> bool:
-        return "/row " not in record.getMessage()
+        return not _is_background_row_request(record.getMessage())
 
 
 logging.getLogger("uvicorn.access").addFilter(_SuppressRowPolling())

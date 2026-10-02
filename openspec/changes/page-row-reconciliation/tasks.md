@@ -60,13 +60,13 @@
 
 ## 5. Reconcile endpoints (design D1, D2, D3, D8)
 
-- [ ] 5.1 In `app/presentation/reconcile.py`, add the parameter parser. It parses `r=<uuid>.<version>` and `newest`, and returns 400 on:
+- [x] 5.1 In `app/presentation/reconcile.py`, add the parameter parser. It parses `r=<uuid>.<version>` and `newest`, and returns 400 on:
   - more than `RECONCILE_MAX_IDS` ids;
   - a duplicate id;
   - a malformed uuid, version or cursor.
 
   This happens before any repository call. Verify: unit tests for each 400 case assert no repo method was called (AsyncMock `assert_not_called`).
-- [ ] 5.2 Add `GET /book/vm/reconcile` and `GET /book/namespace/reconcile` in `routes/bookings.py` (`include_in_schema=False`, `require_user`). Each request:
+- [x] 5.2 Add `GET /book/vm/reconcile` and `GET /book/namespace/reconcile` in `routes/bookings.py` (`include_in_schema=False`, `require_user`). Each request:
   - parses the parameters;
   - runs one `list_items_by_ids` call with the page's types and the Mine/All scope;
   - runs one `attach_queue_positions` call;
@@ -81,12 +81,12 @@
   - Unauthenticated requests are refused.
   - The routes are absent from `/openapi.json`.
   - Order-form catalog repos are not called.
-- [ ] 5.3 Add `GET /environments/reconcile` in `routes/environments.py` with the same contract, using `list_items_by_ids` with the bounded children read (design D3a), `_annotate` and the environments `newest_key` probe, with `C_eff` from app state. An invariant violation (`C_eff + 1` children returned) fails closed: it logs an error and emits the bounded "reload required" row (list fields only, `data-key`, no `data-live`), with no further read (design D3a). Verify:
+- [x] 5.3 Add `GET /environments/reconcile` in `routes/environments.py` with the same contract, using `list_items_by_ids` with the bounded children read (design D3a), `_annotate` and the environments `newest_key` probe, with `C_eff` from app state. An invariant violation (`C_eff + 1` children returned) fails closed: it logs an error and emits the bounded "reload required" row (list fields only, `data-key`, no `data-live`), with no further read (design D3a). Verify:
   - the same test set as for bookings, plus child status changes being returned;
   - an environment with exactly `C_eff` children is rendered with all of them;
   - one with `C_eff + 5` children inserted directly logs an error and gets the "reload required" row, while the other environments in the same request are reconciled normally;
   - the children statement is bounded per environment: the integration test in 8.1 counts the child rows fetched as ≤ `C_eff + 1` for that environment.
-- [ ] 5.4 Add the reconcile paths to the uvicorn access-log filter in `app/main.py`. Verify: a unit test of the filter predicate.
+- [x] 5.4 Add the reconcile paths to the uvicorn access-log filter in `app/main.py`. Verify: a unit test of the filter predicate.
 
 ## 6. List section poller and indicator (design D6)
 

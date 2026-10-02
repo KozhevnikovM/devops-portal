@@ -7,7 +7,8 @@ update, action responses) emits the same version for the same state.
 """
 import hashlib
 import json
-from dataclasses import fields
+import re
+from dataclasses import dataclass, fields
 from datetime import datetime
 from enum import Enum
 from uuid import UUID
@@ -15,7 +16,7 @@ from uuid import UUID
 from app.domain.booking_list import BookingListItem
 from app.domain.enums import BookingStatus
 from app.domain.pagination import KeysetCursor
-from app.presentation.pagination import encode_cursor
+from app.presentation.pagination import InvalidCursorError, decode_cursor, encode_cursor
 
 VERSION_LENGTH = 16  # hex characters (64 bits of SHA-256)
 
@@ -74,3 +75,60 @@ def live_class(status) -> str | None:
     if value == BookingStatus.RELEASED.value:
         return None
     return "settled" if value in _SETTLED else "inflight"
+
+
+_VERSION_RE = re.compile(rf"[0-9a-f]{{{VERSION_LENGTH}}}")
+
+
+class InvalidReconcileRequestError(ValueError):
+    """A reconciliation request over the id cap, with a duplicate id or a malformed value."""
+
+
+@dataclass(frozen=True)
+class ReconcileRequest:
+    """A parsed reconciliation request: the displayed rows' versions, in request order, and the
+    newest displayed row's key (None when the section shows no row)."""
+    versions: dict[UUID, str]
+    newest: KeysetCursor | None
+
+
+def parse_reconcile_request(rows: list[str], newest: str | None, *, max_ids: int) -> ReconcileRequest:
+    """Validate a reconciliation request before anything is read (#497 D2).
+
+    `rows` are `<uuid>.<version>` tokens. Over `max_ids` of them, a repeated id, a malformed id,
+    version or newest key: the whole request is rejected — never truncated, so a client can't
+    widen the server's work and a buggy one fails loudly.
+    """
+    if len(rows) > max_ids:
+        raise InvalidReconcileRequestError(f"at most {max_ids} rows per request")
+    versions: dict[UUID, str] = {}
+    for token in rows:
+        raw_id, sep, version = token.partition(".")
+        if not sep or not _VERSION_RE.fullmatch(version):
+            raise InvalidReconcileRequestError("malformed row version")
+        try:
+            row_id = UUID(raw_id)
+        except ValueError:
+            raise InvalidReconcileRequestError("malformed row id")
+        if row_id in versions:
+            raise InvalidReconcileRequestError("duplicate row id")
+        versions[row_id] = version
+    key = None
+    if newest is not None:
+        try:
+            key = decode_cursor(newest)
+        except InvalidCursorError as exc:
+            raise InvalidReconcileRequestError(str(exc))
+    return ReconcileRequest(versions=versions, newest=key)
+
+
+def has_newer(probe: KeysetCursor | None, newest_displayed: KeysetCursor | None) -> bool:
+    """Whether the page's newest matching row is newer than the newest one displayed (#497 D8).
+
+    Keys compare in list order, (created_at, id) — the same order the list and its cursor use.
+    """
+    if probe is None:
+        return False
+    if newest_displayed is None:
+        return True
+    return (probe.created_at, probe.id) > (newest_displayed.created_at, newest_displayed.id)

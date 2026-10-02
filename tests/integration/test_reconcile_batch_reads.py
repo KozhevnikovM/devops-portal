@@ -156,7 +156,7 @@ async def test_environment_batch_read_returns_the_visible_subset(async_session):
 
     async def visible(user_id):
         items, over = await _envs.list_items_by_ids(async_session, ids, user_id=user_id, child_limit=25)
-        assert over == set()
+        assert over == []
         return {e.id for e in items}
 
     assert await visible(me) == {mine, dispatched, released}
@@ -170,7 +170,7 @@ async def test_environment_children_match_list_page(async_session):
                                       limit=1, after=None)).items
     [reconciled], over = await _envs.list_items_by_ids(async_session, [env_id], user_id=me,
                                                        child_limit=25)
-    assert over == set()
+    assert over == []
     assert listed.id == reconciled.id == env_id
     fields = ("id", "status", "resource_type", "environment_label", "namespace_name",
               "static_vm_name", "static_vm_host", "image_name", "vm_ip", "config_failed")
@@ -182,7 +182,7 @@ async def test_environment_at_the_child_limit_is_complete(async_session):
     me = f"inttest-{uuid4()}"
     env_id = await _env(async_session, me, children=(S.READY,) * 4)
     [env], over = await _envs.list_items_by_ids(async_session, [env_id], user_id=me, child_limit=4)
-    assert over == set() and len(env.bookings) == 4
+    assert over == [] and len(env.bookings) == 4
 
 
 async def test_environment_over_the_child_limit_is_reported_without_children(async_session):
@@ -191,7 +191,7 @@ async def test_environment_over_the_child_limit_is_reported_without_children(asy
     big = await _env(async_session, me, i=1, children=(S.READY,) * 9)
     with _Statements(async_session) as stmts:
         items, over = await _envs.list_items_by_ids(async_session, [ok, big], user_id=me, child_limit=4)
-    assert over == {big}
+    assert [e.id for e in over] == [big] and over[0].bookings == []
     assert [e.id for e in items] == [ok] and len(items[0].bookings) == 2
     assert stmts.count == 2   # environments + bounded children; nothing more for the big one
 
