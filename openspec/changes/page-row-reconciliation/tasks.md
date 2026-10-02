@@ -147,7 +147,7 @@
   - switch filter while a request is pending (throttled network) and confirm no rows change in the new section;
   - order from another tab and confirm the indicator appears and its click reloads the section;
   - an open actions menu stays open across ticks when nothing changed.
-- [ ] 9.2 Update the docs:
+- [x] 9.2 Update the docs:
   - `docs/api-reference.md`: the `/row` endpoints are no longer polled; the `/events/stream` fallback text; new reconcile fragments with parameters, limits and the 400 cases.
   - `docs/admin-guide.md`: the nginx/SSE note and the rolling-deploy note now refer to page reconciliation and its bound; the new settings, including `ENVIRONMENT_MAX_CHILDREN`, what an over-limit blueprint save or order returns, and the startup warning for legacy environments over the limit. `docs/api-reference.md` also documents the 422 on blueprint create/update and the 400 on environment order.
 
