@@ -11,7 +11,9 @@
  *   (READY/FAILED) rows, rotating too; sends each as `r=<id>.<version>`, plus `newest=` from the
  *   first displayed row's list key (any status — a RELEASED row still marks what is displayed).
  * - htmx:beforeSwap — drops the whole response when its poller is no longer in the document (the
- *   section was replaced by a filter change while the request was in flight).
+ *   section was replaced by a filter change while the request was in flight). htmx fires it on the
+ *   poller, and a detached poller's events never reach `document`, so this listener (and the
+ *   after-swap one) is bound to each poller itself.
  * - htmx:oobBeforeSwap — skips a returned row whose version changed after the request was sent
  *   (a live update or an action got there first), so older data never overwrites newer.
  *
@@ -51,15 +53,38 @@
     if (typeof document === "undefined") return;   // loaded by the node tests
 
     var state = new WeakMap();   // poller → { offsets, sent }
+    var bound = new WeakSet();   // pollers whose own swap listeners are attached
     var applying = null;         // the sent versions of the response being swapped right now
 
     function isPoller(elt) {
         return elt && elt.hasAttribute && elt.hasAttribute("data-reconcile-rows");
     }
 
+    function onBeforeSwap(evt) {
+        var poller = evt.currentTarget;
+        if (!document.body.contains(poller)) {
+            evt.detail.shouldSwap = false;   // the section it reconciled is gone
+            return;
+        }
+        applying = (state.get(poller) || {}).sent || {};
+    }
+
+    function onDone() {
+        applying = null;
+    }
+
+    function bind(poller) {
+        if (bound.has(poller)) return;
+        bound.add(poller);
+        poller.addEventListener("htmx:beforeSwap", onBeforeSwap);
+        poller.addEventListener("htmx:afterSwap", onDone);
+        poller.addEventListener("htmx:afterRequest", onDone);
+    }
+
     document.addEventListener("htmx:configRequest", function (evt) {
         var poller = evt.detail.elt;
         if (!isPoller(poller)) return;
+        bind(poller);
         var tbody = document.querySelector(poller.getAttribute("data-reconcile-rows"));
         var inflight = [], settled = [];
         if (tbody) {
@@ -85,22 +110,6 @@
         var first = tbody && tbody.querySelector("tr[data-key]");
         if (first) evt.detail.parameters.newest = first.getAttribute("data-key");
     });
-
-    document.addEventListener("htmx:beforeSwap", function (evt) {
-        var poller = evt.detail.elt;
-        if (!isPoller(poller)) return;
-        if (!document.body.contains(poller)) {
-            evt.detail.shouldSwap = false;   // the section it reconciled is gone
-            return;
-        }
-        applying = (state.get(poller) || {}).sent || {};
-    });
-
-    function done(evt) {
-        if (isPoller(evt.detail.elt)) applying = null;
-    }
-    document.addEventListener("htmx:afterSwap", done);
-    document.addEventListener("htmx:afterRequest", done);
 
     document.addEventListener("htmx:oobBeforeSwap", function (evt) {
         if (applying === null) return;

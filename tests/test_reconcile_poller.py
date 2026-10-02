@@ -104,3 +104,16 @@ def test_indicator_is_empty_until_reconciliation_reports_newer_rows(client, repo
     html = client.get(list_path).text
     start = html.index(f'<tr id="{_INDICATOR[page]}"')
     assert html[start:html.index("</tr>", start)].count("<td") == 0
+
+
+@all_pages
+def test_pages_load_the_reconcile_script(client, repos, page):
+    page_path, _, _, _ = _PAGES[page]
+    assert '<script src="/static/js/row_reconcile.js"></script>' in client.get(page_path).text
+
+
+def test_image_ships_the_reconcile_script():
+    from pathlib import Path
+    dockerfile = (Path(__file__).parent.parent / "Dockerfile").read_text()
+    assert "COPY --from=frontend /build/dist/js/row_reconcile.js app/static/js/row_reconcile.js" in dockerfile
+    assert (Path(__file__).parent.parent / "frontend" / "js" / "row_reconcile.js").is_file()

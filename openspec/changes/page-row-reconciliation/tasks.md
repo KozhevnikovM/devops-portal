@@ -101,7 +101,7 @@
 
 ## 7. Client script (design D7)
 
-- [ ] 7.1 Add `app/static/js/row_reconcile.js` and load it in `base.html` after htmx. It provides:
+- [x] 7.1 Add `app/static/js/row_reconcile.js` and load it in `base.html` after htmx. It provides:
   - `selectBatch` (pure, exported on `window.rowReconcile`);
   - `htmx:configRequest`, which adds `r`, takes `newest` from the first `tr[data-key]` whatever its status, and records the sent versions on the request;
   - `htmx:beforeSwap`, which drops responses for pollers no longer in the document;
@@ -140,7 +140,7 @@
 
 ## 9. Runtime verification and docs
 
-- [ ] 9.1 Manual browser check against `docker compose up` (stub terraform), recorded in the PR:
+- [x] 9.1 Manual browser check against `docker compose up` (stub terraform), recorded in the PR:
   - one `/reconcile` request per minute per list section in the network tab, with 1 row and with three loaded pages;
   - no `/row` polls;
   - stop Redis, release a READY booking from another tab, and confirm the row shows RELEASING then RELEASED within the bound;
