@@ -28,7 +28,7 @@ The dependencies are in place. #494 provides the list-section fragment contract,
   - blueprint saves (admin page and JSON API) and environment orders over the limit are rejected;
   - legacy live environments raise the per-process effective limit `C_eff` at startup instead of being excluded.
 
-  The reconcile children read stops after `C_eff + 1` children per environment, so every displayed environment is still reconciled in full and converges.
+  The reconcile children read stops after `C_eff + 1` children per environment, so every displayed environment of application-valid data is reconciled in full and converges. If the invariant is broken by a direct database edit, reconciliation fails closed for that environment with a "reload required" row and does no unbounded read.
 
 **Bounded, stated convergence**
 - The client rotates through the displayed rows in batches. In-flight rows go first, and a reserved share of `min(S, RECONCILE_SETTLED_MIN)` slots per batch goes to settled (READY/FAILED) rows, where S is the number of settled rows displayed. The reserve is at least 1, so settled rows are never starved.

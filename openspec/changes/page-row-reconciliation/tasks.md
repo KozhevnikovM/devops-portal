@@ -81,10 +81,10 @@
   - Unauthenticated requests are refused.
   - The routes are absent from `/openapi.json`.
   - Order-form catalog repos are not called.
-- [ ] 5.3 Add `GET /environments/reconcile` in `routes/environments.py` with the same contract, using `list_items_by_ids` with the bounded children read (design D3a), `_annotate` and the environments `newest_key` probe, with `C_eff` from app state. An invariant violation logs an error and falls back to `_children` for that environment. Verify:
+- [ ] 5.3 Add `GET /environments/reconcile` in `routes/environments.py` with the same contract, using `list_items_by_ids` with the bounded children read (design D3a), `_annotate` and the environments `newest_key` probe, with `C_eff` from app state. An invariant violation (`C_eff + 1` children returned) fails closed: it logs an error and emits the bounded "reload required" row (list fields only, `data-key`, no `data-live`), with no further read (design D3a). Verify:
   - the same test set as for bookings, plus child status changes being returned;
   - an environment with exactly `C_eff` children is rendered with all of them;
-  - one with `C_eff + 5` children inserted directly logs an error and is still rendered in full with its current derived status;
+  - one with `C_eff + 5` children inserted directly logs an error and gets the "reload required" row, while the other environments in the same request are reconciled normally;
   - the children statement is bounded per environment: the integration test in 8.1 counts the child rows fetched as ≤ `C_eff + 1` for that environment.
 - [ ] 5.4 Add the reconcile paths to the uvicorn access-log filter in `app/main.py`. Verify: a unit test of the filter predicate.
 
@@ -128,6 +128,7 @@
   - equal statement counts for both sizes;
   - at most 7 statements per bookings request and 5 per environments request, counting the `_OrderedWalk` pin and restore (design D3);
   - for an environment with exactly `C_eff` children, at most `C_eff + 1` child rows fetched;
+  - a request including an environment with `C_eff + 5` directly inserted children still executes ≤ 5 statements and fetches ≤ `C_eff + 1` of its children;
   - no catalog repo call.
 
   Also record response bytes for a fully changed and an unchanged batch. Verify: `pytest -m integration tests/integration/test_reconcile_cost.py -s`. The numbers are appended to a "Measurements" section in design.md and the PR.

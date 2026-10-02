@@ -154,7 +154,14 @@ CROSS JOIN LATERAL (
 
 - The lateral has no `ORDER BY`. The `LIMIT` over `ix_bookings_environment_id` therefore stops after `C_eff + 1` index entries, with no sort over all children. The children are then ordered by `created_at` in Python, the row's existing order.
 - By the invariant, at most `C_eff` children come back for every environment, so every visible environment is rendered in full and nothing is excluded. Children examined are at most `B × (C_eff + 1)`, and rendered output is at most B rows × `C_eff` children.
-- If `C_eff + 1` come back, the invariant was broken outside the application (a direct DB insert). The route logs an error naming the environment and re-reads that environment's children with the existing unbounded `_children` read, so the row still converges. That extra statement is the only way past the D3 budget, and a test pins it.
+- If `C_eff + 1` come back, the invariant was broken outside the application, for example by a direct DB insert. This is unsupported data, and the route **fails closed** for that environment (#512 review, round 3):
+  - it logs an error naming the environment;
+  - it performs no further read;
+  - it answers the id with a "reload required" OOB row: `<tr id="environment-<id>" data-key=… hx-swap-oob="true">`. The row is built from the environment's own list fields only, holds the "could not be refreshed — reload the page" message, and has no `data-live`, so it leaves the rotation.
+
+  The D3 budget and the child bound hold for every request with no exception. Convergence is guaranteed for application-valid data, which the D3a invariant enforces. A page reload renders the environment through the list path as before.
+
+  *Rejected:* a fallback to the unbounded `_children` read (round 2). It reopened exactly the unbounded server work that #497 forbids.
 
 *Alternatives considered:*
 - **Excluding oversized environments with a reload hint** (round 1). Rejected, because it breaks convergence for exactly the rows reconciliation must cover.
