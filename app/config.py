@@ -63,6 +63,18 @@ class Settings(BaseSettings):
     # label matches. Must exceed BOOKINGS_PAGE_SIZE, or even a label matching everything would
     # never fill a page.
     BOOKINGS_LABEL_SCAN_SIZE: int = Field(200, gt=0)
+    # Page row reconciliation (#497): each list section sends one request per interval naming at
+    # most RECONCILE_MAX_IDS displayed rows (≤ either page size, so a request never reads more
+    # than a list page); RECONCILE_SETTLED_MIN slots of each batch are kept for settled
+    # (READY/FAILED) rows, so they can't be starved by in-flight ones — hence at least 1.
+    RECONCILE_MAX_IDS: int = Field(50, ge=1)
+    RECONCILE_SETTLED_MIN: int = Field(10, ge=1)
+    # Most children an environment may have (#497): enforced on blueprint save and on order, so
+    # reconciliation's bounded per-environment child read always sees every child.
+    ENVIRONMENT_MAX_CHILDREN: int = Field(25, ge=1)
+    # How often the effective child limit is recomputed over live environments (#497): it covers
+    # environments an older app version ordered during a deploy, without a restart.
+    ENVIRONMENT_CHILD_LIMIT_REFRESH_SECONDS: int = Field(300, ge=1)
 
     # Live row updates (SSE): progress-only row-changed notifications (one per Ansible/script
     # output line) are coalesced per booking to at most one per window, plus a trailing publish
@@ -119,6 +131,20 @@ class Settings(BaseSettings):
             raise ValueError(
                 f"BOOKINGS_LABEL_SCAN_SIZE ({self.BOOKINGS_LABEL_SCAN_SIZE}) must be greater than "
                 f"BOOKINGS_PAGE_SIZE ({self.BOOKINGS_PAGE_SIZE})"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _reconcile_batch_fits_a_page(self):
+        page = min(self.BOOKINGS_PAGE_SIZE, self.ENVIRONMENTS_PAGE_SIZE)
+        if self.RECONCILE_MAX_IDS > page:
+            raise ValueError(
+                f"RECONCILE_MAX_IDS ({self.RECONCILE_MAX_IDS}) must not exceed the smaller page size ({page})"
+            )
+        if self.RECONCILE_SETTLED_MIN >= self.RECONCILE_MAX_IDS:
+            raise ValueError(
+                f"RECONCILE_SETTLED_MIN ({self.RECONCILE_SETTLED_MIN}) must be less than "
+                f"RECONCILE_MAX_IDS ({self.RECONCILE_MAX_IDS})"
             )
         return self
 

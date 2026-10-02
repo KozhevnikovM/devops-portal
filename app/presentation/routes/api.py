@@ -10,7 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.domain.entities import User
 from app.domain.enums import DriveType
-from app.domain.exceptions import NotFoundError
+from app.domain.exceptions import EnvironmentTooLargeError, NotFoundError
+from app.domain.validation import validate_environment_size
 from app.infrastructure.auth import require_admin, require_user
 from app.infrastructure.database.session import get_async_session
 from app.presentation import deps as _deps
@@ -171,6 +172,10 @@ class BlueprintResponse(BaseModel):
 
 def _validate_blueprint_items(items: list[BlueprintItemIn]) -> list[dict]:
     """Validate resource_type + spec shape; return repo-ready item dicts (with position)."""
+    try:
+        validate_environment_size(len(items), settings.ENVIRONMENT_MAX_CHILDREN)
+    except EnvironmentTooLargeError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
     out = []
     for idx, item in enumerate(items):
         if item.resource_type not in _VALID_RESOURCE_TYPES:
@@ -432,6 +437,18 @@ async def update_blueprint(
     items = _validate_blueprint_items(body.items) if body.items is not None else None
     if not fields and items is None:
         raise HTTPException(status_code=422, detail="No fields to update")
+    if items is None and fields != {"is_active": False}:
+        # Keeping the stored items: a blueprint saved before ENVIRONMENT_MAX_CHILDREN existed may
+        # exceed it, and any update but deactivation is rejected then (#497). Deactivating stays
+        # allowed, so an admin can always retire it.
+        try:
+            existing = await _blueprint_repo.get(session, blueprint_id)
+        except NotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc))
+        try:
+            validate_environment_size(len(existing.items), settings.ENVIRONMENT_MAX_CHILDREN)
+        except EnvironmentTooLargeError as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
     try:
         return await _blueprint_repo.update(session, blueprint_id, fields, items)
     except NotFoundError as exc:

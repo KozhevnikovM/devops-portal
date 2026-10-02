@@ -12,7 +12,7 @@ from app.domain.entities import Environment
 from app.domain.enums import BookingStatus, ResourceType
 from app.domain.exceptions import BlueprintNotFoundError, EnvironmentItemError, NamespaceUnavailableError
 from app.domain.lease import Lease
-from app.domain.validation import validate_var_names
+from app.domain.validation import validate_environment_size, validate_var_names
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +45,7 @@ class OrderEnvironmentUseCase:
         dispatcher: TaskDispatcher,
         namespace_repo: NamespaceRepositoryPort | None = None,
         secret_vars_enabled: bool = False,
+        max_children: int | None = None,
     ) -> None:
         self._env_repo = env_repo
         self._blueprint_repo = blueprint_repo
@@ -59,6 +60,7 @@ class OrderEnvironmentUseCase:
         self._dispatcher = dispatcher
         self._namespace_repo = namespace_repo
         self._secret_vars_enabled = secret_vars_enabled
+        self._max_children = max_children
 
     async def execute(
         self, session: AsyncSession, blueprint_name: str, ttl_minutes: int, user_id: str,
@@ -71,6 +73,10 @@ class OrderEnvironmentUseCase:
         blueprint = await self._blueprint_repo.get_by_name(session, blueprint_name)
         if blueprint is None:
             raise BlueprintNotFoundError(f"No active blueprint named '{blueprint_name}'")
+        # A blueprint saved before the child limit existed may exceed it — refuse before anything
+        # is resolved, reserved or created (#497).
+        if self._max_children is not None:
+            validate_environment_size(len(blueprint.items), self._max_children)
 
         # ── Resolve every item's names up front — a bad name creates nothing ──
         resolved = [await self._resolve_item(session, it, item_vars) for it in blueprint.items]

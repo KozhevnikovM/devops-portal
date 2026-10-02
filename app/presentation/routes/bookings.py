@@ -24,6 +24,9 @@ from app.presentation.routes._queue import attach_queue_positions
 from app.presentation.pagination import (
     InvalidCursorError, decode_cursor, encode_cursor, filter_params,
 )
+from app.presentation.reconcile import (
+    ReconcileRequest, has_newer, reconcile_poller_context, reconcile_request, row_version,
+)
 from app.presentation.templating import templates
 
 router = APIRouter()
@@ -120,7 +123,12 @@ async def _list_section_context(
         resource_types=_VM_PAGE_TYPES if booking_type == "VM" else _NAMESPACE_PAGE_TYPES,
         page_path=page_path, filter=filter, show_released=show_released, label=label,
     )
-    return {"booking_type": booking_type, "page_path": page_path, **list_context}
+    return {
+        "booking_type": booking_type, "page_path": page_path, **list_context,
+        **new_rows_context(page_path=page_path, filter=filter, show_released=show_released,
+                           label=label),
+        **reconcile_poller_context(f"{page_path}/reconcile", filter, show_released, label),
+    }
 
 
 async def _render_bookings_page(
@@ -190,6 +198,45 @@ async def _render_rows_page(
     return templates.TemplateResponse(request, "partials/booking_rows_page.html", list_context)
 
 
+def new_rows_context(*, page_path: str, filter, show_released, label, show: bool = False) -> dict:
+    """Template context of a bookings section's newer-rows indicator (#497)."""
+    return {
+        "new_rows_id": "bookings-new-rows", "section_id": "bookings-section", "colspan": 9,
+        "noun": "bookings", "show_new_rows": show,
+        "new_rows_url": f"{page_path}/list?{urlencode(filter_params(filter, show_released, label))}",
+    }
+
+
+async def _render_reconcile(
+    request, session, current_user, req: ReconcileRequest, *, resource_types, page_path, filter,
+    show_released, label,
+):
+    """Page row reconciliation for a bookings list (#497): out-of-band updates of the requested
+    rows that changed, removals for those no longer visible here, and the newer-rows indicator.
+
+    The request was validated by the `reconcile_request` dependency before any database work. Then
+    a fixed number of statements, whatever the batch size: one scoped batch read (authorization is the query — the page's kinds and, for
+    Mine, the owner/creator rule), at most one queue-rank read, and one keys-only newest probe.
+    """
+    user_id = None if filter == "all" else str(current_user.id)
+    items = await _repo.list_items_by_ids(
+        session, list(req.versions), user_id=user_id, resource_types=resource_types,
+    )
+    await attach_queue_positions(session, _repo, items)
+    probe = await _repo.newest_key(
+        session, user_id=user_id, resource_types=resource_types, label=label,
+        include_released=show_released, scan_size=settings.BOOKINGS_LABEL_SCAN_SIZE,
+    )
+    visible = {b.id for b in items}
+    return templates.TemplateResponse(request, "partials/booking_reconcile.html", {
+        "current_user": current_user,
+        "changed": [b for b in items if row_version(b) != req.versions[b.id]],
+        "removed": [row_id for row_id in req.versions if row_id not in visible],
+        **new_rows_context(page_path=page_path, filter=filter, show_released=show_released,
+                           label=label, show=has_newer(probe, req.newest)),
+    })
+
+
 @router.get("/", response_class=HTMLResponse)
 @router.get("/book/vm", response_class=HTMLResponse)
 async def vm_bookings_page(
@@ -238,6 +285,22 @@ async def vm_booking_rows_page(
     )
 
 
+@router.get("/book/vm/reconcile", response_class=HTMLResponse, include_in_schema=False)
+async def vm_booking_reconcile(
+    request: Request,
+    req: ReconcileRequest = Depends(reconcile_request),   # first: validated before session/auth
+    filter: str = "mine",
+    show_released: bool = False,
+    label: str | None = None,
+    session: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(require_user),
+):
+    return await _render_reconcile(
+        request, session, current_user, req, resource_types=_VM_PAGE_TYPES, page_path="/book/vm",
+        filter=filter, show_released=show_released, label=label,
+    )
+
+
 @router.get("/book/namespace", response_class=HTMLResponse)
 async def namespace_bookings_page(
     request: Request,
@@ -283,6 +346,22 @@ async def namespace_booking_rows_page(
         request, session, current_user, resource_types=_NAMESPACE_PAGE_TYPES,
         page_path="/book/namespace",
         cursor=cursor, filter=filter, show_released=show_released, label=label,
+    )
+
+
+@router.get("/book/namespace/reconcile", response_class=HTMLResponse, include_in_schema=False)
+async def namespace_booking_reconcile(
+    request: Request,
+    req: ReconcileRequest = Depends(reconcile_request),   # first: validated before session/auth
+    filter: str = "mine",
+    show_released: bool = False,
+    label: str | None = None,
+    session: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(require_user),
+):
+    return await _render_reconcile(
+        request, session, current_user, req, resource_types=_NAMESPACE_PAGE_TYPES,
+        page_path="/book/namespace", filter=filter, show_released=show_released, label=label,
     )
 
 

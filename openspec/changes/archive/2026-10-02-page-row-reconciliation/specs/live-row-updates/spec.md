@@ -71,7 +71,7 @@ The server SHALL enforce, independently of the client:
 - every row version SHALL be a well-formed token of bounded length
 - the newest-row key SHALL be a well-formed list key
 
-A request that violates any of these SHALL be rejected with status 400 and SHALL NOT read any row. A request SHALL NOT be truncated silently.
+A request that violates any of these SHALL be rejected with status 400 before any database work, including opening a database session and authenticating the user. A malformed request is therefore answered 400 whether or not it carries valid credentials. A request SHALL NOT be truncated silently.
 
 A valid request SHALL execute a fixed maximum number of database statements, independent of the number of requested ids. The count includes every statement sent, including the transaction-local planner settings applied and restored around an ordered index walk. The request SHALL consist of:
 - exactly one batch read of the requested rows through the list's projection
@@ -86,16 +86,17 @@ It SHALL return at most one rendered row or directive per requested id.
 
 Environment children SHALL be bounded by the effective environment child limit `C_eff` defined in the environment-lifecycle requirement "Environments have a bounded number of children":
 - The children read SHALL examine and return at most `C_eff + 1` children of each requested environment, and therefore at most `RECONCILE_MAX_IDS × (C_eff + 1)` children per request.
-- Application-valid data satisfies that invariant: every environment that is not fully released has at most `C_eff` children. For such data, reconciliation SHALL render every requested visible environment in full, and no displayed non-RELEASED environment SHALL be excluded from reconciliation.
+- The invariant holds once `C_eff` has been recomputed over the environments that exist: every environment that is not fully released has at most `C_eff` children. Such an environment SHALL be rendered in full, and no displayed non-RELEASED environment SHALL be excluded from reconciliation.
 - A response therefore renders at most `RECONCILE_MAX_IDS` rows, each with at most `C_eff` children.
 - These bounds SHALL hold for every request, without exception.
-- If the bounded read returns `C_eff + 1` children of an environment, the invariant was violated outside the application, for example by a direct database edit. This is unsupported data. The server SHALL:
+- The bounded read can return `C_eff + 1` children of an environment. That environment appeared after `C_eff` was last computed, for example one the previous app version ordered during a rolling or blue-green deploy, or a direct database edit. The server SHALL then:
   - fail closed for that environment;
-  - log an error naming it;
+  - log a warning naming it;
   - perform no further read for it;
+  - ask for `C_eff` to be recomputed;
   - answer its id with a "reload required" directive instead of a rendered row.
 
-  The directive SHALL replace the row with a bounded placeholder built only from the environment's own list fields, holding a visible "could not be refreshed — reload the page" message. It SHALL keep the row's list key and take the row out of reconciliation.
+  The directive SHALL replace the row with a bounded placeholder built only from the environment's own list fields, holding a visible "could not be refreshed — reload the page" message. It SHALL keep the row's list key, and the row SHALL stay in reconciliation. Once the recomputed `C_eff` covers the environment, a later request SHALL render it in full.
 - The rest of the request SHALL be answered normally, within the same statement and child bounds.
 
 Reconciliation SHALL require an authenticated user and SHALL refuse unauthenticated requests the same way the list pages do. It SHALL NOT be listed in the OpenAPI schema.
@@ -121,12 +122,20 @@ Reconciliation SHALL require an authenticated user and SHALL refuse unauthentica
 - **THEN** reconciliation renders it with all of its children
 - **AND** the children read examines at most `C_eff + 1` of its children
 
-#### Scenario: Invariant violated outside the application
+#### Scenario: Environment over the current limit
 - **WHEN** a displayed environment has `C_eff + 5` children because rows were inserted directly into the database, and its id is reconciled together with other environments
-- **THEN** an error naming the environment is logged
+- **THEN** a warning naming the environment is logged and a recomputation of `C_eff` is requested
 - **AND** its id receives the "reload required" directive, with no child rendered and no further read
 - **AND** the request still executes no more than 5 statements, and reads at most `C_eff + 1` children of that environment
 - **AND** the other requested environments are reconciled normally
+
+#### Scenario: Environment ordered by the previous version during a blue-green deploy
+- **WHEN** this process computed `C_eff` at startup, and the previous app version, still serving before cut-over, then ordered an environment with more children than `C_eff`
+- **THEN** at most one refresh interval later `C_eff` covers it, and the environment's row is reconciled in full without a restart or page reload
+
+#### Scenario: Malformed request with valid credentials
+- **WHEN** an authenticated user sends a reconciliation request with `RECONCILE_MAX_IDS + 1` ids
+- **THEN** the server responds 400 without opening a database session or looking up the user
 
 #### Scenario: Legacy oversized environment still converges
 - **WHEN** an environment ordered before the child limit existed has more children than `ENVIRONMENT_MAX_CHILDREN`, is READY and displayed, and its READY → RELEASING notification is lost during a Redis outage
@@ -212,7 +221,7 @@ With interval T, batch size B, reserved settled share R, I in-flight rows and S 
 - **in-flight row**: ⌈I / (B − min(S, R))⌉ × T
 - **settled row**: ⌈S / max(min(S, R), B − I)⌉ × T
 
-Because R ≥ 1, both denominators are at least 1 whenever their class is non-empty. For application-valid data, every displayed non-RELEASED row therefore converges within a finite, stated delay. An environment that violates the child invariant through an unsupported direct database edit is the only exception: it gets the "reload required" state instead. In particular, a row converges within one interval only while all rows of its class fit in one batch. The system SHALL NOT promise that every loaded row is refreshed every interval. Live row updates remain the fast path whenever they are delivered.
+Because R ≥ 1, both denominators are at least 1 whenever their class is non-empty. Every displayed non-RELEASED row therefore converges within a finite, stated delay. An environment over the current `C_eff` converges once `C_eff` has been recomputed to cover it, which happens within `ENVIRONMENT_CHILD_LIMIT_REFRESH_SECONDS`, or sooner when a request meets it. Until then it shows the "reload required" state. In particular, a row converges within one interval only while all rows of its class fit in one batch. The system SHALL NOT promise that every loaded row is refreshed every interval. Live row updates remain the fast path whenever they are delivered.
 
 #### Scenario: First page converges every interval
 - **WHEN** a page shows 50 rows (B = 50) and a row's change notification is lost

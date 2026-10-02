@@ -1,6 +1,7 @@
 {# Not refreshed by progress-only SSE notifications (#441): showing a child's status_message or
    provisioning_log here would need _rows_to_refresh in routes/events.py revisited. #}
-{% set is_terminal = environment.derived_status in ('READY', 'FAILED', 'RELEASED') %}
+{#- Live unless RELEASED, with a row version and list key — see booking_row.html (#497). -#}
+{% set live = live_class(environment.derived_status) %}
 {% set is_owner = environment.owner_username == current_user.username %}
 {# Owner, the creating dispatcher (#229/#230) and admins may manage the environment. #}
 {% set can_manage = is_owner or current_user.role == 'admin'
@@ -8,12 +9,13 @@
 <tr
     id="environment-{{ environment.id }}"
     class="border-b border-gray-800 last:border-0 align-top hover:bg-gray-800/40 transition-colors"
-    {% if not is_terminal %}
+    data-key="{{ list_key(environment) }}"
+    {% if live %}
         sse-swap="environment-{{ environment.id }}"
-        hx-get="/environments/{{ environment.id }}/row"
-        hx-trigger="every 60s"
-        hx-swap="outerHTML"
+        data-row-version="{{ environment_row_version(environment) }}"
+        data-live="{{ live }}"
     {% endif %}
+    {% if oob is defined and oob %}hx-swap-oob="true"{% endif %}
 >
     <td class="px-4 py-3 text-gray-200">
         {{ environment.name }}

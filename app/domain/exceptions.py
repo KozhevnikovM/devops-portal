@@ -39,6 +39,10 @@ class EnvironmentItemError(EnvironmentError):
     """A blueprint item references a catalog entry that doesn't exist / isn't active."""
 
 
+class EnvironmentTooLargeError(EnvironmentItemError):
+    """A blueprint has more items than an environment may have children (#497)."""
+
+
 class EnvironmentNotFoundError(NotFoundError):
     pass
 

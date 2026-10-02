@@ -148,8 +148,9 @@ def test_environment_row_poll(client):
         resp = client.get(f"/environments/{env.id}/row")
     assert resp.status_code == 200
     assert f"environment-{env.id}" in resp.text
-    # Non-terminal env keeps polling.
-    assert 'hx-get="/environments/' in resp.text
+    # Non-terminal env is live and reconciled by the page — no per-row poll (#497).
+    assert 'data-live="inflight"' in resp.text
+    assert 'hx-trigger=' not in resp.text
 
 
 def test_environment_row_403_for_non_owner(client):

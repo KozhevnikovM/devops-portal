@@ -511,7 +511,7 @@ async def test_lifecycle_without_environment_routing_authorizes_environment_from
     assert len(chunks) == 1 and chunks[0].startswith(f"event: environment-{env.id}\n")
 
 
-# ── row templates: sse-swap replaces the 3s poll, gated the same as the old trigger ─
+# ── row templates: every row but a RELEASED one is live; no per-row poll (#497) ──────
 @pytest.fixture
 def _client():
     from app.main import app
@@ -534,10 +534,11 @@ def test_booking_row_has_sse_swap_when_non_terminal(_client):
         resp = cl.get(f"/bookings/{booking.id}/row")
     assert resp.status_code == 200
     assert f'sse-swap="booking-{booking.id}"' in resp.text
-    assert 'hx-trigger="every 60s"' in resp.text  # fallback poll, not the old 3s one
+    assert "hx-trigger=" not in resp.text  # page reconciliation replaced the per-row poll
 
 
-def test_booking_row_has_no_sse_swap_when_terminal(_client):
+def test_ready_booking_row_is_live(_client):
+    # READY can still change (e.g. READY → RELEASING on TTL expiry), so it subscribes too.
     cl, user = _client
     now = datetime.now(timezone.utc)
     booking = Booking(
@@ -548,7 +549,23 @@ def test_booking_row_has_no_sse_swap_when_terminal(_client):
         mock_repo.get = AsyncMock(return_value=booking)
         resp = cl.get(f"/bookings/{booking.id}/row")
     assert resp.status_code == 200
+    assert f'sse-swap="booking-{booking.id}"' in resp.text
+    assert 'data-live="settled"' in resp.text
+
+
+def test_booking_row_has_no_sse_swap_when_released(_client):
+    cl, user = _client
+    now = datetime.now(timezone.utc)
+    booking = Booking(
+        id=uuid4(), user_id=str(user.id), status=BookingStatus.RELEASED, ttl_minutes=240,
+        expires_at=now + timedelta(minutes=240), created_at=now, owner_username=user.username,
+    )
+    with patch("app.presentation.routes.bookings._repo") as mock_repo:
+        mock_repo.get = AsyncMock(return_value=booking)
+        resp = cl.get(f"/bookings/{booking.id}/row")
+    assert resp.status_code == 200
     assert "sse-swap=" not in resp.text
+    assert "data-row-version=" not in resp.text
 
 
 def test_environment_row_has_sse_swap_when_non_terminal(_client):

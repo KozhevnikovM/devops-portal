@@ -5,6 +5,12 @@ import yaml
 from fastapi.templating import Jinja2Templates
 
 from app.application.use_cases._permissions import can_view_credentials
+from app.presentation.reconcile import (
+    environment_row_version,
+    list_key,
+    live_class,
+    row_version,
+)
 
 templates = Jinja2Templates(directory="app/presentation/templates")
 
@@ -35,3 +41,9 @@ templates.env.filters["toyaml"] = _toyaml
 
 # One owner-or-admin credentials rule (#478), shared by booking_row.html and the credentials route.
 templates.env.globals["can_view_credentials"] = can_view_credentials
+
+# Page row reconciliation (#497): every row render path emits the same version and list key.
+templates.env.globals["row_version"] = row_version
+templates.env.globals["environment_row_version"] = environment_row_version
+templates.env.globals["list_key"] = list_key
+templates.env.globals["live_class"] = live_class

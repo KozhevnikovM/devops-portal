@@ -5,6 +5,7 @@ from sqlalchemy import String, cast, func, literal, or_, select, true, tuple_, u
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session, aliased
 
+from app.domain.booking_list import EnvironmentChildItem
 from app.domain.booking_status import CAN_BECOME_READY, LIVE_CHILD_STATUSES
 from app.domain.constants import PERMANENT_EXPIRES_AT
 from app.domain.entities import Environment
@@ -13,7 +14,7 @@ from app.domain.exceptions import EnvironmentNotFoundError
 from app.domain.lease import Lease, lease_can_start
 from app.domain.pagination import EnvironmentPage, KeysetCursor
 from app.infrastructure.database.models import (
-    BookingModel, EnvironmentModel, NamespaceModel, StaticVMModel, UserModel,
+    BOOKING_NOT_RELEASED, BookingModel, EnvironmentModel, NamespaceModel, StaticVMModel, UserModel,
 )
 from app.infrastructure.repositories._ordered_walk import _OrderedWalk
 from app.infrastructure.repositories.booking_repo import _to_entity as _booking_to_entity
@@ -162,6 +163,64 @@ def _page_keys_stmt(
         .order_by(keys.c.created_at.desc(), keys.c.id.desc())
         .limit(size)
     )
+
+
+def _bounded_children_stmt(env_ids: list[UUID], per_environment: int):
+    """At most `per_environment` children of each environment, list-safe columns only (#497 D3a).
+
+    One LATERAL per environment with a LIMIT and no ORDER BY, so each walk of
+    ix_bookings_environment_id stops after `per_environment` entries, however many children the
+    environment has — the caller asks for one more than the child limit, which tells it whether
+    the limit holds without ever reading past it. Never selects the log, script, vars or credentials.
+    """
+    children = (
+        select(
+            BookingModel.id, BookingModel.environment_id, BookingModel.status,
+            BookingModel.resource_type, BookingModel.created_at, BookingModel.environment_label,
+            NamespaceModel.name.label("namespace_name"), StaticVMModel.name.label("static_vm_name"),
+            StaticVMModel.host.label("static_vm_host"), BookingModel.image_name, BookingModel.vm_ip,
+            BookingModel.config_failed,
+        )
+        .outerjoin(NamespaceModel, NamespaceModel.id == BookingModel.namespace_id)
+        .outerjoin(StaticVMModel, StaticVMModel.id == BookingModel.static_vm_id)
+        .where(BookingModel.environment_id == EnvironmentModel.id)
+        .limit(per_environment)
+        .lateral("children")
+    )
+    return (
+        select(children)
+        .select_from(EnvironmentModel)
+        .join(children, true())
+        .where(EnvironmentModel.id.in_(env_ids))
+    )
+
+
+def _to_child_item(row) -> EnvironmentChildItem:
+    return EnvironmentChildItem(
+        id=row.id, status=BookingStatus(row.status), resource_type=ResourceType(row.resource_type),
+        created_at=row.created_at, environment_label=row.environment_label,
+        namespace_name=row.namespace_name, static_vm_name=row.static_vm_name,
+        static_vm_host=row.static_vm_host, image_name=row.image_name, vm_ip=row.vm_ip,
+        config_failed=row.config_failed,
+    )
+
+
+def _live_children_stmt(limit: int):
+    """Largest child count of any environment with a non-RELEASED child, and how many exceed
+    `limit` (#497 D3a). The not-RELEASED test is the literal BOOKING_NOT_RELEASED, never a bound
+    parameter: PostgreSQL can't prove a partial index's predicate from a parameter under a generic
+    plan, and this query must use ix_bookings_environment_id_unreleased (#479)."""
+    live_envs = (
+        select(BookingModel.environment_id)
+        .where(BookingModel.environment_id.is_not(None), BOOKING_NOT_RELEASED)
+    )
+    counts = (
+        select(func.count().label("n"))
+        .where(BookingModel.environment_id.in_(live_envs))
+        .group_by(BookingModel.environment_id)
+        .subquery()
+    )
+    return select(func.coalesce(func.max(counts.c.n), 0), func.count().filter(counts.c.n > limit))
 
 
 def _to_entity(m: EnvironmentModel, bookings=None, owner_username=None, created_by_username=None) -> Environment:
@@ -348,6 +407,61 @@ class EnvironmentRepository:
             next_cursor = KeysetCursor(created_at=last.created_at, id=last.id)
         return EnvironmentPage(items=items, next_cursor=next_cursor)
 
+    async def list_items_by_ids(
+        self, session: AsyncSession, ids: list[UUID], *, user_id: str | None, child_limit: int,
+    ) -> tuple[list[Environment], list[Environment]]:
+        """The given environments visible on a page, with their children, in two statements (#497).
+
+        `user_id=None` is the All scope, otherwise Mine (owned or dispatched). Ids outside the scope
+        (or unknown) are absent — authorization is the query. Show released and the name filter
+        don't apply: a displayed row still has to be refreshed in place.
+
+        Children come from the bounded, list-safe read: at most `child_limit + 1` per environment.
+        An environment that returns more than `child_limit` breaks the child invariant (only
+        possible through a direct database edit); it is returned in the second list instead,
+        without children, and nothing more is read for it.
+        """
+        if not ids:
+            return [], []
+        stmt = _with_usernames().where(EnvironmentModel.id.in_(list(ids))).order_by(
+            EnvironmentModel.created_at.desc(), EnvironmentModel.id.desc(),
+        )
+        if user_id is not None:
+            stmt = stmt.where(
+                or_(EnvironmentModel.user_id == user_id, EnvironmentModel.created_by == user_id)
+            )
+        rows = (await session.execute(stmt)).all()
+        if not rows:
+            return [], []
+        children: dict[UUID, list[EnvironmentChildItem]] = {model.id: [] for model, _, _ in rows}
+        result = await session.execute(_bounded_children_stmt(list(children), child_limit + 1))
+        for row in result.all():
+            children[row.environment_id].append(_to_child_item(row))
+        items, over_limit = [], []
+        for model, owner, creator in rows:
+            kids = children[model.id]
+            if len(kids) > child_limit:
+                over_limit.append(_to_entity(model, owner_username=owner, created_by_username=creator))
+            else:
+                items.append(_to_entity(model, bookings=sorted(kids, key=lambda c: c.created_at),
+                                        owner_username=owner, created_by_username=creator))
+        return items, over_limit
+
+    async def newest_key(
+        self, session: AsyncSession, *, user_id: str | None, label: str | None,
+        include_released: bool,
+    ) -> KeysetCursor | None:
+        """The key of the newest environment the page's filters match, or None (#497 D8).
+
+        The first page's key walk with room for one row, under the ordered-walk pin — one
+        statement, nothing hydrated.
+        """
+        async with _OrderedWalk(session):
+            row = (await session.execute(_page_keys_stmt(
+                user_id, label=label, include_released=include_released, limit=0, after=None,
+            ))).first()
+        return None if row is None else KeysetCursor(created_at=row.created_at, id=row.id)
+
     async def _list(
         self, session: AsyncSession, user_id: str | None, label: str | None = None,
         include_released: bool = True,
@@ -363,6 +477,20 @@ class EnvironmentRepository:
         ]
 
     # ── Sync helpers (Celery beat — env-aware TTL enforcement) ──────────────────
+    async def live_children_over(self, session: AsyncSession, limit: int) -> tuple[int, int]:
+        """(largest child count of any not-fully-released environment, how many exceed `limit`) (#497).
+
+        `(0, 0)` when no environment is live. Sizes the effective child limit: environments ordered
+        before ENVIRONMENT_MAX_CHILDREN existed, or by an older app version still serving during a
+        deploy, may exceed it. Fully released environments never change again, so they don't
+        count. Runs periodically on every worker, so it is pinned like the page walks: under the
+        ordered-walk pin, with the literal not-RELEASED predicate, it reads the live children
+        through ix_bookings_environment_id_unreleased and never scans released history.
+        """
+        async with _OrderedWalk(session):
+            largest, over = (await session.execute(_live_children_stmt(limit))).one()
+        return largest, over
+
     def sync_list_expired(self, session: Session) -> list[Environment]:
         """Return environments past their expires_at that still have at least one live child."""
         live_child = (

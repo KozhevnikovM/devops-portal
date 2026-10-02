@@ -45,3 +45,24 @@ class BookingListItem:
     has_credentials: bool
     # Display only, set after the read (FIFO rank of a QUEUED booking) — the one mutable field.
     queue_position: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class EnvironmentChildItem:
+    """A child booking as the environment row shows it (#497): status and display fields only.
+
+    Page reconciliation reads children through this list-safe projection — never the provisioning
+    log, startup script, vars or credentials. Attribute names match `Booking`'s, so the environment
+    row renders either one.
+    """
+    id: UUID
+    status: BookingStatus
+    resource_type: ResourceType
+    created_at: datetime
+    environment_label: str | None
+    namespace_name: str | None
+    static_vm_name: str | None
+    static_vm_host: str | None
+    image_name: str | None
+    vm_ip: str | None
+    config_failed: bool

@@ -1,0 +1,18 @@
+{#- The list section's one reconciliation poller (#497): every 60 s it asks the server about a
+    bounded batch of the displayed rows (chosen by static/js/row_reconcile.js), never overlapping
+    (hx-sync drop) and never hanging (timeout). It lives inside the section, so replacing the
+    section stops its timer and starts exactly one new one; Load more pages, order responses and
+    single rows carry none. Inputs: reconcile_url, reconcile_max, reconcile_settled_min,
+    reconcile_rows (the tbody selector). -#}
+<div
+    id="{{ reconcile_id }}"
+    class="hidden"
+    hx-get="{{ reconcile_url }}"
+    hx-trigger="every 60s"
+    hx-swap="none"
+    hx-sync="this:drop"
+    hx-request='{"timeout": 30000}'
+    data-reconcile-rows="{{ reconcile_rows }}"
+    data-reconcile-max="{{ reconcile_max }}"
+    data-reconcile-settled-min="{{ reconcile_settled_min }}"
+></div>

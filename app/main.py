@@ -14,6 +14,7 @@ from app.infrastructure.database.session import AsyncSessionLocal, SyncSessionLo
 from app.infrastructure.logging_config import configure_logging
 from app.infrastructure.passwords import hash_password_blocking, shutdown_executor
 from app.infrastructure.repositories.booking_repo import BookingRepository
+from app.infrastructure.environment_child_limit import EnvironmentChildLimit
 from app.infrastructure.repositories.user_repo import UserRepository
 from app.presentation.middleware.correlation_id import CorrelationIdMiddleware
 from app.presentation.middleware.csrf_origin import CSRFOriginMiddleware
@@ -29,11 +30,17 @@ from app.tasks.provision import provision_vm_task
 from app.tasks.teardown import teardown_vm_task
 
 
+def _is_background_row_request(message: str) -> bool:
+    """Single-row refreshes and page reconciliation (#497): one per list section per minute per
+    tab, so they would drown the access log."""
+    return "/row " in message or "/reconcile?" in message or "/reconcile " in message
+
+
 class _SuppressRowPolling(logging.Filter):
-    """Drop uvicorn access-log entries for the frequent row-polling endpoint."""
+    """Drop uvicorn access-log entries for the frequent background row requests."""
 
     def filter(self, record: logging.LogRecord) -> bool:
-        return "/row " not in record.getMessage()
+        return not _is_background_row_request(record.getMessage())
 
 
 logging.getLogger("uvicorn.access").addFilter(_SuppressRowPolling())
@@ -44,9 +51,12 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     _seed_admin_user()
+    refresher = await _start_environment_child_limit(app)
     _recover_in_progress_bookings()
     _recover_stuck_releases()
     yield
+    if refresher is not None:
+        refresher.cancel()
     shutdown_executor()
 
 
@@ -72,6 +82,18 @@ def _seed_admin_user() -> None:
         pw_hash = hash_password_blocking(effective_pw)
         repo.sync_create(session, settings.ADMIN_USERNAME, pw_hash, "admin")
         logger.info("seeded admin user '%s'", settings.ADMIN_USERNAME)
+
+
+async def _start_environment_child_limit(app: FastAPI) -> asyncio.Task | None:
+    """Compute the effective environment child limit and keep it current (#497 D3a).
+
+    See app/infrastructure/environment_child_limit.py. The first value is computed before serving;
+    the returned task refreshes it until shutdown.
+    """
+    limit = EnvironmentChildLimit(settings.ENVIRONMENT_MAX_CHILDREN)
+    await limit.refresh()
+    app.state.environment_child_limit = limit
+    return asyncio.create_task(limit.run(settings.ENVIRONMENT_CHILD_LIMIT_REFRESH_SECONDS))
 
 
 def _recover_in_progress_bookings() -> None:

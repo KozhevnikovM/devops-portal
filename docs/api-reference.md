@@ -383,10 +383,23 @@ Also accepted on the same-shaped `/book/vm` and `/book/namespace` pages.
 - **Filters.** Changing a filter starts again from the first page.
 - **Filter changes (#494).** The Mine/All, label and Show released controls fetch `GET /book/vm/list` or `GET /book/namespace/list`, with the same `filter`/`show_released`/`label`. The response is an HTML fragment containing the whole list section: filter controls, the first page of rows, the empty state and the first **Load more** row. It replaces the section in place, which drops any pages already appended. The response does no order-form catalog reads (images, hardware configs, namespaces, static VMs, roles). It sets `HX-Push-Url` to a query-only URL (`?filter=…`), so the address bar keeps the page's own path and any reverse-proxy prefix. Page URLs (`/`, `/book/vm`, `/book/namespace`) always return the full page, whatever `HX-*` request headers are sent, so reload, bookmarks and Back/Forward work as before.
 - **Bounded reads.** Each page reads a bounded number of rows, whatever the size of the booking history.
+- **Keeping rows current (#497).** Rows update live over `GET /events/stream`. Because that stream can lose events, the list section also sends one reconciliation request every 60 s: `GET /book/vm/reconcile` or `GET /book/namespace/reconcile`. Rows have no timers of their own. Each request carries:
+  - the same `filter`/`show_released`/`label`;
+  - one `r=<booking id>.<row version>` per row in a bounded batch of the displayed rows;
+  - `newest=<list key>` of the first displayed row.
+
+  The browser picks the batch: in-flight rows first, plus a reserved share for READY/FAILED rows, rotating through every loaded page. The server enforces at most `RECONCILE_MAX_IDS` ids (default 50). Exceeding it, a repeated id, or a malformed id, version or `newest` returns `400` before any database work, authentication included. So a malformed request gets `400` whether or not it is authenticated.
+
+  Every id is re-checked against what the list would show. Under Mine that is the viewer's own or dispatched rows; under All, every row of the page's kinds. The response is HTML made of out-of-band `<tr>` updates:
+  - rows whose version changed;
+  - `hx-swap-oob="delete"` for ids that no longer exist or aren't visible, identical in both cases;
+  - a "Newer bookings available — refresh list" row when a matching booking newer than `newest` exists.
+
+  It costs a fixed number of statements, however many ids are sent, and does no order-form catalog read. Rows never move, and loaded pages, filters and the Load more cursor stay as they are. A row that becomes RELEASED is shown as RELEASED in place, even with Show released off. In the worst case a change reaches a displayed row within ⌈I / (50 − min(S, 10))⌉ minutes for in-flight rows and ⌈S / max(min(S, 10), 50 − I)⌉ minutes for settled ones. Here I and S are the displayed in-flight and settled rows, under the default settings.
 - **Label filter (#485).** With a `label`, each request examines at most `BOOKINGS_LABEL_SCAN_SIZE` bookings (default 200) of the page's Mine/All, type and released range, and lists those whose label matches, up to the page size. A rare label can therefore give a short page, or an empty one, while older matches exist. The next-page row then reads **Search older bookings** instead of **Load more**, and its cursor continues after the last booking examined, which may not be one that was shown. An empty first page says no match was found among the most recent bookings. When the whole range has been examined, no next-page row is shown and the empty state says no bookings match. Following the rows to the end lists every match exactly once.
 - **JSON list.** `GET /api/bookings` is not paginated. Its order only gains the same id tiebreak for bookings created at the same instant.
 
-These `/book/*/rows` and `/book/*/list` routes return HTML fragments and are absent from the schema.
+These `/book/*/rows`, `/book/*/list` and `/book/*/reconcile` routes return HTML fragments and are absent from the schema.
 
 ---
 
@@ -865,9 +878,10 @@ curl -s http://localhost:8000/api/bookings/<booking-id>/audit \
 
 ### `GET /bookings/{booking_id}/row`
 
-Returns an HTML fragment for a single booking row. Used by **HTMX polling in the browser** (now a
-60s fallback — see `GET /events/stream` below for the primary live-update path) — this is a
-presentation route, not part of the JSON API (and is omitted from `/docs`).
+Returns an HTML fragment for a single booking row. This is a presentation route, not part of the
+JSON API, and is omitted from `/docs`. Rows no longer poll it: the list pages keep rows current
+through `GET /events/stream`, and through one page-level reconciliation request per list section
+every 60 s (`GET /book/*/reconcile`, `GET /environments/reconcile`, #497).
 
 **Auth:** the booking **owner** or an **admin**. A non-owner gets `403`; an unknown id gets `404`.
 
@@ -927,10 +941,13 @@ notification. Notifications for other users' rows never reach the connection at 
 these a connection gets is decided from the user's role when the stream opens, so after a role
 change the new scope applies once the tab reloads or the stream reconnects.
 
-Delivery is via Redis pub/sub, which has no replay guarantee — a message published while
-disconnected (a dropped connection, a Redis restart) is lost. Each row keeps a much slower 60s
-fallback poll (`GET /bookings/{id}/row` / `GET /environments/{id}/row`) as the safety net, so a
-missed push is never more than a minute stale.
+Delivery is via Redis pub/sub, which has no replay guarantee. A message published while the tab is
+disconnected (a dropped connection, a Redis restart) is lost. The safety net is page reconciliation
+(#497). Each list section sends one request every 60 s naming a bounded batch of its displayed rows
+(`GET /book/*/reconcile`, `GET /environments/reconcile`) and gets back only the rows that changed.
+It reads only the database and doesn't depend on Redis. Rows on the first page converge within a
+minute; rows on further loaded pages converge within the bound given under the bookings pages
+above. Every row except a RELEASED one, READY and FAILED included, also takes live pushes.
 
 **Auth:** any authenticated user (`require_user`); authorization is enforced per-row, per-event,
 not at connection time. Presentation route (omitted from `/docs`). Behind a reverse proxy, see
@@ -1367,7 +1384,8 @@ only for now.
 
 Blueprint item names are resolved up front, so a bad name creates nothing. A child quota failure
 rolls the whole environment back. **Responses:** `201` (the environment + its children); `404`
-unknown blueprint; `400` a blueprint item references an unknown catalog entry, only one of the
+unknown blueprint; `400` a blueprint item references an unknown catalog entry, the blueprint has
+more items than `ENVIRONMENT_MAX_CHILDREN` (default 25, #497; nothing is reserved or created), only one of the
 namespace pair was given, or the blueprint has no/more-than-one namespace to override; `409` quota
 exceeded or a specific pooled resource unavailable (including an unknown / held / inactive chosen
 namespace).
@@ -1493,7 +1511,7 @@ DELETE /api/environments/{id}?on_behalf_of=alice
 | Dispatcher, wrong owner username | `403` |
 
 > **Browser UI:** the **Environments** page (`GET /environments`, in the top nav) lets users order a
-> blueprint, watch the stack come up (HTMX polling), and release it — the same operations as the JSON
+> blueprint, watch the stack come up (live row updates), and release it — the same operations as the JSON
 > API above. It accepts the same `filter`/`show_released`/`label` query params as the bookings page
 > (see `GET /` above). Without `show_released`, an environment is hidden only when it is fully released —
 > it has at least one child and every child is `RELEASED`. Environments with no children, or with any
@@ -1506,7 +1524,14 @@ DELETE /api/environments/{id}?on_behalf_of=alice
 > Changing a filter starts again from the first page. The filter controls fetch
 > `GET /environments/list` (#494), with the same `filter`/`show_released`/`label`. It returns the whole list
 > section as an HTML fragment, without the order form or its catalog reads, and sets a query-only
-> `HX-Push-Url`. `GET /environments` always returns the full page. The JSON list (`GET /api/environments`) is not
+> `HX-Push-Url`. `GET /environments` always returns the full page. Rows are kept current the same way as
+> on the bookings pages (#497). The list section sends one `GET /environments/reconcile` request every
+> 60 s, with the same parameters, limits and `400` cases. Each environment's children are read with
+> a bound of the effective child limit + 1 (see `ENVIRONMENT_MAX_CHILDREN`). An environment found
+> over it is answered with a "could not be refreshed — reload the page" row rather than read further,
+> and the limit is recomputed. That happens for an environment the previous app version ordered
+> during a deploy, or after a direct database edit. The row stays reconciled and is shown in full
+> once the limit covers it. The JSON list (`GET /api/environments`) is not
 > paginated. The order form has an optional **Namespace** dropdown (default *"Blueprint default"*)
 > listing the available namespaces by `name (cluster)`; picking one overrides the blueprint's
 > namespace item (same single-namespace rule as the API — a bad choice renders the `400` inline).
@@ -1548,7 +1573,10 @@ variable names must match `[a-zA-Z_][a-zA-Z0-9_]*` → `400` otherwise. Names ar
 
 **Admin write endpoints:** `POST` / `PATCH /{id}` (replaces the item set) / `DELETE /{id}`
 (deactivate). A VM item needs `image_name` + `hw_config_name`; bad `resource_type` → `400`;
-duplicate `name` → `409`.
+more items than `ENVIRONMENT_MAX_CHILDREN` (default 25) → `422`, and the blueprint is left
+unchanged (#497). A `PATCH` without `items` counts the stored ones, so renaming, re-describing or
+reactivating a blueprint saved earlier with more items is also `422`. `PATCH {"is_active": false}`
+and `DELETE` always succeed, so it can be retired. Duplicate `name` → `409`.
 
 ---
 

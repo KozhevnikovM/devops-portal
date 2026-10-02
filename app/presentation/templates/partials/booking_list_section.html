@@ -50,6 +50,7 @@
                     <th class="text-left px-4 py-3">{% if not is_ns %}Password{% endif %}</th>
                     <th class="text-left px-4 py-3">Actions</th>
                 </tr>
+                {% include "partials/new_rows_indicator.html" %}
             </thead>
             <tbody id="bookings-list" hx-ext="sse" sse-connect="/events/stream">
                 {% for booking in bookings %}
@@ -72,4 +73,7 @@
             </tbody>
         </table>
     </div>
+    {% with reconcile_id = "bookings-reconcile", reconcile_rows = "#bookings-list" %}
+    {% include "partials/reconcile_poller.html" %}
+    {% endwith %}
 </section>

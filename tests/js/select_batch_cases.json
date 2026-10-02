@@ -1,0 +1,212 @@
+[
+  {
+    "name": "one row",
+    "inflight": [
+      "a"
+    ],
+    "settled": [],
+    "max": 50,
+    "settledMin": 10,
+    "offsets": {},
+    "batch": [
+      "a"
+    ],
+    "nextOffsets": {
+      "inflight": 0,
+      "settled": 0
+    }
+  },
+  {
+    "name": "fits in one batch",
+    "inflight": [
+      "a",
+      "b"
+    ],
+    "settled": [
+      "c",
+      "d"
+    ],
+    "max": 50,
+    "settledMin": 10,
+    "offsets": {},
+    "batch": [
+      "a",
+      "b",
+      "c",
+      "d"
+    ],
+    "nextOffsets": {
+      "inflight": 0,
+      "settled": 0
+    }
+  },
+  {
+    "name": "settled reserve when in-flight overflow",
+    "inflight": [
+      "i0",
+      "i1",
+      "i2",
+      "i3",
+      "i4",
+      "i5"
+    ],
+    "settled": [
+      "s0",
+      "s1",
+      "s2",
+      "s3"
+    ],
+    "max": 5,
+    "settledMin": 2,
+    "offsets": {},
+    "batch": [
+      "i0",
+      "i1",
+      "i2",
+      "s0",
+      "s1"
+    ],
+    "nextOffsets": {
+      "inflight": 3,
+      "settled": 2
+    }
+  },
+  {
+    "name": "in-flight rotates",
+    "inflight": [
+      "i0",
+      "i1",
+      "i2",
+      "i3",
+      "i4",
+      "i5"
+    ],
+    "settled": [
+      "s0",
+      "s1",
+      "s2",
+      "s3"
+    ],
+    "max": 5,
+    "settledMin": 2,
+    "offsets": {
+      "inflight": 3,
+      "settled": 2
+    },
+    "batch": [
+      "i3",
+      "i4",
+      "i5",
+      "s2",
+      "s3"
+    ],
+    "nextOffsets": {
+      "inflight": 0,
+      "settled": 0
+    }
+  },
+  {
+    "name": "unused in-flight slots go to settled",
+    "inflight": [
+      "i0"
+    ],
+    "settled": [
+      "s0",
+      "s1",
+      "s2",
+      "s3",
+      "s4",
+      "s5",
+      "s6"
+    ],
+    "max": 5,
+    "settledMin": 2,
+    "offsets": {
+      "settled": 5
+    },
+    "batch": [
+      "i0",
+      "s5",
+      "s6",
+      "s0",
+      "s1"
+    ],
+    "nextOffsets": {
+      "inflight": 0,
+      "settled": 2
+    }
+  },
+  {
+    "name": "reserve capped by settled count",
+    "inflight": [
+      "i0",
+      "i1",
+      "i2",
+      "i3",
+      "i4",
+      "i5",
+      "i6",
+      "i7",
+      "i8"
+    ],
+    "settled": [
+      "s0"
+    ],
+    "max": 5,
+    "settledMin": 2,
+    "offsets": {
+      "inflight": 7
+    },
+    "batch": [
+      "i7",
+      "i8",
+      "i0",
+      "i1",
+      "s0"
+    ],
+    "nextOffsets": {
+      "inflight": 2,
+      "settled": 0
+    }
+  },
+  {
+    "name": "offset past a shrunk list wraps",
+    "inflight": [
+      "i0",
+      "i1"
+    ],
+    "settled": [
+      "s0"
+    ],
+    "max": 5,
+    "settledMin": 2,
+    "offsets": {
+      "inflight": 9,
+      "settled": 4
+    },
+    "batch": [
+      "i1",
+      "i0",
+      "s0"
+    ],
+    "nextOffsets": {
+      "inflight": 1,
+      "settled": 0
+    }
+  },
+  {
+    "name": "nothing displayed",
+    "inflight": [],
+    "settled": [],
+    "max": 50,
+    "settledMin": 10,
+    "offsets": {
+      "inflight": 3
+    },
+    "batch": [],
+    "nextOffsets": {
+      "inflight": 0,
+      "settled": 0
+    }
+  }
+]

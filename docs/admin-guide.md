@@ -87,6 +87,10 @@ inspected with `docker inspect <container-id>`.
 | `ENVIRONMENTS_PAGE_SIZE` | No | Environments shown per page on the browser **Environments** page, and appended per **Load more** click (keyset pagination, #467). Must be > 0. Server-side only — it isn't a query parameter. The JSON environments list isn't paginated. Default: `50` |
 | `BOOKINGS_PAGE_SIZE` | No | Bookings shown per page on the browser **VM** and **Namespace** booking pages, and appended per **Load more** click (keyset pagination, #479). Must be > 0. Server-side only — it isn't a query parameter. Each page reads a bounded number of rows regardless of booking history. The JSON bookings list isn't paginated. Default: `50` |
 | `BOOKINGS_LABEL_SCAN_SIZE` | No | How many bookings one label-filtered page examines on the **VM** and **Namespace** booking pages (#485). The label filter is a substring match, which no index can serve in page order, so each request looks at most this many bookings of the page's Mine/All, type and released range, and shows the ones whose label matches. When a rare label fills less than a page, the list offers **Search older bookings** to continue. Raising it means fewer clicks for rare labels but more work per request, at most about 4 × this many index entries plus this many row lookups. Must be greater than `BOOKINGS_PAGE_SIZE`, or the app refuses to start. Default: `200` |
+| `RECONCILE_MAX_IDS` | No | Most displayed rows one page-reconciliation request may name (#497). Each list section sends one such request every 60 s, keeping rows current when a live update was lost. Must be between 1 and the smaller of `BOOKINGS_PAGE_SIZE` and `ENVIRONMENTS_PAGE_SIZE`, so a request never reads more than a list page. A request over the limit is rejected with `400`. Default: `50` |
+| `RECONCILE_SETTLED_MIN` | No | Slots of each reconciliation batch kept for READY/FAILED rows, so a long list of in-flight rows can't starve them (#497). Must be at least 1 and less than `RECONCILE_MAX_IDS`. Default: `10` |
+| `ENVIRONMENT_MAX_CHILDREN` | No | Most items an environment blueprint may have, and so most children an environment can have (#497). Saving a larger blueprint (Catalog page or `POST`/`PATCH /api/environment-blueprints`) is rejected (`422` from the API). Ordering a blueprint saved before the limit existed is rejected with `400` before anything is reserved. Renaming, re-describing or activating a blueprint saved earlier with more items is rejected too; deactivating or deleting it is always allowed. Page reconciliation reads at most the *effective* limit (+1) children per environment. The effective limit is raised to fit any environment that is not fully released and has more children: one ordered before the limit existed, or by the previous app version during a blue-green deploy. A warning appears in the log when that happens. It is recomputed at startup, every `ENVIRONMENT_CHILD_LIMIT_REFRESH_SECONDS`, and whenever reconciliation meets a larger environment, and it drops back once those environments are released. Must be ≥ 1. Default: `25` |
+| `ENVIRONMENT_CHILD_LIMIT_REFRESH_SECONDS` | No | How often each app process recomputes the effective environment child limit over live environments (#497). One grouped count over the live children. Lower it if you deploy blue-green while large environments are being ordered: an environment the old slot creates after the new slot started shows "could not be refreshed" for at most this long. Must be ≥ 1. Default: `300` |
 | `SSE_PROGRESS_COALESCE_MS` | No | Live-update throttle for provisioning/teardown progress output. A booking's progress lines (Ansible, startup script, SSH wait) produce at most one live row update per this many milliseconds, plus one final update after a burst ends so the last line always shows. Status changes (READY, FAILED, RELEASED, …) are never throttled. Every line is still saved to the provisioning log, in batches (see `PROGRESS_FLUSH_INTERVAL_MS`). Each saved batch triggers at most one update, still throttled by this setting. `0` disables throttling (one update per saved batch). Read when the worker starts, so restart `worker` after changing it. Default: `750` |
 | `PROGRESS_FLUSH_INTERVAL_MS` | No | How often provisioning/teardown progress output is saved to the database (#444). The first line after a quiet spell is saved at once. Lines arriving within this many milliseconds after a save are held in memory and saved together, even if nothing else arrives, so a line waits at most this long in normal operation. Must be ≥ 0. `0` saves every line as it arrives (one commit per line, the pre-#444 behaviour). Use it as an in-place rollback lever. If a save fails, retries still wait at least 500 ms, so a database outage never causes a tight retry loop. See [How progress output is saved](#how-progress-output-is-saved) for failure and crash behaviour. Restart `worker` after changing it. Default: `500` |
 | `PROGRESS_FLUSH_MESSAGE_THRESHOLD` | No | Flush threshold, not a buffer limit: once this many progress lines are waiting, they are saved immediately instead of at the end of the interval. Must be ≥ 1. Restart `worker` after changing it. Default: `50` |
@@ -351,8 +355,9 @@ session cookie is only sent over HTTPS, and forward `X-Forwarded-Proto`.
 > open browser tab. By default nginx buffers proxied responses and applies its normal
 > `proxy_read_timeout` (60s), so without `proxy_buffering off` and a longer `proxy_read_timeout`
 > events arrive in bursts instead of immediately, and the connection gets killed and silently
-> reopened every minute. Nothing breaks without it — the row templates keep a 60s fallback poll —
-> updates just arrive up to a minute late and the browser reconnects constantly. Both configs below
+> reopened every minute. Nothing breaks without it, because each list section also reconciles its
+> rows once a minute (#497). Updates just arrive later (within a minute for the first page, longer
+> for rows on further loaded pages), and the browser reconnects constantly. Both configs below
 > include the required `location` block already.
 >
 > Provisioning progress output (one line per Ansible/startup-script output line) is coalesced
@@ -537,8 +542,16 @@ promoted to admin) applies to already-open tabs only after they reload.
 
 **Rolling deploys.** An old worker publishing to `portal:row-changed` still reaches tabs on the
 new app, live. The reverse (a new worker and an app instance still running the old code) means
-those tabs miss live pushes until that app instance restarts; their rows catch up through the
-60 s fallback poll. Either way nothing is ever pushed to a user who may not see the row.
+those tabs miss live pushes until that app instance restarts. Their rows catch up through page
+reconciliation, one request per list section per minute (#497), which reads only the database.
+Either way nothing is ever pushed to a user who may not see the row.
+
+**Environment child limit across a deploy.** The previous version doesn't enforce
+`ENVIRONMENT_MAX_CHILDREN`, so during a blue-green deploy it can still order a larger environment
+after the new slot has started. No extra deploy step is needed. The new slot recomputes its
+effective limit every `ENVIRONMENT_CHILD_LIMIT_REFRESH_SECONDS`, and immediately when a list meets
+such an environment. Until then that row shows "could not be refreshed — reload the page" and keeps
+being reconciled.
 
 **Troubleshooting.** To see which channels have subscribers, and how many:
 
@@ -1343,7 +1356,8 @@ it's **ordered**.
    - **Name** — unique, e.g. `dev-stack`.
    - **Description** — optional, e.g. `namespace + web + db`.
    - **Items (JSON array)** — one object per resource (format below).
-3. Click **Add**. Invalid JSON, a bad `resource_type`, or a duplicate name is rejected inline.
+3. Click **Add**. Invalid JSON, a bad `resource_type`, more items than `ENVIRONMENT_MAX_CHILDREN`
+   (default 25), or a duplicate name is rejected inline.
 
 Each **item** is an object:
 

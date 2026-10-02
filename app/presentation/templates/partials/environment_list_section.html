@@ -46,6 +46,7 @@
                     <th class="px-4 py-2 text-xs text-gray-500 font-normal uppercase tracking-widest">Expires</th>
                     <th class="px-4 py-2 text-xs text-gray-500 font-normal uppercase tracking-widest">Actions</th>
                 </tr>
+                {% include "partials/new_rows_indicator.html" %}
             </thead>
             <tbody id="environments-tbody" hx-ext="sse" sse-connect="/events/stream">
                 {% for environment in environments %}
@@ -57,9 +58,13 @@
         </table>
         {% else %}
         <table class="w-full text-sm">
+            <thead>{% include "partials/new_rows_indicator.html" %}</thead>
             <tbody id="environments-tbody" hx-ext="sse" sse-connect="/events/stream"></tbody>
         </table>
         <p class="text-gray-600 text-sm px-4 py-6">No environments yet — order one above.</p>
         {% endif %}
     </div>
+    {% with reconcile_id = "environments-reconcile", reconcile_rows = "#environments-tbody" %}
+    {% include "partials/reconcile_poller.html" %}
+    {% endwith %}
 </section>
