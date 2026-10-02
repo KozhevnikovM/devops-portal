@@ -18,7 +18,12 @@ from app.domain.entities import Booking, Environment, User
 from app.domain.enums import BookingStatus, ResourceType
 from app.domain.pagination import EnvironmentPage, KeysetCursor, KeysetPage
 from app.presentation.pagination import decode_cursor
-from app.presentation.reconcile import environment_row_version, list_key, live_class, row_version
+from app.presentation.reconcile import (
+    environment_row_version,
+    list_key,
+    live_class,
+    row_version,
+)
 
 _NOW = datetime(2026, 10, 2, 9, 0, tzinfo=timezone.utc)
 S = BookingStatus
@@ -29,12 +34,12 @@ def _user(role="user"):
 
 
 def _booking(owner: User, status=S.PROVISIONING, **kw) -> Booking:
-    base = dict(
-        id=uuid4(), user_id=str(owner.id), status=status, ttl_minutes=240,
-        expires_at=_NOW + timedelta(minutes=240), created_at=_NOW, resource_type=ResourceType.VM,
-        image_name="ubuntu", hw_config_name="small", vm_ip="10.0.0.1", owner_username=owner.username,
-        vm_password="pw", provisioning_log="line\n", config_roles=[{"name": "nginx", "vars": {}}],
-    )
+    base = {
+        "id": uuid4(), "user_id": str(owner.id), "status": status, "ttl_minutes": 240,
+        "expires_at": _NOW + timedelta(minutes=240), "created_at": _NOW, "resource_type": ResourceType.VM,
+        "image_name": "ubuntu", "hw_config_name": "small", "vm_ip": "10.0.0.1", "owner_username": owner.username,
+        "vm_password": "pw", "provisioning_log": "line\n", "config_roles": [{"name": "nginx", "vars": {}}],
+    }
     base.update(kw)
     return Booking(**base)
 
@@ -49,19 +54,19 @@ def _list_item(**kw) -> BookingListItem:
 
 
 def _child(status=S.READY, **kw) -> EnvironmentChildItem:
-    base = dict(id=uuid4(), status=status, resource_type=ResourceType.NAMESPACE, created_at=_NOW,
-                environment_label="ns", namespace_name="ns-1", static_vm_name=None,
-                static_vm_host=None, image_name=None, vm_ip=None, config_failed=False)
+    base = {"id": uuid4(), "status": status, "resource_type": ResourceType.NAMESPACE, "created_at": _NOW,
+                "environment_label": "ns", "namespace_name": "ns-1", "static_vm_name": None,
+                "static_vm_host": None, "image_name": None, "vm_ip": None, "config_failed": False}
     base.update(kw)
     return EnvironmentChildItem(**base)
 
 
 def _env(owner: User, children=None, **kw) -> Environment:
     from app.presentation.routes.environments import _annotate
-    base = dict(id=uuid4(), name="dev", blueprint_name="dev", user_id=str(owner.id), ttl_minutes=240,
-                expires_at=_NOW + timedelta(minutes=240), created_at=_NOW,
-                bookings=children if children is not None else [_child()],
-                owner_username=owner.username)
+    base = {"id": uuid4(), "name": "dev", "blueprint_name": "dev", "user_id": str(owner.id), "ttl_minutes": 240,
+                "expires_at": _NOW + timedelta(minutes=240), "created_at": _NOW,
+                "bookings": children if children is not None else [_child()],
+                "owner_username": owner.username}
     base.update(kw)
     return _annotate(Environment(**base))
 

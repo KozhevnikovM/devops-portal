@@ -144,7 +144,7 @@ def _query(ids, versions=None):
 
 def _versions(html):
     return dict(re.findall(r'id="(?:booking|environment)-([0-9a-f-]+)"[^>]*?data-row-version="([0-9a-f]+)"',
-                           html, flags=re.S))
+                           html, flags=re.DOTALL))
 
 
 async def test_bookings_reconcile_cost_is_fixed(async_session, seeded):

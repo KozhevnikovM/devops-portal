@@ -3,7 +3,7 @@
 Load more pages, order responses and single rows carry none, so however many pages are loaded
 there is one timer per section; the poller's URL carries the filters in effect.
 """
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, patch
 from urllib.parse import parse_qs, urlparse
 from uuid import uuid4
@@ -13,8 +13,12 @@ import pytest
 from app.config import settings
 from app.domain.pagination import KeysetCursor
 from app.presentation.pagination import encode_cursor
-from tests.test_list_section_fragment import (  # noqa: F401 — fixtures
-    _PAGES, _env, _item, _rows, _set_page, client, repos, user,
+from tests import test_list_section_fragment as fragment
+
+# The list-section tests' fixtures (repository mocks, client, user), shared rather than redefined.
+client, repos, user = fragment.client, fragment.repos, fragment.user
+_PAGES, _env, _item, _rows, _set_page = (
+    fragment._PAGES, fragment._env, fragment._item, fragment._rows, fragment._set_page,
 )
 
 _POLLER = {"vm": "bookings-reconcile", "namespace": "bookings-reconcile",

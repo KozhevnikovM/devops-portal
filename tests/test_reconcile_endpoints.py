@@ -38,16 +38,16 @@ def _user(role="user", username="me"):
 
 
 def _item(owner: User, *, rt=ResourceType.VM, status=S.PROVISIONING, minutes=0, **kw) -> BookingListItem:
-    base = dict(
-        id=uuid4(), user_id=str(owner.id), status=status, resource_type=rt, ttl_minutes=240,
-        expires_at=_NOW + timedelta(minutes=240), created_at=_NOW - timedelta(minutes=minutes),
-        label=None, status_message=None, config_failed=False, environment_id=None,
-        owner_username=owner.username, created_by=None, created_by_username=None, image_id=None,
-        image_name="ubuntu", hw_config_id=None, hw_config_name="small", vm_ip="10.0.0.1",
-        namespace_name="ns-1", cluster_name="c1", api_url=None, static_vm_name=None,
-        static_vm_host=None, static_vm_username=None, has_provisioning_log=False,
-        config_role_names=(), has_credentials=False,
-    )
+    base = {
+        "id": uuid4(), "user_id": str(owner.id), "status": status, "resource_type": rt, "ttl_minutes": 240,
+        "expires_at": _NOW + timedelta(minutes=240), "created_at": _NOW - timedelta(minutes=minutes),
+        "label": None, "status_message": None, "config_failed": False, "environment_id": None,
+        "owner_username": owner.username, "created_by": None, "created_by_username": None, "image_id": None,
+        "image_name": "ubuntu", "hw_config_id": None, "hw_config_name": "small", "vm_ip": "10.0.0.1",
+        "namespace_name": "ns-1", "cluster_name": "c1", "api_url": None, "static_vm_name": None,
+        "static_vm_host": None, "static_vm_username": None, "has_provisioning_log": False,
+        "config_role_names": (), "has_credentials": False,
+    }
     base.update(kw)
     return BookingListItem(**base)
 
@@ -61,10 +61,10 @@ def _child(status=S.READY) -> EnvironmentChildItem:
 
 
 def _env(owner: User, children=None, minutes=0, **kw) -> Environment:
-    base = dict(id=uuid4(), name="dev", blueprint_name="dev", user_id=str(owner.id), ttl_minutes=240,
-                expires_at=_NOW + timedelta(minutes=240), created_at=_NOW - timedelta(minutes=minutes),
-                bookings=children if children is not None else [_child(S.PROVISIONING)],
-                owner_username=owner.username)
+    base = {"id": uuid4(), "name": "dev", "blueprint_name": "dev", "user_id": str(owner.id), "ttl_minutes": 240,
+                "expires_at": _NOW + timedelta(minutes=240), "created_at": _NOW - timedelta(minutes=minutes),
+                "bookings": children if children is not None else [_child(S.PROVISIONING)],
+                "owner_username": owner.username}
     base.update(kw)
     return Environment(**base)
 
@@ -123,7 +123,7 @@ def repos():
 
 def _oob_rows(html: str) -> dict[str, str]:
     """id → hx-swap-oob value for every top-level row of a reconcile response."""
-    return dict(re.findall(r'<tr\s+id="([^"]+)"[^>]*?hx-swap-oob="([^"]+)"', html, flags=re.S))
+    return dict(re.findall(r'<tr\s+id="([^"]+)"[^>]*?hx-swap-oob="([^"]+)"', html, flags=re.DOTALL))
 
 
 booking_pages = pytest.mark.parametrize("page", sorted(_BOOKING_PAGES))
@@ -216,7 +216,7 @@ def test_released_row_is_rendered_final(client, repos, user, page):
 
 @booking_pages
 def test_forged_and_unknown_ids_get_identical_directives(client, repos, user, page):
-    path, rt, _ = _BOOKING_PAGES[page]
+    path, _rt, _ = _BOOKING_PAGES[page]
     forged, unknown = uuid4(), uuid4()   # the scoped read returns neither
     html = client.get(f"{path}/reconcile?r={_token(forged)}&r={_token(unknown)}").text
     directive = '<tr id="booking-{}" hx-swap-oob="delete"></tr>'

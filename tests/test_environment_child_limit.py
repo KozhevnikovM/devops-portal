@@ -75,9 +75,9 @@ def test_app_use_case_is_wired_with_the_configured_limit():
 # ── order routes ──────────────────────────────────────────────────────────────
 @pytest.fixture
 def user_client():
-    from app.main import app
     from app.infrastructure.auth import require_user
     from app.infrastructure.database.session import get_async_session
+    from app.main import app
     from tests.conftest import make_fake_user
 
     app.dependency_overrides[get_async_session] = lambda: AsyncMock()
@@ -88,9 +88,9 @@ def user_client():
 
 @pytest.fixture
 def admin_client():
-    from app.main import app
     from app.infrastructure.auth import require_admin, require_user
     from app.infrastructure.database.session import get_async_session
+    from app.main import app
     from tests.conftest import make_fake_admin
 
     admin = make_fake_admin()
@@ -184,9 +184,9 @@ def test_admin_update_blueprint_over_the_limit_leaves_it_unchanged(admin_client)
 def test_effective_limit_raised_by_legacy_live_environment(caplog):
     from app import main
     with patch("app.main.SyncSessionLocal"), \
-         patch.object(main.EnvironmentRepository, "sync_live_children_over", return_value=(LIMIT + 7, 2)):
-        with caplog.at_level("WARNING", logger="app.main"):
-            assert main._effective_environment_child_limit() == LIMIT + 7
+         patch.object(main.EnvironmentRepository, "sync_live_children_over", return_value=(LIMIT + 7, 2)), \
+         caplog.at_level("WARNING", logger="app.main"):
+        assert main._effective_environment_child_limit() == LIMIT + 7
     assert f"2 live environment(s) exceed ENVIRONMENT_MAX_CHILDREN={LIMIT}" in caplog.text
     assert f"largest: {LIMIT + 7} children" in caplog.text
 
@@ -194,7 +194,7 @@ def test_effective_limit_raised_by_legacy_live_environment(caplog):
 def test_effective_limit_is_the_configured_one_otherwise(caplog):
     from app import main
     with patch("app.main.SyncSessionLocal"), \
-         patch.object(main.EnvironmentRepository, "sync_live_children_over", return_value=(3, 0)):
-        with caplog.at_level("WARNING", logger="app.main"):
-            assert main._effective_environment_child_limit() == LIMIT
+         patch.object(main.EnvironmentRepository, "sync_live_children_over", return_value=(3, 0)), \
+         caplog.at_level("WARNING", logger="app.main"):
+        assert main._effective_environment_child_limit() == LIMIT
     assert "ENVIRONMENT_MAX_CHILDREN" not in caplog.text

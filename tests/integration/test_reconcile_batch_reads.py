@@ -64,7 +64,7 @@ class _Statements:
 
 # ── bookings ──────────────────────────────────────────────────────────────────
 async def test_booking_batch_read_returns_the_visible_subset(async_session):
-    me, other, dispatcher = (f"inttest-{uuid4()}" for _ in range(3))
+    me, other, _dispatcher = (f"inttest-{uuid4()}" for _ in range(3))
     mine, theirs, dispatched, ns, released, labelled = await _insert(async_session, BookingModel, [
         _booking(me, i=0),
         _booking(other, i=1),
@@ -111,7 +111,7 @@ async def test_booking_newest_key_is_one_data_statement_and_matches_the_first_pa
 
 async def test_booking_newest_key_honours_label_and_released_filters(async_session):
     me = f"inttest-{uuid4()}"
-    rel, lab, plain = await _insert(async_session, BookingModel, [
+    rel, lab, _plain = await _insert(async_session, BookingModel, [
         _booking(me, i=0, status=S.RELEASED, label="alpha"),
         _booking(me, i=1, label="alpha"),
         _booking(me, i=2),

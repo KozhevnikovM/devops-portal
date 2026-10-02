@@ -3,4 +3,4 @@
 # ("function call in argument defaults") does not apply to them. No other setting is changed:
 # rule selection stays ruff's default.
 [lint.flake8-bugbear]
-extend-immutable-calls = ["fastapi.Depends", "fastapi.Form"]
+extend-immutable-calls = ["fastapi.Depends", "fastapi.Form", "fastapi.Query"]

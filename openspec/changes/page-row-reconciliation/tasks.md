@@ -152,4 +152,4 @@
   - `docs/admin-guide.md`: the nginx/SSE note and the rolling-deploy note now refer to page reconciliation and its bound; the new settings, including `ENVIRONMENT_MAX_CHILDREN`, what an over-limit blueprint save or order returns, and the startup warning for legacy environments over the limit. `docs/api-reference.md` also documents the 422 on blueprint create/update and the 400 on environment order.
 
   Verify: grep finds no remaining "60s fallback poll" claims in `docs/api-reference.md` and `docs/admin-guide.md`.
-- [ ] 9.3 Run the `py-review` skill on the changed Python, and the full unit suite `pytest tests/ -m "not integration"`. Verify: both are clean.
+- [x] 9.3 Run the `py-review` skill on the changed Python, and the full unit suite `pytest tests/ -m "not integration"`. Verify: both are clean.
