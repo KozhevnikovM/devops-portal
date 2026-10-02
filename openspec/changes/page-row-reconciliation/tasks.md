@@ -21,13 +21,13 @@
 
 ## 3. Repository batch reads (design D3)
 
-- [ ] 3.1 Extract `list_page`'s phase-2 hydration in `BookingRepository` into `list_items_by_ids(session, ids, *, user_id, resource_types)`. It applies `resource_type IN :types`, plus `_owner_filter(user_id)` when `user_id` is given. `list_page` reuses the same statement builder. Declare it on `BookingRepositoryPort`. Verify: the existing pagination tests pass unchanged (`pytest tests/test_booking_pagination.py`), and new unit tests cover Mine, All and type scoping on a fake/SQLite-free statement-shape test.
-- [ ] 3.2 Do the same for `EnvironmentRepository.list_items_by_ids(session, ids, *, user_id)`: environments by id with the Mine-OR rule, plus a new bounded children read (design D3a). The read is one statement, `unnest(:ids)` lateral with `LIMIT C_eff + 1` per environment and no `ORDER BY`, over list-safe child columns only. Children are ordered by `created_at` in Python, and environments that return `C_eff + 1` children are reported as invariant violations. `list_page` keeps `_children_batch`. Also add `newest_key(...)` to both repositories and ports: the phase-1 key statement with `limit=1` under `_OrderedWalk`, returning `(created_at, id) | None` (design D8). Declare both on the ports. Verify:
+- [x] 3.1 Extract `list_page`'s phase-2 hydration in `BookingRepository` into `list_items_by_ids(session, ids, *, user_id, resource_types)`. It applies `resource_type IN :types`, plus `_owner_filter(user_id)` when `user_id` is given. `list_page` reuses the same statement builder. Declare it on `BookingRepositoryPort`. Verify: the existing pagination tests pass unchanged (`pytest tests/test_booking_pagination.py`), and new unit tests cover Mine, All and type scoping on a fake/SQLite-free statement-shape test.
+- [x] 3.2 Do the same for `EnvironmentRepository.list_items_by_ids(session, ids, *, user_id)`: environments by id with the Mine-OR rule, plus a new bounded children read (design D3a). The read is one statement, `unnest(:ids)` lateral with `LIMIT C_eff + 1` per environment and no `ORDER BY`, over list-safe child columns only. Children are ordered by `created_at` in Python, and environments that return `C_eff + 1` children are reported as invariant violations. `list_page` keeps `_children_batch`. Also add `newest_key(...)` to both repositories and ports: the phase-1 key statement with `limit=1` under `_OrderedWalk`, returning `(created_at, id) | None` (design D8). Declare both on the ports. Verify:
   - `pytest tests/test_environment_pagination.py` passes;
   - new scoping tests;
   - a statement-shape test asserts that the children statement has a per-environment `LIMIT` and selects no secret column;
   - `newest_key` issues exactly one data statement.
-- [ ] 3.3 Integration: `tests/integration/test_reconcile_batch_reads.py`. Against real Postgres, it checks:
+- [x] 3.3 Integration: `tests/integration/test_reconcile_batch_reads.py`. Against real Postgres, it checks:
   - returned rows equal the visible subset for Mine, All and a wrong type;
   - Show released and label are not applied;
   - the environment child count equals what `list_page` loads for the same ids.

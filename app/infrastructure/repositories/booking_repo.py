@@ -322,6 +322,25 @@ def _list_item_stmt():
     )
 
 
+def _list_items_by_ids_stmt(
+    ids: Sequence[UUID], *, user_id: str | None = None, resource_types: Sequence[str] | None = None,
+):
+    """The list projection of the given bookings, in page order — the hydration phase of a page
+    (#479) and the batch read of page reconciliation (#497).
+
+    Reconciliation passes the page's scope: `resource_types` keeps only the page's kinds, and
+    `user_id` the Mine rule. An id outside that scope simply doesn't come back, so authorization
+    is the query itself. Neither Show released nor the label filter applies: a displayed row that
+    was released or relabelled still has to be refreshed in place.
+    """
+    stmt = _list_item_stmt().where(BookingModel.id.in_(list(ids)))
+    if resource_types is not None:
+        stmt = stmt.where(BookingModel.resource_type.in_(list(resource_types)))
+    if user_id is not None:
+        stmt = stmt.where(_owner_filter(user_id))
+    return stmt
+
+
 def _to_list_item(row) -> BookingListItem:
     fields = dict(row._mapping)
     try:
@@ -725,9 +744,7 @@ class BookingRepository:
         keys = keys[:limit]
         items: list[BookingListItem] = []
         if keys:
-            result = await session.execute(
-                _list_item_stmt().where(BookingModel.id.in_([k.id for k in keys]))
-            )
+            result = await session.execute(_list_items_by_ids_stmt([k.id for k in keys]))
             items = [_to_list_item(row) for row in result.all()]
         next_cursor = None
         if has_more:                   # a full page: continue after its last booking
@@ -736,6 +753,48 @@ class BookingRepository:
         elif window_end is not None:   # the label scan ran out, and older bookings exist
             next_cursor = KeysetCursor(created_at=window_end.created_at, id=window_end.id)
         return KeysetPage(items=items, next_cursor=next_cursor)
+
+    async def list_items_by_ids(
+        self, session: AsyncSession, ids: Sequence[UUID], *, user_id: str | None,
+        resource_types: Sequence[str],
+    ) -> list[BookingListItem]:
+        """The list projection of those of `ids` visible on a page, in one statement (#497).
+
+        `user_id=None` is the All scope, otherwise Mine. Ids outside the scope (or unknown) are
+        absent from the result. No statement when `ids` is empty.
+        """
+        if not ids:
+            return []
+        result = await session.execute(
+            _list_items_by_ids_stmt(ids, user_id=user_id, resource_types=resource_types)
+        )
+        return [_to_list_item(row) for row in result.all()]
+
+    async def newest_key(
+        self, session: AsyncSession, *, user_id: str | None, resource_types: list[str],
+        label: str | None, include_released: bool, scan_size: int,
+    ) -> KeysetCursor | None:
+        """The key of a page's newest matching booking, or None (#497 D8).
+
+        Exactly the first page's key walk with room for one row — the same scope, filters and
+        label-scan bound — and nothing else: one statement under the ordered-walk pin, no
+        hydration. Page reconciliation compares it with the newest displayed row.
+        """
+        label = _label_filter_text(label)
+        async with _OrderedWalk(session):
+            if label is not None:
+                stmt = _label_page_keys_stmt(
+                    user_id, resource_types=resource_types, label=label,
+                    include_released=include_released, limit=0, scan_size=scan_size, after=None,
+                )
+            else:
+                stmt = _page_keys_stmt(
+                    user_id, resource_types=resource_types, include_released=include_released,
+                    limit=0, after=None,
+                )
+            rows = (await session.execute(stmt)).all()
+        match = next((r for r in rows if not getattr(r, "is_window_end", False)), None)
+        return None if match is None else KeysetCursor(created_at=match.created_at, id=match.id)
 
     async def list_audit(self, session: AsyncSession, booking_id: UUID) -> list[BookingAuditEntry]:
         result = await session.execute(

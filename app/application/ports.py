@@ -27,6 +27,7 @@ from app.domain.entities import (
     Booking, Environment, EnvironmentBlueprint, HWConfig, Namespace, Role, StaticVM, VMImage,
 )
 from app.domain.enums import BookingStatus
+from app.domain.pagination import KeysetCursor
 
 
 class TaskDispatcher(Protocol):
@@ -67,6 +68,14 @@ class BookingRepositoryPort(Protocol):
     async def queue_positions(
         self, session: AsyncSession, bookings: Sequence[Booking | BookingListItem],
     ) -> dict[UUID, int]: ...
+    async def list_items_by_ids(
+        self, session: AsyncSession, ids: Sequence[UUID], *, user_id: str | None,
+        resource_types: Sequence[str],
+    ) -> list[BookingListItem]: ...
+    async def newest_key(
+        self, session: AsyncSession, *, user_id: str | None, resource_types: list[str],
+        label: str | None, include_released: bool, scan_size: int,
+    ) -> KeysetCursor | None: ...
     async def get_live_standalone_namespace_booking(
         self, session: AsyncSession, user_id: str, namespace_id: UUID,
     ) -> Booking | None: ...
@@ -155,6 +164,13 @@ class EnvironmentRepositoryPort(Protocol):
     async def start_lease_if_ready(self, session: AsyncSession, environment_id: UUID) -> bool: ...
     async def start_lease_if_ready_for_booking(self, session: AsyncSession, booking_id: UUID) -> bool: ...
     async def update_name(self, session: AsyncSession, environment_id: UUID, name: str) -> None: ...
+    async def list_items_by_ids(
+        self, session: AsyncSession, ids: list[UUID], *, user_id: str | None, child_limit: int,
+    ) -> tuple[list[Environment], set[UUID]]: ...
+    async def newest_key(
+        self, session: AsyncSession, *, user_id: str | None, label: str | None,
+        include_released: bool,
+    ) -> KeysetCursor | None: ...
 
 
 @runtime_checkable
