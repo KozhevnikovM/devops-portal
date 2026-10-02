@@ -62,6 +62,7 @@ order_environment_uc = OrderEnvironmentUseCase(
     book_namespace_uc, image_repo, hw_config_repo, role_repo, static_vm_repo, dispatcher,
     namespace_repo,
     secret_vars_enabled=settings.SECRET_VARS_ENABLED,
+    max_children=settings.ENVIRONMENT_MAX_CHILDREN,
 )
 release_environment_uc = ReleaseEnvironmentUseCase(env_repo, release_booking_uc)
 force_release_booking_uc = ForceReleaseBookingUseCase(booking_repo, dispatcher)

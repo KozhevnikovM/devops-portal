@@ -11,7 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.domain.entities import User
-from app.domain.exceptions import BookingNotFoundError, NotFoundError
+from app.domain.exceptions import BookingNotFoundError, EnvironmentTooLargeError, NotFoundError
+from app.domain.validation import validate_environment_size
 from app.infrastructure.auth import require_admin
 from app.infrastructure.database.session import get_async_session
 from app.presentation import deps as _deps
@@ -89,6 +90,10 @@ def _parse_blueprint_items(raw: str) -> list[dict]:
         raise ValueError(f"items must be valid JSON: {exc}")
     if not isinstance(parsed, list):
         raise ValueError("items must be a JSON array")
+    try:
+        validate_environment_size(len(parsed), settings.ENVIRONMENT_MAX_CHILDREN)
+    except EnvironmentTooLargeError as exc:
+        raise ValueError(str(exc))
     out = []
     for idx, item in enumerate(parsed):
         if not isinstance(item, dict):

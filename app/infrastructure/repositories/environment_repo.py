@@ -363,6 +363,29 @@ class EnvironmentRepository:
         ]
 
     # ── Sync helpers (Celery beat — env-aware TTL enforcement) ──────────────────
+    def sync_live_children_over(self, session: Session, limit: int) -> tuple[int, int]:
+        """(largest child count of any not-fully-released environment, how many exceed `limit`) (#497).
+
+        `(0, 0)` when no environment is live. Read once at startup to size the effective child limit: environments ordered before
+        ENVIRONMENT_MAX_CHILDREN existed may exceed it. Fully released environments never change
+        again, so they don't count. The inner scan uses ix_bookings_environment_id_unreleased.
+        """
+        live_envs = (
+            select(BookingModel.environment_id)
+            .where(BookingModel.environment_id.is_not(None),
+                   BookingModel.status != BookingStatus.RELEASED.value)
+        )
+        counts = (
+            select(func.count().label("n"))
+            .where(BookingModel.environment_id.in_(live_envs))
+            .group_by(BookingModel.environment_id)
+            .subquery()
+        )
+        largest, over = session.execute(
+            select(func.coalesce(func.max(counts.c.n), 0), func.count().filter(counts.c.n > limit))
+        ).one()
+        return largest, over
+
     def sync_list_expired(self, session: Session) -> list[Environment]:
         """Return environments past their expires_at that still have at least one live child."""
         live_child = (

@@ -1,6 +1,6 @@
 ## 1. Baseline and settings
 
-- [ ] 1.1 Add `RECONCILE_MAX_IDS` (default 50), `RECONCILE_SETTLED_MIN` (default 10) and `ENVIRONMENT_MAX_CHILDREN` (default 25) to `app/config.py`, with validation as follows (design D2):
+- [x] 1.1 Add `RECONCILE_MAX_IDS` (default 50), `RECONCILE_SETTLED_MIN` (default 10) and `ENVIRONMENT_MAX_CHILDREN` (default 25) to `app/config.py`, with validation as follows (design D2):
   - `1 ≤ RECONCILE_MAX_IDS ≤ min(BOOKINGS_PAGE_SIZE, ENVIRONMENTS_PAGE_SIZE)`
   - `1 ≤ RECONCILE_SETTLED_MIN < RECONCILE_MAX_IDS`
   - `ENVIRONMENT_MAX_CHILDREN ≥ 1`
@@ -9,13 +9,13 @@
 
   Verify: a unit test asserts out-of-range values raise at settings load. `pytest tests/ -m "not integration" -k config` passes.
 - [ ] 1.2 Before deploying, list the item counts of existing blueprints (`SELECT name, jsonb_array_length(...)` or an admin page check) and confirm the `ENVIRONMENT_MAX_CHILDREN` default fits, or record the value to configure. Verify: the result is noted in the code PR.
-- [ ] 1.3 Record the baseline background request count: on `main`, render a VM page with 1, 50 and 150 (three loaded pages) non-terminal rows and count the `hx-trigger="every 60s"` attributes. Verify: the numbers are noted for the code PR description.
+- [x] 1.3 Record the baseline background request count: on `main`, render a VM page with 1, 50 and 150 (three loaded pages) non-terminal rows and count the `hx-trigger="every 60s"` attributes. Verify: the numbers are noted for the code PR description.
 
 ## 2. Environment child limit (design D3a, environment-lifecycle spec)
 
-- [ ] 2.1 Add `validate_environment_size(item_count, limit)` in `app/domain/validation.py`, raising a new `EnvironmentTooLargeError(EnvironmentItemError)` whose message names the limit. Verify: unit tests at limit − 1, limit and limit + 1.
-- [ ] 2.2 Call it from the admin blueprint create/edit routes (form error), from the JSON `POST`/`PATCH /environment-blueprints` (422), and from `order_environment` before any reservation (400 through the existing `EnvironmentItemError` mapping, and the HTML order error). Verify: tests for each path over the limit, including that a pre-existing oversized blueprint row cannot be ordered, that the blueprint is unchanged after a rejected update, and that no booking or environment row is created and no namespace or static VM is reserved after a rejected order.
-- [ ] 2.3 In `app/main.py`'s `lifespan`, compute `C_eff = max(ENVIRONMENT_MAX_CHILDREN, L)` with the single max-children query over not-fully-released environments, store it on `app.state`, and log a warning when L exceeds the limit. Verify:
+- [x] 2.1 Add `validate_environment_size(item_count, limit)` in `app/domain/validation.py`, raising a new `EnvironmentTooLargeError(EnvironmentItemError)` whose message names the limit. Verify: unit tests at limit − 1, limit and limit + 1.
+- [x] 2.2 Call it from the admin blueprint create/edit routes (form error), from the JSON `POST`/`PATCH /environment-blueprints` (422), and from `order_environment` before any reservation (400 through the existing `EnvironmentItemError` mapping, and the HTML order error). Verify: tests for each path over the limit, including that a pre-existing oversized blueprint row cannot be ordered, that the blueprint is unchanged after a rejected update, and that no booking or environment row is created and no namespace or static VM is reserved after a rejected order.
+- [x] 2.3 In `app/main.py`'s `lifespan`, compute `C_eff = max(ENVIRONMENT_MAX_CHILDREN, L)` with the single max-children query over not-fully-released environments, store it on `app.state`, and log a warning when L exceeds the limit. Verify:
   - an integration test with a not-fully-released environment holding `limit + 7` children gives `C_eff = limit + 7` and the warning;
   - with only fully released oversized environments, `C_eff = limit` and no warning.
 

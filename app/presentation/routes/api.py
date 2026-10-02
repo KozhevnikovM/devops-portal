@@ -10,7 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.domain.entities import User
 from app.domain.enums import DriveType
-from app.domain.exceptions import NotFoundError
+from app.domain.exceptions import EnvironmentTooLargeError, NotFoundError
+from app.domain.validation import validate_environment_size
 from app.infrastructure.auth import require_admin, require_user
 from app.infrastructure.database.session import get_async_session
 from app.presentation import deps as _deps
@@ -171,6 +172,10 @@ class BlueprintResponse(BaseModel):
 
 def _validate_blueprint_items(items: list[BlueprintItemIn]) -> list[dict]:
     """Validate resource_type + spec shape; return repo-ready item dicts (with position)."""
+    try:
+        validate_environment_size(len(items), settings.ENVIRONMENT_MAX_CHILDREN)
+    except EnvironmentTooLargeError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
     out = []
     for idx, item in enumerate(items):
         if item.resource_type not in _VALID_RESOURCE_TYPES:
