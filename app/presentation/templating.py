@@ -5,7 +5,12 @@ import yaml
 from fastapi.templating import Jinja2Templates
 
 from app.application.use_cases._permissions import can_view_credentials
-from app.presentation.reconcile import environment_row_version, list_key, live_class, row_version
+from app.presentation.reconcile import (
+    environment_row_version,
+    list_key,
+    live_class,
+    row_version,
+)
 
 templates = Jinja2Templates(directory="app/presentation/templates")
 

@@ -18,7 +18,12 @@ from app.config import settings
 from app.domain.booking_list import BookingListItem
 from app.domain.enums import BookingStatus
 from app.domain.pagination import KeysetCursor
-from app.presentation.pagination import InvalidCursorError, decode_cursor, encode_cursor, filter_params
+from app.presentation.pagination import (
+    InvalidCursorError,
+    decode_cursor,
+    encode_cursor,
+    filter_params,
+)
 
 VERSION_LENGTH = 16  # hex characters (64 bits of SHA-256)
 
