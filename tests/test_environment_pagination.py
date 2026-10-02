@@ -6,17 +6,31 @@ tests/integration/test_environment_list_pagination.py.
 """
 import base64
 from datetime import datetime, timedelta, timezone
-from unittest.mock import AsyncMock, patch
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
 from urllib.parse import parse_qs, urlparse
 from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
+from sqlalchemy import select
+from sqlalchemy.dialects import postgresql
 
 from app.config import Settings, settings
 from app.domain.entities import Environment, User
 from app.domain.pagination import EnvironmentPage, KeysetCursor
+from app.infrastructure.database.models import EnvironmentModel
+from app.infrastructure.repositories._ordered_walk import (
+    _PIN_ORDERED_WALK,
+    _UNPIN_ORDERED_WALK,
+)
+from app.infrastructure.repositories.environment_repo import (
+    EnvironmentRepository,
+    _list_stmt,
+    _not_fully_released,
+    _page_keys_stmt,
+)
 from app.presentation.pagination import InvalidCursorError, decode_cursor, encode_cursor
 
 _CURSOR = KeysetCursor(
@@ -294,3 +308,158 @@ def test_rows_requires_authentication():
 def test_rows_route_absent_from_schema():
     from app.main import app
     assert "/environments/rows" not in TestClient(app).get("/openapi.json").json()["paths"]
+
+
+# ── Page selection statements (#496) ────────────────────────────────────────
+
+def _sql(stmt) -> str:
+    return str(stmt.compile(dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}))
+
+
+_NOT_FULLY_RELEASED_SQL = (
+    "(SELECT bool_and(bookings.status = 'RELEASED') AS bool_and_1 \nFROM bookings \n"
+    "WHERE bookings.environment_id = environments.id) IS NOT true"
+)
+
+
+def test_not_fully_released_is_one_correlated_aggregate():
+    """A correlated aggregate can't be hashed or turned into a (anti-)semi join, so the check is a
+    per-environment lookup of its own children whatever the plan (#496, design.md Decision 2)."""
+    sql = _sql(select(EnvironmentModel.id).where(_not_fully_released()))
+    assert _NOT_FULLY_RELEASED_SQL in sql
+    assert "EXISTS" not in sql
+
+
+def _keys_sql(user_id, *, label=None, include_released=True, after=None, limit=50) -> str:
+    return _sql(_page_keys_stmt(
+        user_id, label=label, include_released=include_released, limit=limit, after=after,
+    ))
+
+
+@pytest.mark.parametrize("label", [None, "web"], ids=["no-label", "label"])
+@pytest.mark.parametrize("include_released", [True, False], ids=["show-released", "hide-released"])
+@pytest.mark.parametrize("after", [None, _CURSOR], ids=["first-page", "after-cursor"])
+def test_all_keys_are_one_walk_with_only_the_predicates_in_effect(label, include_released, after):
+    sql = _keys_sql(None, label=label, include_released=include_released, after=after)
+    assert sql.startswith("SELECT environments.created_at, environments.id \nFROM environments")
+    assert "UNION ALL" not in sql and "GROUP BY" not in sql
+    assert "user_id" not in sql and "created_by" not in sql
+    assert "users" not in sql   # usernames are read only for the page, in phase 2
+    assert ("ILIKE '%%web%%'" in sql) is (label is not None)
+    assert ("bool_and" in sql) is (not include_released)
+    assert ("(environments.created_at, environments.id) < (" in sql) is (after is not None)
+    assert sql.endswith("ORDER BY environments.created_at DESC, environments.id DESC \n LIMIT 51")
+
+
+@pytest.mark.parametrize("label", [None, "web"], ids=["no-label", "label"])
+@pytest.mark.parametrize("include_released", [True, False], ids=["show-released", "hide-released"])
+@pytest.mark.parametrize("after", [None, _CURSOR], ids=["first-page", "after-cursor"])
+def test_mine_keys_are_an_owned_and_a_dispatched_walk_merged_once(label, include_released, after):
+    sql = _keys_sql("u1", label=label, include_released=include_released, after=after)
+    owned, dispatched = sql.split(" UNION ALL ")
+    assert "WHERE environments.user_id = 'u1'" in owned and "created_by" not in owned
+    assert "WHERE environments.created_by = 'u1'" in dispatched and "user_id" not in dispatched
+    for walk in (owned, dispatched):
+        assert ("ILIKE '%%web%%'" in walk) is (label is not None)
+        assert ("bool_and" in walk) is (not include_released)
+        assert ("(environments.created_at, environments.id) < (" in walk) is (after is not None)
+        assert "ORDER BY environments.created_at DESC, environments.id DESC \n LIMIT 51" in walk
+    assert " OR " not in sql
+    assert sql.endswith(
+        "AS page_keys GROUP BY page_keys.created_at, page_keys.id "
+        "ORDER BY page_keys.created_at DESC, page_keys.id DESC \n LIMIT 51"
+    )
+
+
+def test_blank_label_adds_no_filter():
+    assert "ILIKE" not in _keys_sql(None, label="   ")
+    assert "ILIKE" not in _keys_sql("u1", label="")
+
+
+def test_unpaginated_list_keeps_its_single_statement_with_the_new_predicate():
+    sql = _sql(_list_stmt("u1", label=None, include_released=False))
+    assert "environments.user_id = 'u1' OR environments.created_by = 'u1'" in sql
+    assert "bool_and" in sql and "EXISTS" not in sql
+    assert "LIMIT" not in sql
+
+
+_PREVIOUS = {"enable_bitmapscan": "on", "enable_seqscan": "off", "enable_sort": "on",
+             "enable_indexscan": "off", "jit": "on"}
+
+
+@pytest.mark.asyncio
+async def test_list_page_runs_keys_pinned_then_rows_and_children_unpinned():
+    """pin → keys → restore (the exact previous values) → rows by id → children (#496)."""
+    user = _user()
+    newer, older = _env(user, "a"), _env(user, "b")
+    lookahead = SimpleNamespace(created_at=older.created_at - timedelta(seconds=1), id=uuid4())
+    pin, keys, unpin, rows = MagicMock(), MagicMock(), MagicMock(), MagicMock()
+    pin.one.return_value = SimpleNamespace(_mapping=_PREVIOUS)
+    keys.all.return_value = [
+        SimpleNamespace(created_at=e.created_at, id=e.id) for e in (newer, older)
+    ] + [lookahead]
+
+    def model(e):
+        return SimpleNamespace(**{f: getattr(e, f) for f in (
+            "id", "name", "blueprint_name", "user_id", "ttl_minutes", "expires_at", "created_at",
+            "created_by")})
+    rows.all.return_value = [(model(older), "me", None), (model(newer), "me", None)]  # any order
+    session = AsyncMock()
+    session.execute = AsyncMock(side_effect=[pin, keys, unpin, rows])
+    repo = EnvironmentRepository()
+    repo._children_batch = AsyncMock(return_value={})
+
+    page = await repo.list_page(
+        session, user_id="u1", label=None, include_released=False, limit=2, after=None,
+    )
+
+    calls = session.execute.await_args_list
+    assert calls[0].args[0] is _PIN_ORDERED_WALK
+    assert "UNION ALL" in _sql(calls[1].args[0])
+    assert calls[2].args == (_UNPIN_ORDERED_WALK, _PREVIOUS)
+    rows_sql = str(calls[3].args[0].compile(dialect=postgresql.dialect()))
+    assert "environments.id IN (__[POSTCOMPILE_id_1])" in rows_sql
+    assert len(calls) == 4
+    repo._children_batch.assert_awaited_once_with(session, [newer.id, older.id])  # no lookahead
+    assert [e.id for e in page.items] == [newer.id, older.id]   # key order, not row order
+    assert page.next_cursor == KeysetCursor(created_at=older.created_at, id=older.id)
+
+
+@pytest.mark.asyncio
+async def test_empty_page_reads_no_rows_and_no_children():
+    pin, keys, unpin = MagicMock(), MagicMock(), MagicMock()
+    pin.one.return_value = SimpleNamespace(_mapping=_PREVIOUS)
+    keys.all.return_value = []
+    session = AsyncMock()
+    session.execute = AsyncMock(side_effect=[pin, keys, unpin])
+    repo = EnvironmentRepository()
+
+    page = await repo.list_page(
+        session, user_id=None, label="x", include_released=True, limit=5, after=_CURSOR,
+    )
+
+    assert page == EnvironmentPage()
+    assert session.execute.await_count == 3
+
+
+def test_model_and_migration_0036_declare_the_same_environment_page_indexes():
+    """Names, columns and predicates here; tests/integration/test_environment_list_owner_walks.py
+    checks the definitions are identical as PostgreSQL stores them."""
+    import importlib.util
+    from pathlib import Path
+
+    path = (Path(__file__).parent.parent / "alembic" / "versions"
+            / "0036_environments_owner_page_indexes.py")
+    spec = importlib.util.spec_from_file_location("migration_0036", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    migrated = {name: (column, where) for name, column, where in module._PAGE_INDEXES}
+    declared = {}
+    for index in EnvironmentModel.__table__.indexes:
+        if index.name in migrated:
+            columns = [c.name for c in index.columns]
+            assert columns[1:] == ["created_at", "id"], index.name
+            where = index.dialect_options["postgresql"]["where"]
+            declared[index.name] = (columns[0], str(where) if where is not None else None)
+    assert declared == migrated
+

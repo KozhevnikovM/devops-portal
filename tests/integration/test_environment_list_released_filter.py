@@ -9,7 +9,7 @@ from itertools import combinations_with_replacement
 from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy import insert, select, text
+from sqlalchemy import insert, text
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -184,13 +184,15 @@ async def test_released_history_children_are_never_loaded(async_session, monkeyp
     assert {b.environment_id for e in envs for b in e.bookings} == active_ids
 
 
-async def test_child_probes_can_use_environment_id_indexes(async_session):
-    """Both child probes of the hidden-released query must be answerable from an index.
+async def test_released_check_is_a_lookup_of_each_environments_children(async_session):
+    """The hidden-released check must be answerable per environment from the environment_id index.
 
-    Whether the planner *prefers* the index depends on table size and visibility (the PR records
-    cost-based EXPLAIN ANALYZE evidence); what can regress silently is the index becoming unusable,
-    e.g. a partial-index predicate the query no longer implies. So seq scans are disabled here and
-    the plan must name both indexes.
+    Whether the planner *prefers* the index depends on table size and visibility; what can regress
+    silently is the index becoming unusable, so seq scans are disabled here. Since #496 the check is
+    one correlated aggregate over the environment's children, which PostgreSQL can't hash or turn
+    into a join: no plan reads all (non-RELEASED) bookings — the former EXISTS probes could become
+    a hashed subplan over them. Plan stability under real statistics and a large work_mem is
+    covered in test_environment_list_owner_walks.py.
     """
     owner, _ = await _seed_history(async_session)
     await async_session.execute(text("ANALYZE bookings"))
@@ -198,19 +200,11 @@ async def test_child_probes_can_use_environment_id_indexes(async_session):
     await async_session.execute(text("SET LOCAL enable_seqscan = off"))
 
     plan = await _explain(async_session, _list_stmt(owner, label=None, include_released=False))
-    assert "ix_bookings_environment_id " in plan, plan              # "has any child" probe
-    assert "ix_bookings_environment_id_unreleased" in plan, plan    # "has a non-RELEASED child" probe
+    assert "ix_bookings_environment_id " in plan, plan   # every child, by environment
+    assert "ix_bookings_environment_id_unreleased" not in plan, plan
+    assert "environment_id = environments.id" in plan, plan
+    assert "hashed SubPlan" not in plan, plan
     assert "Seq Scan on bookings" not in plan, plan
-
-    # At realistic sizes the planner evaluates the non-RELEASED probe once, as a hashed subplan
-    # over `bookings WHERE status <> 'RELEASED'` with no environment_id condition — so the partial
-    # index must be usable for that bare predicate (an extra `environment_id IS NOT NULL` in the
-    # index predicate silently broke this; the correlated form above can't catch it).
-    hashed_probe = select(BookingModel.environment_id).where(
-        BookingModel.status != BookingStatus.RELEASED.value
-    )
-    plan = await _explain(async_session, hashed_probe)
-    assert "ix_bookings_environment_id_unreleased" in plan, plan
 
 
 async def _explain(session, stmt) -> str:

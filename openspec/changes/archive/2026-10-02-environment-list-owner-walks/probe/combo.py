@@ -13,7 +13,7 @@ import statistics
 
 from sqlalchemy import create_engine
 
-from app.infrastructure.repositories.booking_repo import _ORDERED_WALK_SETTINGS
+from app.infrastructure.repositories._ordered_walk import _ORDERED_WALK_SETTINGS
 
 URL = "postgresql+psycopg2://portal:portal@localhost:5433/env_probe_496"
 LIMIT = 50

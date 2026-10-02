@@ -13,7 +13,7 @@ def _script() -> ScriptDirectory:
 
 
 def test_single_head():
-    assert _script().get_heads() == ["0035"]
+    assert _script().get_heads() == ["0036"]
 
 
 def test_startup_script_chain_is_linear():
@@ -49,3 +49,9 @@ def test_static_vm_chain_is_linear():
     # not by editing 0013 in place.
     assert down["0014"] == "0013"
     assert down["0013"] == "0012"
+
+
+def test_environment_owner_page_indexes_chain_is_linear():
+    # The Mine page indexes (#496) arrive in their own revision on top of the bookings page indexes.
+    down = {r.revision: r.down_revision for r in _script().walk_revisions()}
+    assert down["0036"] == "0035"

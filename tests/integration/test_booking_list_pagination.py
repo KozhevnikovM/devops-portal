@@ -24,10 +24,10 @@ from app.domain.constants import PERMANENT_EXPIRES_AT
 from app.domain.enums import BookingStatus
 from app.domain.pagination import KeysetCursor
 from app.infrastructure.database.models import BookingModel
+from app.infrastructure.repositories._ordered_walk import _OrderedWalk
 from app.infrastructure.repositories.booking_repo import (
     BookingRepository,
     _label_page_keys_stmt,
-    _OrderedWalk,
     _page_keys_stmt,
     _queue_rank_stmt,
 )

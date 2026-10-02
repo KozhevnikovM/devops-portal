@@ -97,6 +97,17 @@ class EnvironmentModel(Base):
     __table_args__ = (
         # Keyset pagination of the environments page walks this backward (#467).
         Index("ix_environments_created_at_id", "created_at", "id"),
+        # Mine is two keyset walks, owned and dispatched (#496). These indexes give each walk a
+        # viewer-keyed path in page order: when the planner takes it, the read is bounded by the
+        # viewer's own history. It may still walk ix_environments_created_at_id with the viewer
+        # as a filter (cost-based, e.g. stale statistics); the page is the same either way. The
+        # creator index is partial: most environments are not dispatched, and `created_by = :me`
+        # implies the predicate.
+        Index("ix_environments_owner_page", "user_id", "created_at", "id"),
+        Index(
+            "ix_environments_creator_page", "created_by", "created_at", "id",
+            postgresql_where=text("created_by IS NOT NULL"),
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)

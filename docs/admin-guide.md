@@ -1952,6 +1952,20 @@ Always commit the generated migration file alongside the model change.
 > way, run `alembic upgrade head` first. When rolling back, revert the app before running
 > `alembic downgrade 0034`.
 
+> **Migration `0036` (environments page, #496)** adds two indexes on `environments`:
+> `ix_environments_owner_page (user_id, created_at, id)`, and
+> `ix_environments_creator_page (created_by, created_at, id) WHERE created_by IS NOT NULL`. They
+> give the **Mine** filter on the Environments page a path that reads only the viewer's own
+> environments: those they own, plus those they dispatched for someone else. PostgreSQL chooses
+> that path by cost, from its statistics. It can instead walk all environments in page order and
+> skip other users' rows: this was measured for a user who owns a large share of all environments,
+> and it can happen for any user when statistics are stale. Without these indexes, Mine always
+> takes that walk. The page shown is the same on either path; only the amount read differs.
+> The migration only adds indexes, so it is safe for blue-green deploys. The build is not
+> concurrent. On a large `environments` table, writes to that table wait until the build ends.
+> Apply the migration and deploy the app in either order. The new app version lists the same pages
+> without `0036`, though Mine may read more, so run `alembic downgrade 0035` whenever you like.
+
 ---
 
 ## Scaling Workers

@@ -23,9 +23,9 @@ from app.domain.enums import BookingStatus
 from app.infrastructure.auth import require_user
 from app.infrastructure.database.models import BookingModel, UserModel
 from app.infrastructure.database.session import get_async_session
+from app.infrastructure.repositories._ordered_walk import _OrderedWalk
 from app.infrastructure.repositories.booking_repo import (
     BookingRepository,
-    _OrderedWalk,
     _queue_rank_stmt,
 )
 from app.main import app
