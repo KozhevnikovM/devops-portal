@@ -67,4 +67,4 @@
 
 ## 7. Spec sync (after the code PR is approved)
 
-- [ ] 7.1 Run `/opsx:sync`, then update the `environment-listing` Purpose line in `openspec/specs/environment-listing/spec.md`, keeping the conditional wording. Mine is correct on every plan, and bounded by the viewer's own history on the viewer-keyed path. The released check is a per-environment lookup. The label is the remaining history-dependent read. Then run `/opsx:archive`. Verify that `openspec validate --strict` passes on the main specs, and that the Purpose line does not state the Mine bound unconditionally.
+- [x] 7.1 Run `/opsx:sync`, then update the `environment-listing` Purpose line in `openspec/specs/environment-listing/spec.md`, keeping the conditional wording. Mine is correct on every plan, and bounded by the viewer's own history on the viewer-keyed path. The released check is a per-environment lookup. The label is the remaining history-dependent read. Then run `/opsx:archive`. Verify that `openspec validate --strict` passes on the main specs, and that the Purpose line does not state the Mine bound unconditionally.
