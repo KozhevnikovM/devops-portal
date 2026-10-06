@@ -17,3 +17,7 @@ celerybeat-schedule
 # Ansible collections installed/vendored into the path (keep the dir, not its contents)
 ansible/collections/*
 !ansible/collections/.gitkeep
+
+# Locust run output (loadtest/README.md --csv results), generated per run — not checked in
+loadtest/results/*
+!loadtest/results/.gitkeep

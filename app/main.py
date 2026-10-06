@@ -11,19 +11,19 @@ from sqlalchemy import text
 
 from app.config import settings
 from app.infrastructure.database.session import AsyncSessionLocal, SyncSessionLocal
+from app.infrastructure.environment_child_limit import EnvironmentChildLimit
 from app.infrastructure.logging_config import configure_logging
 from app.infrastructure.passwords import hash_password_blocking, shutdown_executor
 from app.infrastructure.repositories.booking_repo import BookingRepository
-from app.infrastructure.environment_child_limit import EnvironmentChildLimit
 from app.infrastructure.repositories.user_repo import UserRepository
 from app.presentation.middleware.correlation_id import CorrelationIdMiddleware
 from app.presentation.middleware.csrf_origin import CSRFOriginMiddleware
 from app.presentation.routes.admin import router as admin_router
-from app.presentation.routes.auth import router as auth_router
-from app.presentation.routes.bookings import router
 from app.presentation.routes.api import router as api_router
 from app.presentation.routes.api_bookings import router as api_bookings_router
 from app.presentation.routes.api_environments import router as api_environments_router
+from app.presentation.routes.auth import router as auth_router
+from app.presentation.routes.bookings import router
 from app.presentation.routes.environments import router as environments_router
 from app.presentation.routes.events import router as events_router
 from app.tasks.provision import provision_vm_task
@@ -74,7 +74,9 @@ def _seed_admin_user() -> None:
                     "Set it in your .env or vault."
                 )
             effective_pw = "changeme"
-            logger.warning("ADMIN_PASSWORD not set — using 'changeme' (dev/stub mode only)")
+            logger.warning(
+                "ADMIN_PASSWORD not set — using 'changeme' (dev/stub mode only)"
+            )
         else:
             effective_pw = settings.ADMIN_PASSWORD
 
@@ -93,7 +95,9 @@ async def _start_environment_child_limit(app: FastAPI) -> asyncio.Task | None:
     limit = EnvironmentChildLimit(settings.ENVIRONMENT_MAX_CHILDREN)
     await limit.refresh()
     app.state.environment_child_limit = limit
-    return asyncio.create_task(limit.run(settings.ENVIRONMENT_CHILD_LIMIT_REFRESH_SECONDS))
+    return asyncio.create_task(
+        limit.run(settings.ENVIRONMENT_CHILD_LIMIT_REFRESH_SECONDS)
+    )
 
 
 def _recover_in_progress_bookings() -> None:
@@ -110,7 +114,9 @@ def _recover_in_progress_bookings() -> None:
         return
 
     for booking in bookings:
-        provision_vm_task.delay(str(booking.id), str(booking.image_id), str(booking.hw_config_id))
+        provision_vm_task.delay(
+            str(booking.id), str(booking.image_id), str(booking.hw_config_id)
+        )
         logger.info(
             "startup recovery: re-queued provision task for booking %s (status=%s)",
             booking.id,
@@ -141,9 +147,13 @@ def _recover_stuck_releases() -> None:
 
     for booking in bookings:
         teardown_vm_task.delay(str(booking.id), force=True)
-        logger.info("startup recovery: re-queued forced teardown for booking %s", booking.id)
+        logger.info(
+            "startup recovery: re-queued forced teardown for booking %s", booking.id
+        )
 
-    logger.info("startup recovery: re-queued %d stuck-releasing booking(s)", len(bookings))
+    logger.info(
+        "startup recovery: re-queued %d stuck-releasing booking(s)", len(bookings)
+    )
 
 
 configure_logging()
@@ -186,6 +196,7 @@ def _custom_openapi():
     if app.openapi_schema:
         return app.openapi_schema
     from fastapi.openapi.utils import get_openapi
+
     schema = get_openapi(title=app.title, version=app.version, routes=app.routes)
     schema.setdefault("components", {})["securitySchemes"] = {
         "BearerAuth": {
@@ -204,7 +215,12 @@ app.openapi = _custom_openapi
 
 @app.get("/health", tags=["platform"], summary="Liveness probe")
 async def health():
-    body = {"status": "ok"}
+    # stub_terraform lets the load-test guard (loadtest/target_guard.py) confirm, without
+    # credentials, that VM orders won't reach real infrastructure (#505).
+    body: dict[str, str | bool] = {
+        "status": "ok",
+        "stub_terraform": settings.USE_STUB_TERRAFORM,
+    }
     if settings.APP_SLOT:
         body["slot"] = settings.APP_SLOT
     return body
@@ -241,7 +257,7 @@ async def health_ready():
     for name, check in (("postgres", _check_postgres), ("redis", _check_redis)):
         try:
             await asyncio.wait_for(check(), timeout=_HEALTH_CHECK_TIMEOUT)
-        except Exception:
+        except Exception:  # noqa: BLE001 — any dependency failure, whatever its type, means 503
             logger.warning("readiness check failed: %s unreachable", name)
             return JSONResponse(
                 status_code=503,
