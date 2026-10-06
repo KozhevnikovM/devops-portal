@@ -45,4 +45,4 @@
 
 ## 6. Spec sync (after the code PR is approved)
 
-- [ ] 6.1 Run `/opsx:sync` to create `openspec/specs/user-name-resolution/spec.md`, then `/opsx:archive`. Verify that `openspec validate --strict` passes on the main specs.
+- [x] 6.1 Run `/opsx:sync` to create `openspec/specs/user-name-resolution/spec.md`, then `/opsx:archive`. Verify that `openspec validate --strict` passes on the main specs.
