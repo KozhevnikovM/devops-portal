@@ -13,10 +13,10 @@ Pull requests currently run the fast unit test suite and PostgreSQL integration 
 - Integrate secret scanning:
   - Automated detection of committed API keys, tokens, private keys, and hardcoded credentials via Gitleaks with allowlists for test fixtures.
 - Integrate dependency vulnerability auditing:
-  - Commit `package-lock.json` and remove it from `.gitignore` (coordinating with #428) to provide a deterministic, version-controlled lockfile for npm.
-  - Python dependency audit using `pip-audit` against `requirements.txt` and frontend audit using `npm audit`, with concrete baseline vulnerability IDs pinned (e.g. Starlette PYSEC-2026-1942, PYSEC-2026-161, PYSEC-2026-2280, PYSEC-2026-2281, PYSEC-2026-248, PYSEC-2026-249), blocking any newly introduced vulnerable dependencies.
+  - Commit `package-lock.json` and remove it from `.gitignore` (coordinating with #428) to provide a deterministic, version-controlled lockfile for npm, leaving Python lockfile adoption to #428.
+  - Audit declared Python dependencies using `pip-audit` against `requirements.txt` and frontend dependencies using `npm audit` against `package-lock.json`, driven by executable runner scripts (`scripts/audit_python.py`, `scripts/audit_npm.py`) with committed baseline allowlists (.pip-audit-baseline.txt, .npm-audit-baseline.json), blocking any newly introduced or unapproved vulnerabilities.
 - Establish an internally consistent enforcement policy:
-  - **Blocking**: Ruff lint/format checks on all touched Python files, Mypy type-checking on `app/domain/` and `app/application/ports.py`, high-severity Bandit findings outside `.bandit-baseline.json`, detected secrets, and dependency CVEs outside pinned baseline IDs.
+  - **Blocking**: Ruff lint/format checks on all touched Python files, Mypy type-checking on `app/domain/` and `app/application/ports.py`, high-severity Bandit findings outside `.bandit-baseline.json`, detected secrets, and dependency CVEs outside pinned baseline allowlists.
   - **Advisory / Reporting**: medium-severity Bandit findings summary for ongoing security awareness.
 - Maintain least privilege and bounded execution: workflows run with read-only repository tokens and PR-scoped concurrency cancellation.
 - Document canonical, reproducible local commands in `CLAUDE.md` and `AGENTS.md` matching each automated CI check.
@@ -29,13 +29,14 @@ Pull requests currently run the fast unit test suite and PostgreSQL integration 
 
 ### Modified Capabilities
 
-- `continuous-integration`: add automated pull-request security and quality gates (Ruff lint/format on touched files, Mypy on domain and port contracts, Bandit SAST, secret scanning, and locked dependency vulnerability audits) with a unified blocking enforcement policy and reproducible local commands.
+- `continuous-integration`: add automated pull-request security and quality gates (Ruff lint/format on touched files, Mypy on domain and port contracts, Bandit SAST, secret scanning, and dependency vulnerability audits for declared Python requirements and locked frontend dependencies) with a unified blocking enforcement policy and reproducible local commands.
 
 ## Impact
 
 - `.github/workflows/`: new pull-request quality and security workflow (`quality-security-gates.yml`).
 - `.gitignore`: remove `package-lock.json` so the locked dependency tree is version-controlled.
 - `package-lock.json`: committed to repository for reproducible frontend auditing and builds.
+- `scripts/`: executable audit helper scripts (`scripts/audit_python.py`, `scripts/audit_npm.py`) and baseline configuration files.
 - `requirements-dev.txt`: include developer and CI dependencies for `ruff`, `mypy`, `bandit`, and `pip-audit`.
 - `CLAUDE.md` / `AGENTS.md`: add local commands for executing quality and security checks.
 - Pull requests: automated status checks and annotations for quality, type, and security verification.
