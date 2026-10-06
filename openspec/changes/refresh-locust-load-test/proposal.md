@@ -13,12 +13,16 @@ It has a worse problem too. Nothing stops `PORTAL_URL` or Locust's `--host` from
   - poll by unique label, because `GET /api/bookings/{id}` does not exist;
   - treat the HTMX error headers as failures on the admin catalog form endpoints, which return `200` even on error;
   - check for an existing user before creating one, because a duplicate `POST /api/users` returns 500.
-- Model the browser traffic of an open tab as it is today: one held `GET /events/stream`, page loads, and the dashboard's 60-second reconcile poll.
+- Model the browser traffic of an open tab as it is today: one held `GET /events/stream`, page loads, and the 60-second reconcile poll with the same parameters the browser sends. That means a bounded, rotating batch of `r=<id>.<version>` values for the displayed rows, plus `newest`.
 - **Target safety guard**, shared by the seed script and the locustfile. It refuses to run before sending any state-changing request unless both of these hold:
   1. the target host is a loopback address (`localhost`, `127.0.0.0/8`, `::1`), or the operator set an explicit override that names that exact host;
   2. the target reports that it uses the stub Terraform adapter. This check has no override.
 - `GET /health` gains a `stub_terraform` boolean that reports `settings.USE_STUB_TERRAFORM`, so a client can confirm stub mode without credentials. Existing fields are unchanged.
-- Validate the tooling against the current stack: a 100-user smoke run, then a 1000-user run. Record the failure rate, key latencies and app/DB observations, including whether any `QueuePool` timeouts occurred, in a results file inside this change.
+- Validate the tooling against the current stack:
+  - a 100-user smoke run, which must have 0% failures;
+  - then a 1000-user characterization run. Its failures are allowed only if each is attributed to a cause other than pool exhaustion and linked to a follow-up issue.
+
+  A `sqlalchemy.exc.TimeoutError: QueuePool limit` line during either run blocks completion. Record the failure rate, key latencies and app/DB observations in a results file inside this change.
 - Add a short "Load testing" section to `docs/admin-guide.md` that points to `loadtest/README.md`. Document the new `/health` field in `docs/api-reference.md`.
 
 ## Capabilities
@@ -34,7 +38,7 @@ It has a worse problem too. Nothing stops `PORTAL_URL` or Locust's `--host` from
 
 - **New code:** `loadtest/` at the repo root. The target guard is a standard-library-only module so the fast suite can unit-test it without installing Locust.
 - **App code:** one additive field in the `GET /health` response in `app/main.py`. There are no auth, domain or DB changes.
-- **Tests:** unit tests for the target guard and for the new `/health` field, both in the fast suite.
+- **Tests:** unit tests for the target guard, for the reconcile-request builder and for the new `/health` field, all in the fast suite. The load test reuses `tests/reconcile_oracle.py`, the existing Python copy of the browser's batch-selection rule, rather than duplicating it.
 - **Dependencies:** `locust` and `httpx`, kept in `loadtest/requirements.txt` and not added to `requirements-dev.txt` or the app image.
 - **Docs:** `loadtest/README.md`, `docs/admin-guide.md` and `docs/api-reference.md`.
 - **Supersedes** PR #409, which should be closed once this change merges.

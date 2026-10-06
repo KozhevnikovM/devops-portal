@@ -41,7 +41,17 @@
   - kills that greenlet in `on_stop`.
 
   Verify with a 5-user, 1-minute headless run: all request names appear and there are 0 failures.
-- [ ] 4.2 Implement the passive watcher. It loads `/` or `/environments`, extracts the reconcile poller `hx-get` URL, and replays it about every 60 s. If the URL is missing, it records a failure. Check the templates to confirm that no other periodic background request needs modeling, and note the result in `design.md` D7 if it differs. Verify in a smoke run that the reconcile request name is present and has 0 failures.
+- [ ] 4.2 Implement reconcile replay as described in D7:
+  - parse the poller attributes and the displayed rows with `html.parser`;
+  - choose each batch with `select_batch` from `tests/reconcile_oracle.py`, loaded by path, keeping rotation offsets per user and per section and resetting them on reload;
+  - send `r=<id>.<version>` for each row in the batch and `newest=<first data-key>`, or neither for an empty list;
+  - update the held versions from the response's out-of-band rows.
+
+  Passive watchers load `/` and `/environments`, alternating `filter=mine` and `filter=all`. Active orderers poll their own `filter=mine` bookings list. A missing poller or missing attributes are recorded as failures. Check the templates to confirm that no other periodic background request needs modeling, and note the result in D7 if it differs.
+
+  Verify in two ways:
+  - Add unit tests to `tests/test_loadtest_reconcile.py`, which must not import Locust. Cover: rows parsed from a rendered page fixture, the `r`/`newest` query for a populated page and an empty page, the batch capped at the advertised maximum, rotation across successive polls matching `select_batch`, and versions updated from a response fragment.
+  - In a smoke run, confirm in the app logs that reconcile requests from `filter=all` carry `r=` parameters, and that the reconcile request names have 0 failures.
 - [ ] 4.3 Implement the active orderer's flow:
   - order using `image_name` / `hw_config_name`, or a pooled type;
   - poll by unique label until the status is not transient, within 60 s;
@@ -59,7 +69,7 @@
   - the guard and the `LOADTEST_ALLOW_REMOTE_HOST` override, including that stub mode cannot be overridden;
   - seeding;
   - the 100-user smoke run, then the 1000-user run;
-  - pass criteria, with a `docker compose logs --since <run start> app worker | grep -E "QueuePool|TimeoutError"` check limited to the run's window;
+  - the smoke and characterization pass criteria from D10, with a `docker compose logs --since <run start> --until <run end> app worker | grep -F "sqlalchemy.exc.TimeoutError: QueuePool limit"` check that is limited to the run's window and matches only that signature;
   - cleanup.
 
   Verify that every command in it was actually run during sections 3, 4 and 6.
@@ -68,12 +78,12 @@
 ## 6. Validation against the current stack
 
 - [ ] 6.1 Run the `py-review` quality gate on `app/main.py` and `loadtest/*.py`, and fix any findings. Verify that the fast suite `pytest tests/ -m "not integration"` is green.
-- [ ] 6.2 Run the 100-user smoke test against the local compose stub stack (`--users 100 --spawn-rate 10 --run-time 3m --csv loadtest/results/smoke`). Verify that the CSV shows a 0% failure rate and that the scoped log check finds no `QueuePool` or timeout entries.
+- [ ] 6.2 Run the 100-user smoke test against the local compose stub stack (`--users 100 --spawn-rate 10 --run-time 3m --csv loadtest/results/smoke`). Verify that it passes the smoke criteria: the CSV shows a 0% failure rate, and the scoped log check finds no `sqlalchemy.exc.TimeoutError: QueuePool limit` line.
 - [ ] 6.3 Run the 1000-user test (`--users 1000 --spawn-rate 20 --run-time 15m --csv loadtest/results/run1`). Capture:
   - the failure rate;
   - p50/p95/max for login, SSE connect, page loads, reconcile, booking create, poll and release;
   - peak app/postgres/redis CPU and memory (`docker stats` or Grafana);
   - the scoped log check.
 
-  Verify that the run completes for its full duration.
-- [ ] 6.4 Write `openspec/changes/refresh-locust-load-test/results.md` with the smoke and full-run numbers, the stack configuration (commit, uvicorn workers, pool size, CPU count), and observations. If any capacity limit that is not of the #407 class shows up, file it as a follow-up issue and link it. Verify that the file exists and that every metric listed in 6.3 is filled in.
+  Verify that the run completes for its full duration and that the scoped log check finds no `sqlalchemy.exc.TimeoutError: QueuePool limit` line. If that line is found, #505 is blocked: investigate before continuing.
+- [ ] 6.4 Write `openspec/changes/refresh-locust-load-test/results.md` with the smoke and full-run numbers, the stack configuration (commit, uvicorn workers, pool size, CPU count), and observations. For every request name with a non-zero failure count in the 1000-user run, attribute it to a cause other than pool exhaustion and link a follow-up issue (D10). Verify that the file exists, that every metric listed in 6.3 is filled in, and that no failing request name is left unattributed.

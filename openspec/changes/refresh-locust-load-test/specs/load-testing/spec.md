@@ -64,8 +64,14 @@ The seed script SHALL create or reuse a fixed set of test accounts, `loadtest-00
 
 The load generator SHALL simulate two kinds of user, each logged in as a distinct seeded account:
 
-- **Passive watchers**, about 85% of users: each holds one `GET /events/stream` connection open for its whole lifetime. Each also periodically loads the bookings dashboard or the environments page, and repeats that page's background reconcile poll.
-- **Active orderers**, about 15% of users: each also holds an SSE connection open, and repeatedly runs one booking flow. The flow orders a booking, mostly `VM` and sometimes `STATIC_VM` or `NAMESPACE`, then polls it until it is no longer in a transient state, holds it, and releases it.
+- **Passive watchers**, about 85% of users: each holds one `GET /events/stream` connection open for its whole lifetime. Each also periodically loads the bookings dashboard or the environments page, using both the "mine" and the "all" list, and repeats that page's background reconcile poll.
+- **Active orderers**, about 15% of users: each also holds an SSE connection open, and repeatedly runs one booking flow. The flow orders a booking, mostly `VM` and sometimes `STATIC_VM` or `NAMESPACE`, then polls it until it is no longer in a transient state, holds it, and releases it. Each also repeats the reconcile poll of its own bookings list.
+
+A simulated reconcile poll SHALL send the same parameters a browser sends for the page it last loaded:
+- `r=<id>.<version>` for a bounded batch of the displayed live rows, chosen with the browser's batch-selection rule. That rule puts in-flight rows first and reserves settled-row slots, uses the page's advertised maximum and settled minimum, and rotates through rows across successive polls;
+- `newest=<list key>` of the first displayed row, when any row is displayed.
+
+After each response, the simulated client SHALL take the row versions returned in it as the versions it holds, as the browser does.
 
 Every JSON API request SHALL ask for a JSON response, so that an unauthenticated request is recorded as a failure rather than as a successful redirect to the login page. Each request type SHALL appear under its own name in the run's statistics. The SSE connection SHALL be recorded as a failure when it cannot be established. An ordered booking that ends up `QUEUED` because the pool is empty SHALL NOT be recorded as a failure.
 
@@ -81,18 +87,58 @@ Every JSON API request SHALL ask for a JSON response, so that an unauthenticated
 - **WHEN** an active orderer orders a VM booking against the stub stack
 - **THEN** the booking reaches `READY`, is released with a `202` response, and each step is recorded under its own request name
 
+#### Scenario: Reconcile poll names displayed rows
+- **WHEN** a simulated user's last loaded list page displays live rows and its reconcile poll fires
+- **THEN** the request carries a non-empty batch of `r=<id>.<version>` values no larger than the page's advertised maximum, plus `newest` set to the first displayed row's list key
+
+#### Scenario: Reconcile batch rotates
+- **WHEN** a page displays more live rows than the advertised maximum and the poll fires repeatedly without a page reload
+- **THEN** successive requests name different rows, following the browser's rotation rule, so every displayed row is named over time
+
+#### Scenario: Empty list
+- **WHEN** the last loaded list page displays no rows
+- **THEN** the reconcile request carries neither `r` nor `newest`, as the browser's request would
+
 #### Scenario: Pool empty
 - **WHEN** an active orderer orders a pooled resource while the pool is exhausted
 - **THEN** the booking is accepted as `QUEUED`, no failure is recorded, and the user does not try to release it
 
 ### Requirement: Load runs have documented pass criteria
 
-The tooling documentation SHALL define a passing run as follows:
-- the run's statistics show a 0% failure rate across all request names;
-- the app and worker logs from the run's time window contain no DB-pool exhaustion signature (`QueuePool` limit or timeout errors).
+The pool-exhaustion signature is the log line prefix `sqlalchemy.exc.TimeoutError: QueuePool limit`. Only that exact signature counts; other timeouts do not.
 
-The documentation SHALL also give the command that checks the logs for exactly that window. It SHALL describe a 100-user smoke run to do before the 1000-user run. It SHALL state the host prerequisites the load generator needs, including the open-file-descriptor limit.
+The tooling documentation SHALL define two kinds of run and their criteria.
+
+A **smoke run** (100 users) passes only when both hold:
+- its statistics show a 0% failure rate across all request names;
+- the app and worker logs from the run's time window contain no pool-exhaustion signature.
+
+A **characterization run** (1000 users) passes only when all of these hold:
+- it runs for its full configured duration;
+- the app and worker logs from the run's time window contain no pool-exhaustion signature;
+- its failure rate and per-request-name latencies are recorded;
+- every request name with a non-zero failure count is attributed, in the recorded results, to a cause other than DB-pool exhaustion, and is linked to a follow-up issue.
+
+A pool-exhaustion signature in either kind of run SHALL fail that run.
+
+The documentation SHALL give the command that checks the logs for exactly the run's window, matching only the pool-exhaustion signature. It SHALL say to do the smoke run before the characterization run. It SHALL state the host prerequisites the load generator needs, including the open-file-descriptor limit.
+
+#### Scenario: Smoke run with any failure
+- **WHEN** a 100-user smoke run records any failed request
+- **THEN** the run fails, even if the logs contain no pool-exhaustion signature
+
+#### Scenario: Characterization run with attributed failures
+- **WHEN** a 1000-user run completes its full duration with some failed requests, no pool-exhaustion signature, and each failing request name attributed to a non-pool cause with a linked follow-up issue
+- **THEN** the run passes and its failure rate is recorded
+
+#### Scenario: Pool exhaustion at any scale
+- **WHEN** the logs from a run's window contain `sqlalchemy.exc.TimeoutError: QueuePool limit`
+- **THEN** the run fails, whatever its scale or failure rate
+
+#### Scenario: Unrelated timeout is not counted
+- **WHEN** the logs from a run's window contain a timeout error that lacks the pool-exhaustion signature
+- **THEN** the log check does not report it as pool exhaustion
 
 #### Scenario: Operator verifies a run
 - **WHEN** an operator follows `loadtest/README.md` after a run
-- **THEN** they can decide pass or fail from the CSV statistics and the scoped log check, without other knowledge
+- **THEN** they can decide pass or fail from the CSV statistics, the scoped log check and the recorded results, without other knowledge

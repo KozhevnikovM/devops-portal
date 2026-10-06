@@ -31,7 +31,7 @@ See `proposal.md` for the motivation. This design starts from #409's scripts (br
 - Running load in CI. This stays an operator-run tool, and CI only unit-tests the guard.
 - Load against real vCloud Director, and any override that would allow it.
 - Distributed Locust, soak or endurance runs, or a cleanup script. These are unchanged from #409's scope.
-- Tuning the app's DB pool or uvicorn workers. If the 1000-user run shows a capacity limit, it is recorded and filed separately, not fixed here.
+- Tuning the app's DB pool or uvicorn workers. A capacity limit that is not pool exhaustion is recorded and filed separately, not fixed here. The acceptance rules are in the `load-testing` spec's pass-criteria requirement and in D10.
 
 ## Decisions
 
@@ -106,14 +106,30 @@ This turns lost authentication into a `401` failure rather than a redirect that 
 
 **Rejected alternative.** Polling the HTML `GET /bookings/{id}/row` (parsing it is fragile).
 
-### D7. Passive watchers replay the reconcile poller
+### D7. Simulated users reproduce the reconcile poller's requests
+
+A browser does more than fire the poller's `hx-get` URL. Before each request, `frontend/js/row_reconcile.js` (`htmx:configRequest`) does three things:
+- it picks a bounded batch of the displayed `tr[data-live]` rows with `selectBatch`: in-flight rows first, `min(settled, settledMin)` slots reserved for settled rows, and rotating offsets for both groups;
+- it adds `r=<id>.<version>` for each row in the batch;
+- it adds `newest=<data-key>` of the first displayed `tr[data-key]`.
+
+The server then does one batch read of the requested rows, plus queue positions for bookings or children for environments, and one newest-row probe (`live-row-updates`). Replaying only the URL would skip the batch read whenever the page has rows.
 
 **Decision.**
-- After a page load (`GET /` or `GET /environments`), the passive watcher pulls the poller's `hx-get` URL out of the rendered HTML with a narrow regex.
-- It requests that URL roughly every 60 s, under one stats name per page.
-- If the URL is not found, the watcher records a failure. That way a template change breaks the test loudly, rather than quietly removing this traffic.
+- **Parse the page.** After each page load, parse the rendered HTML with the standard library's `html.parser`. Collect the poller's attributes (`hx-get`, `data-reconcile-rows`, `data-reconcile-max`, `data-reconcile-settled-min`). Collect the displayed rows in that section's tbody, in document order: `id`, `data-row-version`, `data-live` (`inflight` or settled) and `data-key`.
+- **Choose the batch.**
+  - Use `select_batch` from `tests/reconcile_oracle.py`, loaded by file path.
+  - That file is the existing Python mirror of `selectBatch`. It is already checked against the JS through `tests/js/select_batch_cases.json`, so the load test cannot drift from the browser without the fast suite noticing. A third copy of the rule is not written.
+  - Rotation offsets are kept per simulated user and per section, across polls, and reset on a page reload, as they are when the browser replaces the section.
+- **Send the parameters.** Send `r` once per row in the batch, with the row id taken from the row's `id` after its `booking-`/`environment-` prefix. Send `newest` from the first row's `data-key`. Send neither for an empty list.
+- **Apply the response.** Parse the out-of-band `tr` elements in the response. Update the held `data-row-version`, and drop rows deleted with `hx-swap-oob="delete"`. This stands in for the browser's swap, so the next poll names the current versions rather than repeatedly asking about stale ones.
+- **Timing and stats names.** Poll about every 60 s, under one stats name per page, such as `/book/vm/reconcile`.
+- **Which lists.** Passive watchers own no bookings, so their default `filter=mine` list is always empty. They alternate page loads between `filter=mine` (the real default, which exercises the empty-batch and probe path) and `filter=all` (populated by active orderers' rows, which exercises the batch read and list-visibility authorization). Active orderers poll their own `filter=mine` bookings list, which shows their in-flight bookings.
+- **Template drift.** If the poller element or its attributes are missing, record a failure, so a template change breaks the test loudly rather than quietly removing this traffic.
 
 The 60-second per-row `hx-get` fallback is covered by the same reconcile path on current `main`, so it is not modeled separately. The apply step confirms this against the templates.
+
+**Rejected alternative.** Replaying the bare URL (the original D7) leaves out the batch read.
 
 ### D8. Seeding mirrors `scripts/login_burst.py` and fails loudly
 
@@ -134,12 +150,26 @@ The 60-second per-row `hx-get` fallback is covered by the same reconcile path on
 - **`/health` tests** extend `tests/test_health_endpoint.py`.
 - **Validation results** go in `openspec/changes/refresh-locust-load-test/results.md`, which is archived with the change. This follows the precedent of the `probe/` output in the archived `environment-list-owner-walks` change. `docs/features/` is not used.
 
+### D10. Two kinds of run, one hard gate
+
+**Decision.**
+- **The 100-user smoke run is a strict gate.** It needs 0% failures and no pool-exhaustion signature.
+- **The 1000-user run is characterization.** It must run its full duration and have no pool-exhaustion signature. Its failures are recorded rather than forced to zero, and each failing request name is attributed to a non-pool cause with a linked follow-up issue.
+- **The one hard gate at both scales** is a log line containing `sqlalchemy.exc.TimeoutError: QueuePool limit`. That is the exact signature `scripts/login_burst.py` already matches.
+- **The log check matches only that signature.** A broader pattern such as `TimeoutError` or `QueuePool` alone would also match unrelated timeouts (Redis, Celery, httpx in the worker), and an unrelated timeout would wrongly fail the run.
+- **The check is limited to the run's window** with `docker compose logs --since <run start> --until <run end> app worker`.
+
+**Why.** The issue's acceptance criteria require the 100-user smoke run to pass and the 1000-user run to complete with documented results, with no #407-class regression. They do not require 0% failures at 1000 users on a single dev worker. A capacity limit there is a finding to report, while pool exhaustion is the regression this tool exists to catch.
+
+**Alternative.** Requiring 0% failures at 1000 users too. This was rejected: it would block #505 on capacity tuning, which is out of scope.
+
 ## Risks / Trade-offs
 
 - **[Risk] Logins as users spawn may queue on the bcrypt executor** (about one per CPU), so login latency grows while spawning. → This is expected behavior, not a regression. The README recommends spawn rates of 10/s for the smoke run and 20/s for the full run, and login is its own stats name, so its p95 is visible separately.
-- **[Risk] The dev compose stack runs one uvicorn worker with `--reload`, and the pool is 5+10 connections per process.** 1000 SSE streams plus about 150 orderers may saturate a single worker. → This is recorded as an observation in `results.md`. A failure caused by capacity rather than a #407-class regression is reported, and a follow-up issue is filed. The pool and worker count are not tuned in this change.
+- **[Risk] The dev compose stack runs one uvicorn worker with `--reload`, and the pool is 5+10 connections per process.** 1000 SSE streams plus about 150 orderers may saturate a single worker. → This is governed by D10. Failures that are not pool exhaustion are attributed in `results.md` and linked to a follow-up issue. A pool-exhaustion signature blocks #505 at any scale. The pool and worker count are not tuned in this change.
 - **[Risk] 1000 SSE connections need about 1000 Redis pub/sub connections and enough file descriptors on both ends.** → The README documents `ulimit -n 65536` on the Locust host. Redis/app limits seen during the run are recorded in the results.
-- **[Risk] Changes to the reconcile poller's markup break the regex.** → The watcher records a failure when the URL is missing (D7), so the test breaks loudly.
+- **[Risk] Changes to the reconcile poller's or rows' markup break the parser.** → A missing poller or missing attributes is recorded as a failure (D7), so the test breaks loudly.
+- **[Risk] `select_batch` in the load test and `selectBatch` in the browser diverge.** → The load test uses the same oracle that the fast suite already checks against the JS cases, so there is no separate copy that could drift.
 - **[Trade-off] Stub mode becomes visible on an unauthenticated endpoint.** → The information value is low (D1). Real deployments report `false`.
 - **[Trade-off] Seed data persists in the database.** → This is the same as #409. The README says to use `docker compose down -v` or the admin UI to clean up.
 
