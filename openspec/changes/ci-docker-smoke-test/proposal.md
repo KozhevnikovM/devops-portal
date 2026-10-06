@@ -7,8 +7,8 @@ Code that passes pytest and static quality gates can still fail to package into 
 - Add an automated pull-request CI workflow (`docker-smoke-test.yml`) targeting `main` that builds the production container and executes a runtime smoke test.
 - Build the repository `Dockerfile` in CI using standard BuildKit caching and default build arguments without requiring external registries or secrets.
 - Start the built container image with the minimal required runtime configuration and service dependencies.
-- Verify that the containerized application process boots cleanly and binds its server port.
-- Execute a smoke test probe against the application liveness endpoint (`GET /health`), asserting an HTTP 200 response with `{"status": "ok"}`.
+- Verify that the containerized application process boots cleanly, stays running, and binds its server port.
+- Execute smoke-test probes against `GET /health` and `GET /health/ready`, asserting HTTP 200 responses. The liveness response SHALL contain `{"status": "ok"}`; readiness SHALL report `{"status": "ok"}` after PostgreSQL and Redis are reachable.
 - Fail the CI check on any build failure (syntax errors, missing files, broken `COPY` paths, npm or pip errors), missing runtime dependencies or binaries, exit crashes, or health check failures.
 - Document a canonical local command in `CLAUDE.md` and `AGENTS.md` for building the production image and executing the runtime smoke test locally.
 - Apply standard CI operational constraints: least-privilege `contents: read` permissions, bounded timeout, and pull-request concurrency cancellation.
