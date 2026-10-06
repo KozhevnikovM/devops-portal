@@ -1,0 +1,7 @@
+# Starlette 0.48.0 baseline vulnerabilities (resolved by fastapi>=0.116.2,<0.117)
+PYSEC-2026-1942
+PYSEC-2026-161
+PYSEC-2026-2280
+PYSEC-2026-2281
+PYSEC-2026-248
+PYSEC-2026-249
