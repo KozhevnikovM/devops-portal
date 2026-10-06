@@ -52,7 +52,7 @@ Which plan the planner chooses is not part of this requirement. It MAY read a sm
 #### Scenario: Key lookup is available in a custom plan
 - **WHEN** a page of environments with owner and creator names is read with sequential scans disabled for the read
 - **THEN** users are read only through the users primary key, with the reference as the index condition
-- **AND** at most one user is read per owner reference and per creator reference on the page
+- **AND** at most one user is read per non-NULL owner reference and per non-NULL creator reference on the page, counted per row, not per distinct value
 
 #### Scenario: Key lookup is available in a generic plan
 - **WHEN** the same read runs as a prepared statement under a generic plan, with sequential scans disabled

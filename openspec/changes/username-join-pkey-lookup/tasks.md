@@ -27,9 +27,9 @@
   - both `held_by` maps.
 
   The legacy, deleted-owner and non-ASCII rows must be listed with no name. Also resolve the non-ASCII references through `user_ref_uuid` with the reference collated as `und-x-icu`, and assert no user and no error. Verify that it passes on PostgreSQL 15, the CI baseline (spec, first requirement, including "Non-ASCII hex lookalikes do not resolve, whatever the collation").
-- [ ] 4.2 Availability plan test (normative). Run the environments page row read and the bookings list item read for a 50-row page with distinct owners and some creators, with `SET LOCAL enable_seqscan = off`, under `force_custom_plan` and `force_generic_plan`. Assert:
+- [ ] 4.2 Availability plan test (normative). Run the environments page row read and the bookings list item read for a 50-row page with distinct owners and some creators, where one creator deliberately repeats across several rows, with `SET LOCAL enable_seqscan = off`, under `force_custom_plan` and `force_generic_plan`. Assert:
   - every `users` node is an `Index Scan` on `users_pkey` with an `Index Cond` on the reference;
-  - the users rows read are at most the page's distinct references.
+  - for each `users` node, `Σ Actual Loops × Actual Rows` is at most that alias's non-NULL reference occurrences on the page: owner slots for the owner alias, creator slots for the creator alias, counted per row, not per distinct value.
 
   Verify that it passes on PostgreSQL 15 (spec, second requirement, both scenarios).
 - [ ] 4.3 Measured-regression plan test, not a spec guarantee. With 20,000 seeded users, build the data in the order VACUUM, seed, commit, VACUUM ANALYZE. With default settings, under both plan modes, assert that the planner's own plan for the reads in 4.2 is the per-row `users_pkey` probe. Label the test as pinning measured behaviour on the CI baseline (design Decision 5). Verify that it passes on PostgreSQL 15 in CI.
