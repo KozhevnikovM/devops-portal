@@ -2035,3 +2035,51 @@ Scale workers to match the total slot count (`tokens × max_parallel`):
 ```bash
 docker compose up -d --scale worker=4
 ```
+
+## Continuous Integration & Quality Gates
+
+Pull requests targeting `main` automatically run continuous quality and security checks (`.github/workflows/quality-security-gates.yml`) alongside unit and PostgreSQL integration tests.
+
+### Automated Checks
+
+1. **Ruff Formatting & Linting (`lint-and-format`)**:
+   - Evaluates all Python files modified or added in the pull request.
+   - **Contract**: Every touched Python file must be fully Ruff-clean (`ruff check` and `ruff format --check`). Untouched legacy files are not evaluated.
+   - **Status**: Blocking.
+
+2. **Static Type Checking (`type-check`)**:
+   - Executes Mypy type validation strictly on `app/domain/` and `app/application/ports.py`.
+   - **Status**: Blocking on domain models and port contracts.
+
+3. **Static Application Security Testing & Secret Scanning (`security-sast`)**:
+   - Runs Bandit across `app/`. High-severity findings not present in `.bandit-baseline.json` fail the check (**Blocking**). Medium-severity findings produce an informational report (**Non-blocking**).
+   - Runs Gitleaks across pull request commits with allowlists for synthetic test tokens (**Blocking**).
+
+4. **Dependency Vulnerability Audits (`dependency-audit`)**:
+   - Audits declared Python dependencies via `python scripts/audit_python.py` using `.pip-audit-baseline.txt` to suppress pinned baseline CVEs.
+   - Audits committed frontend lockfile (`package-lock.json`) via `python scripts/audit_npm.py` using `.npm-audit-baseline.json`.
+   - **Status**: Blocking on any newly introduced or unapproved vulnerability outside the baseline allowlists.
+
+### Local Commands
+
+```bash
+# Ruff lint and format check on touched files
+ruff check <file> && ruff format --check <file>
+
+# Mypy on domain and port contracts
+mypy app/domain/ app/application/ports.py --ignore-missing-imports
+
+# Bandit high-severity security check against baseline (blocking)
+bandit -r app/ --severity-level high --exclude tests/ -b .bandit-baseline.json -q
+
+# Bandit medium-severity advisory report
+bandit -r app/ --severity-level medium --exclude tests/ -q
+
+# Gitleaks secret scanning (via binary or Docker)
+gitleaks detect --source . --config .gitleaks.toml --verbose
+docker run --rm -v $(pwd):/repo -w /repo zricethezav/gitleaks:latest detect --source . --config .gitleaks.toml --verbose
+
+# Dependency vulnerability audits
+python scripts/audit_python.py
+python scripts/audit_npm.py
+```
