@@ -1,0 +1,170 @@
+# Captured 2026-10-06 on PostgreSQL 15.18 (portal-probe-pg15-510, the supported baseline) and 16.14 (portal-test-pg-466).
+# Filtered: plan nodes on users, Index Cond on u, execution times, truth tables.
+##### portal-probe-pg15-510 n=1
+=== A: current spelling, CAST(users.id AS VARCHAR) = ref
+               ->  Seq Scan on users u (actual rows=201 loops=1)
+         ->  Seq Scan on users c (actual rows=201 loops=1)
+ Execution Time: 0.556 ms
+=== C: users.id = guarded CAST(ref AS uuid)
+         ->  Index Scan using users_pkey on users u (actual rows=1 loops=50)
+         ->  Index Scan using users_pkey on users c (actual rows=0 loops=2)
+ Execution Time: 0.765 ms
+=== C, generic plan
+   ->  Index Scan using users_pkey on users u (actual rows=1 loops=50)
+ Execution Time: 0.713 ms
+=== availability, enable_seqscan = off: A (current) vs C (guarded)
+         ->  Seq Scan on users u
+   ->  Index Scan using users_pkey on users u
+=== B: current spelling + expression index on CAST(users.id AS VARCHAR)
+               ->  Seq Scan on users u (actual rows=201 loops=1)
+         ->  Index Scan using ix_users_id_varchar on users c (actual rows=0 loops=2)
+ Execution Time: 0.625 ms
+=== truth table: current vs guarded, for legacy and non-canonical refs
+                   r                    | current | guarded 
+ dev-user                               |         | 
+                                        |         | 
+ 00000000-0000-0000-0000-000000000001   | u00001  | u00001
+ 00000000-0000-0000-0000-00000000000A   |         | 
+ {00000000-0000-0000-0000-000000000001} |         | 
+ 00000000-0000-0000-0000-00000000000٣   |         | 
+ 00000000-0000-0000-0000-00000000000ä   |         | 
+##### portal-probe-pg15-510 n=20000
+=== A: current spelling, CAST(users.id AS VARCHAR) = ref
+                     ->  Seq Scan on users c (actual rows=20200 loops=1)
+         ->  Seq Scan on users u (actual rows=20200 loops=1)
+ Execution Time: 69.101 ms
+=== C: users.id = guarded CAST(ref AS uuid)
+         ->  Index Scan using users_pkey on users u (actual rows=1 loops=50)
+         ->  Index Scan using users_pkey on users c (actual rows=1 loops=3)
+ Execution Time: 1.246 ms
+=== C, generic plan
+   ->  Index Scan using users_pkey on users u (actual rows=1 loops=50)
+ Execution Time: 0.776 ms
+=== availability, enable_seqscan = off: A (current) vs C (guarded)
+         ->  Seq Scan on users u
+   ->  Index Scan using users_pkey on users u
+=== B: current spelling + expression index on CAST(users.id AS VARCHAR)
+   ->  Index Scan using ix_users_id_varchar on users u (actual rows=20195 loops=1)
+               ->  Index Scan using ix_users_id_varchar on users c (actual rows=1401 loops=1)
+ Execution Time: 21.408 ms
+=== truth table: current vs guarded, for legacy and non-canonical refs
+                   r                    | current | guarded 
+ dev-user                               |         | 
+                                        |         | 
+ 00000000-0000-0000-0000-000000000001   | u00001  | u00001
+ 00000000-0000-0000-0000-00000000000A   |         | 
+ {00000000-0000-0000-0000-000000000001} |         | 
+ 00000000-0000-0000-0000-00000000000٣   |         | 
+ 00000000-0000-0000-0000-00000000000ä   |         | 
+##### portal-probe-pg15-510 n=200000
+=== A: current spelling, CAST(users.id AS VARCHAR) = ref
+                     ->  Seq Scan on users c (actual rows=200200 loops=1)
+               ->  Seq Scan on users u (actual rows=200200 loops=1)
+ Execution Time: 1029.999 ms
+=== C: users.id = guarded CAST(ref AS uuid)
+         ->  Index Scan using users_pkey on users u (actual rows=1 loops=50)
+         ->  Index Scan using users_pkey on users c (actual rows=1 loops=3)
+ Execution Time: 1.154 ms
+=== C, generic plan
+   ->  Index Scan using users_pkey on users u (actual rows=1 loops=50)
+ Execution Time: 0.825 ms
+=== availability, enable_seqscan = off: A (current) vs C (guarded)
+         ->  Seq Scan on users u
+   ->  Index Scan using users_pkey on users u
+=== B: current spelling + expression index on CAST(users.id AS VARCHAR)
+   ->  Index Scan using ix_users_id_varchar on users u (actual rows=199948 loops=1)
+               ->  Index Scan using ix_users_id_varchar on users c (actual rows=181524 loops=1)
+ Execution Time: 430.595 ms
+=== truth table: current vs guarded, for legacy and non-canonical refs
+                   r                    | current | guarded 
+ dev-user                               |         | 
+                                        |         | 
+ 00000000-0000-0000-0000-000000000001   | u00001  | u00001
+ 00000000-0000-0000-0000-00000000000A   |         | 
+ {00000000-0000-0000-0000-000000000001} |         | 
+ 00000000-0000-0000-0000-00000000000٣   |         | 
+ 00000000-0000-0000-0000-00000000000ä   |         | 
+##### portal-test-pg-466 n=1
+=== A: current spelling, CAST(users.id AS VARCHAR) = ref
+               ->  Seq Scan on users u (actual rows=201 loops=1)
+         ->  Seq Scan on users c (actual rows=201 loops=1)
+ Execution Time: 0.873 ms
+=== C: users.id = guarded CAST(ref AS uuid)
+               ->  Seq Scan on users u (actual rows=201 loops=1)
+         ->  Seq Scan on users c (actual rows=201 loops=1)
+ Execution Time: 1.698 ms
+=== C, generic plan
+   ->  Index Scan using users_pkey on users u (actual rows=1 loops=50)
+ Execution Time: 0.841 ms
+=== availability, enable_seqscan = off: A (current) vs C (guarded)
+         ->  Seq Scan on users u
+   ->  Index Scan using users_pkey on users u
+=== B: current spelling + expression index on CAST(users.id AS VARCHAR)
+               ->  Seq Scan on users u (actual rows=201 loops=1)
+         ->  Seq Scan on users c (actual rows=201 loops=1)
+ Execution Time: 1.034 ms
+=== truth table: current vs guarded, for legacy and non-canonical refs
+                   r                    | current | guarded 
+ dev-user                               |         | 
+                                        |         | 
+ 00000000-0000-0000-0000-000000000001   | u00001  | u00001
+ 00000000-0000-0000-0000-00000000000A   |         | 
+ {00000000-0000-0000-0000-000000000001} |         | 
+ 00000000-0000-0000-0000-00000000000٣   |         | 
+ 00000000-0000-0000-0000-00000000000ä   |         | 
+##### portal-test-pg-466 n=20000
+=== A: current spelling, CAST(users.id AS VARCHAR) = ref
+                     ->  Seq Scan on users c (actual rows=20200 loops=1)
+         ->  Seq Scan on users u (actual rows=20200 loops=1)
+ Execution Time: 67.678 ms
+=== C: users.id = guarded CAST(ref AS uuid)
+         ->  Index Scan using users_pkey on users u (actual rows=1 loops=50)
+         ->  Index Scan using users_pkey on users c (actual rows=1 loops=3)
+ Execution Time: 2.730 ms
+=== C, generic plan
+   ->  Index Scan using users_pkey on users u (actual rows=1 loops=50)
+ Execution Time: 1.833 ms
+=== availability, enable_seqscan = off: A (current) vs C (guarded)
+         ->  Seq Scan on users u
+   ->  Index Scan using users_pkey on users u
+=== B: current spelling + expression index on CAST(users.id AS VARCHAR)
+   ->  Index Scan using ix_users_id_varchar on users u (actual rows=20044 loops=1)
+               ->  Index Scan using ix_users_id_varchar on users c (actual rows=7247 loops=1)
+ Execution Time: 25.259 ms
+=== truth table: current vs guarded, for legacy and non-canonical refs
+                   r                    | current | guarded 
+ dev-user                               |         | 
+                                        |         | 
+ 00000000-0000-0000-0000-000000000001   | u00001  | u00001
+ 00000000-0000-0000-0000-00000000000A   |         | 
+ {00000000-0000-0000-0000-000000000001} |         | 
+ 00000000-0000-0000-0000-00000000000٣   |         | 
+ 00000000-0000-0000-0000-00000000000ä   |         | 
+##### portal-test-pg-466 n=200000
+=== A: current spelling, CAST(users.id AS VARCHAR) = ref
+                     ->  Seq Scan on users c (actual rows=200200 loops=1)
+               ->  Seq Scan on users u (actual rows=200200 loops=1)
+ Execution Time: 1317.549 ms
+=== C: users.id = guarded CAST(ref AS uuid)
+         ->  Index Scan using users_pkey on users u (actual rows=1 loops=50)
+         ->  Index Scan using users_pkey on users c (actual rows=1 loops=3)
+ Execution Time: 2.232 ms
+=== C, generic plan
+   ->  Index Scan using users_pkey on users u (actual rows=1 loops=50)
+ Execution Time: 1.816 ms
+=== availability, enable_seqscan = off: A (current) vs C (guarded)
+         ->  Seq Scan on users u
+   ->  Index Scan using users_pkey on users u
+=== B: current spelling + expression index on CAST(users.id AS VARCHAR)
+   ->  Index Scan using ix_users_id_varchar on users u (actual rows=190800 loops=1)
+               ->  Index Scan using ix_users_id_varchar on users c (actual rows=139953 loops=1)
+ Execution Time: 361.240 ms
+=== truth table: current vs guarded, for legacy and non-canonical refs
+                   r                    | current | guarded 
+ dev-user                               |         | 
+                                        |         | 
+ 00000000-0000-0000-0000-000000000001   | u00001  | u00001
+ 00000000-0000-0000-0000-00000000000A   |         | 
+ {00000000-0000-0000-0000-000000000001} |         | 
+ 00000000-0000-0000-0000-00000000000٣   |         | 
+ 00000000-0000-0000-0000-00000000000ä   |         | 
