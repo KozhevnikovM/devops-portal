@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
-from sqlalchemy import String, cast, func, literal, or_, select, true, tuple_, union_all
+from sqlalchemy import func, literal, or_, select, true, tuple_, union_all
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session, aliased
 
@@ -17,6 +17,7 @@ from app.infrastructure.database.models import (
     BOOKING_NOT_RELEASED, BookingModel, EnvironmentModel, NamespaceModel, StaticVMModel, UserModel,
 )
 from app.infrastructure.repositories._ordered_walk import _OrderedWalk
+from app.infrastructure.repositories._user_ref import user_by_ref
 from app.infrastructure.repositories.booking_repo import _to_entity as _booking_to_entity
 
 # Second alias of users to resolve created_by (the dispatcher) → username, distinct from the owner.
@@ -84,8 +85,8 @@ def _with_usernames():
     """Environments with their owner's and dispatcher's usernames."""
     return (
         select(EnvironmentModel, UserModel.username, _CreatorUser.username)
-        .join(UserModel, cast(UserModel.id, String) == EnvironmentModel.user_id, isouter=True)
-        .outerjoin(_CreatorUser, cast(_CreatorUser.id, String) == EnvironmentModel.created_by)
+        .join(UserModel, user_by_ref(UserModel, EnvironmentModel.user_id), isouter=True)
+        .outerjoin(_CreatorUser, user_by_ref(_CreatorUser, EnvironmentModel.created_by))
     )
 
 
@@ -270,7 +271,7 @@ class EnvironmentRepository:
     async def _children(self, session: AsyncSession, environment_id: UUID):
         result = await session.execute(
             select(BookingModel, UserModel.username, NamespaceModel, StaticVMModel)
-            .join(UserModel, cast(UserModel.id, String) == BookingModel.user_id, isouter=True)
+            .join(UserModel, user_by_ref(UserModel, BookingModel.user_id), isouter=True)
             .outerjoin(NamespaceModel, NamespaceModel.id == BookingModel.namespace_id)
             .outerjoin(StaticVMModel, StaticVMModel.id == BookingModel.static_vm_id)
             .where(BookingModel.environment_id == environment_id)
@@ -289,7 +290,7 @@ class EnvironmentRepository:
             return {}
         result = await session.execute(
             select(BookingModel, UserModel.username, NamespaceModel, StaticVMModel)
-            .join(UserModel, cast(UserModel.id, String) == BookingModel.user_id, isouter=True)
+            .join(UserModel, user_by_ref(UserModel, BookingModel.user_id), isouter=True)
             .outerjoin(NamespaceModel, NamespaceModel.id == BookingModel.namespace_id)
             .outerjoin(StaticVMModel, StaticVMModel.id == BookingModel.static_vm_id)
             .where(BookingModel.environment_id.in_(env_ids))
@@ -305,8 +306,8 @@ class EnvironmentRepository:
     async def get(self, session: AsyncSession, environment_id: UUID) -> Environment:
         result = await session.execute(
             select(EnvironmentModel, UserModel.username, _CreatorUser.username)
-            .join(UserModel, cast(UserModel.id, String) == EnvironmentModel.user_id, isouter=True)
-            .outerjoin(_CreatorUser, cast(_CreatorUser.id, String) == EnvironmentModel.created_by)
+            .join(UserModel, user_by_ref(UserModel, EnvironmentModel.user_id), isouter=True)
+            .outerjoin(_CreatorUser, user_by_ref(_CreatorUser, EnvironmentModel.created_by))
             .where(EnvironmentModel.id == environment_id)
         )
         row = result.first()
@@ -345,8 +346,8 @@ class EnvironmentRepository:
             return []
         env_result = await session.execute(
             select(EnvironmentModel, UserModel.username, _CreatorUser.username)
-            .join(UserModel, cast(UserModel.id, String) == EnvironmentModel.user_id, isouter=True)
-            .outerjoin(_CreatorUser, cast(_CreatorUser.id, String) == EnvironmentModel.created_by)
+            .join(UserModel, user_by_ref(UserModel, EnvironmentModel.user_id), isouter=True)
+            .outerjoin(_CreatorUser, user_by_ref(_CreatorUser, EnvironmentModel.created_by))
             .where(EnvironmentModel.id.in_(env_ids))
         )
         env_rows = env_result.all()

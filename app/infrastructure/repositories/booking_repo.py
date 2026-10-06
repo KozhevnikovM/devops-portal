@@ -35,6 +35,7 @@ from app.infrastructure.events import (
     publish_row_changed,
 )
 from app.infrastructure.repositories._ordered_walk import _OrderedWalk
+from app.infrastructure.repositories._user_ref import user_by_ref
 
 # Second alias of users to resolve created_by (the dispatcher) → username, distinct from the
 # owner join on user_id.
@@ -312,10 +313,10 @@ def _list_item_stmt():
             _has_credentials_expr().label("has_credentials"),
         )
         .select_from(BookingModel)
-        .join(UserModel, cast(UserModel.id, String) == BookingModel.user_id, isouter=True)
+        .join(UserModel, user_by_ref(UserModel, BookingModel.user_id), isouter=True)
         .outerjoin(NamespaceModel, NamespaceModel.id == BookingModel.namespace_id)
         .outerjoin(StaticVMModel, StaticVMModel.id == BookingModel.static_vm_id)
-        .outerjoin(_CreatorUser, cast(_CreatorUser.id, String) == BookingModel.created_by)
+        .outerjoin(_CreatorUser, user_by_ref(_CreatorUser, BookingModel.created_by))
         # id breaks created_at ties (one transaction's bookings share a timestamp), so the order
         # is total — keyset pagination relies on it (#479).
         .order_by(BookingModel.created_at.desc(), BookingModel.id.desc())
@@ -630,10 +631,10 @@ class BookingRepository:
     async def get(self, session: AsyncSession, booking_id: UUID) -> Booking:
         result = await session.execute(
             select(BookingModel, UserModel.username, NamespaceModel, StaticVMModel, _CreatorUser.username)
-            .join(UserModel, cast(UserModel.id, String) == BookingModel.user_id, isouter=True)
+            .join(UserModel, user_by_ref(UserModel, BookingModel.user_id), isouter=True)
             .outerjoin(NamespaceModel, NamespaceModel.id == BookingModel.namespace_id)
             .outerjoin(StaticVMModel, StaticVMModel.id == BookingModel.static_vm_id)
-            .outerjoin(_CreatorUser, cast(_CreatorUser.id, String) == BookingModel.created_by)
+            .outerjoin(_CreatorUser, user_by_ref(_CreatorUser, BookingModel.created_by))
             .where(BookingModel.id == booking_id)
         )
         row = result.first()

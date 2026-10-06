@@ -7,6 +7,7 @@ from app.domain.booking_status import LIVE_STATUSES
 from app.domain.entities import Namespace
 from app.domain.exceptions import NamespaceNotFoundError
 from app.infrastructure.database.models import BookingModel, NamespaceModel, UserModel
+from app.infrastructure.repositories._user_ref import user_by_ref, user_ref_for_username
 
 _LIVE_STATUSES = [s.value for s in LIVE_STATUSES]
 
@@ -61,7 +62,7 @@ class NamespaceRepository:
         """Map namespace_id → owner username for currently-held namespaces."""
         result = await session.execute(
             select(BookingModel.namespace_id, UserModel.username)
-            .join(UserModel, cast(UserModel.id, String) == BookingModel.user_id, isouter=True)
+            .join(UserModel, user_by_ref(UserModel, BookingModel.user_id), isouter=True)
             .where(
                 BookingModel.namespace_id.is_not(None),
                 BookingModel.status.in_(_LIVE_STATUSES),
@@ -178,9 +179,8 @@ class NamespaceRepository:
         result = await session.execute(
             select(NamespaceModel)
             .join(BookingModel, BookingModel.namespace_id == NamespaceModel.id)
-            .join(UserModel, cast(UserModel.id, String) == BookingModel.user_id)
             .where(
-                UserModel.username == username,
+                BookingModel.user_id == user_ref_for_username(username),
                 BookingModel.status.in_(_LIVE_STATUSES),
                 NamespaceModel.is_active.is_(True),
             )
@@ -194,9 +194,8 @@ class NamespaceRepository:
         """Active namespaces with no live booking owned by `username`."""
         held_by_user = (
             select(BookingModel.namespace_id)
-            .join(UserModel, cast(UserModel.id, String) == BookingModel.user_id)
             .where(
-                UserModel.username == username,
+                BookingModel.user_id == user_ref_for_username(username),
                 BookingModel.namespace_id.is_not(None),
                 BookingModel.status.in_(_LIVE_STATUSES),
             )

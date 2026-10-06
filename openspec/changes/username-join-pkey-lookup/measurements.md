@@ -42,6 +42,18 @@ Reproduce with `probe/join_probe.sql` (command in its header). Everything runs i
 - **C** probes `users_pkey` once per row read. On PostgreSQL 15 it does so in every run, including 201 users. On PostgreSQL 16 the custom plan prefers hashing the 201-row table (1.7 ms against A's 0.87 ms), which is a cost choice for a 3-page table, and it probes from 20k users up. Generic plans probe at every size on both versions. The per-row regex costs about 1 µs.
 - Example `Index Cond` (PostgreSQL 15): `(id = CASE WHEN ((e.user_id)::text ~ '^[0123456789abcdef]{8}-…$'::text) THEN (e.user_id)::uuid ELSE NULL::uuid END)`. `EXPLAIN` does not print `COLLATE "C"`, because the planner folds a `CollateExpr` into the operator's input collation. `pg_get_viewdef` of the same expression shows `((e.user_id)::text COLLATE "C") ~ …`, so the clause is kept.
 
+## After implementation (task 5.1)
+
+`probe/impl_probe.sql` runs the implemented environments row read, which is `_with_usernames()` phase 2 as compiled by SQLAlchemy, against the old join. It uses the same setup as `join_probe.sql`, on PostgreSQL 15.18:
+
+| users | before (old join) | after (implemented) | after, generic plan |
+|---|---|---|---|
+| 201 | 2 × seq 201, 0.64 ms | 2 × seq 201, 1.34 ms | 2 × seq 201, 1.19 ms |
+| 20,200 | 2 × seq 20,200, 76 ms | pkey 1 × 50 + 1 × 3, 1.1 ms | pkey 1 × 50 + 1 × 3, 0.91 ms |
+| 200,200 | 2 × seq 200,200, 1,729 ms | pkey 1 × 50 + 1 × 3, 1.5 ms | pkey 1 × 50 + 1 × 3, 1.5 ms |
+
+At 201 users the implemented statement reads the 3-page users table whole on PostgreSQL 15 as well. The narrow probe query above, which selects only ids and usernames, used the key there. That choice depends on cost estimates and is permitted by the spec. The plan tests (`tests/integration/test_user_name_resolution.py`) pin availability with sequential scans off, and the planner's own choice at 20,000 users.
+
 ## Index-path availability (sequential scans disabled)
 
 `SET enable_seqscan = off`, 50-row page, owner name. Measured on both versions at n = 1, 20,000 and 200,000:
