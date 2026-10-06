@@ -28,6 +28,7 @@ None of these rules can be reused or tested without the worker. The tests show i
 
   It depends only on application ports and domain types. It imports no Celery, Redis, SQLAlchemy session factory, Terraform, SSH or Ansible module.
 - **New ports in `app/application/ports.py`**, so the service reaches infrastructure only through Protocols. Each concrete class already matches its port structurally:
+  - a cloud-provider credential slot (the VCD token semaphore), so the service decides when the slot is taken;
   - sync image and hardware-config reads;
   - the environment lease-start call;
   - a sync "apply this VM" port;
@@ -37,7 +38,7 @@ None of these rules can be reused or tested without the worker. The tests show i
 - **A domain exception for "VM reachable, configuration failed".** The service needs to tell a software failure from an infrastructure failure without importing the infrastructure `ConfigScriptError`/`AnsibleConfigError`. Both become subclasses of a new domain exception.
 - **`provision_vm_task` becomes a thin Celery adapter.** It keeps only:
   - binding the correlation id;
-  - acquiring, renewing and releasing a VCD token;
+  - implementing the VCD token slot on Redis, without deciding when it is taken;
   - the provisioning-lock marker and `asyncio.run` around `terraform.apply`;
   - per-write sessions;
   - building the service from its collaborators;
@@ -45,7 +46,7 @@ None of these rules can be reused or tested without the worker. The tests show i
 
   The task name, its arguments and its retry settings stay the same. Messages already queued when the change deploys keep working.
 - **Unit tests of the service use in-memory fakes,** with no `patch()` of module globals. They cover every lifecycle rule. The existing task tests stay as the adapter-level regression net, and their assertions do not change.
-- **No behaviour change:** statuses, status messages, audit entries, live-row events, progress batching, retry counts and timing all stay as they are. The new capability states this existing behaviour as a contract for the first time.
+- **One intentional behaviour change (PR #519 review).** Today the task waits for a VCD token slot *before* it checks whether the booking was already released. A released booking with no free slot therefore waits up to 60 s and is rescheduled with `self.retry()`, and it can keep doing so until retries run out. After this change, the released-booking check runs before the slot wait, and again once a slot is obtained. A released booking ends at once, with no wait and no retry. The rest stays as it is: statuses, status messages, audit entries, live-row events, progress batching, retry counts and timing. The new capability states this behaviour as a contract for the first time.
 
 ## Capabilities
 
@@ -77,6 +78,7 @@ _None._ `progress-persistence`, `vm-provisioning-recovery`, `environment-lifecyc
 - **Tests:**
   - new service unit tests with fakes;
   - port-conformance checks, added to `tests/test_repository_ports.py`;
+  - a real-adapter regression test: a released booking with no free VCD token slot is neither delayed nor retried (PR #519 review);
   - the existing `tests/test_provision_*.py`, `test_release_during_provisioning.py`, `test_vm_*`, `test_booking_configuring_state.py` and the integration race tests keep passing with unchanged assertions.
 - **CI (#433 gates):**
   - `app/application/ports.py` and `app/domain/` must stay Mypy-clean;

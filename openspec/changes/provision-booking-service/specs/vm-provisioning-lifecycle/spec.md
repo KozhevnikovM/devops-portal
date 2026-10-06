@@ -6,17 +6,31 @@ Defines the observable lifecycle of one VM provisioning attempt: the statuses a 
 
 ### Requirement: A booking released before provisioning starts is not provisioned
 
-When a provisioning attempt starts and the booking is already RELEASING, RELEASED or FAILED, the attempt SHALL end without changing the booking. That means:
+A provisioning attempt SHALL check the booking's status twice:
+- before it waits for a cloud-provider credential slot;
+- again once a slot has been obtained, because the booking may be released during the wait.
+
+If the booking is RELEASING, RELEASED or FAILED at either check, the attempt SHALL end without changing the booking. That means:
 - no status transition;
 - no status message;
 - no apply against the cloud provider;
 - no retry.
+
+Any credential slot the attempt already holds SHALL be released. At the first check, the attempt SHALL NOT wait for a slot at all.
 
 Any other status SHALL proceed. This includes a booking left in PROVISIONING or CONFIGURING and re-dispatched by startup recovery.
 
 #### Scenario: Released while queued
 - **WHEN** a booking is released while its provisioning attempt is still queued, and the attempt then starts with the booking RELEASING or RELEASED
 - **THEN** the attempt ends without applying, without a status change, and without scheduling a retry
+
+#### Scenario: Released, with no credential slot free
+- **WHEN** an attempt starts for a booking that is already RELEASED or RELEASING, and every cloud-provider credential slot is taken
+- **THEN** the attempt ends without waiting for a slot, without a status change, and without scheduling a retry
+
+#### Scenario: Released while waiting for a credential slot
+- **WHEN** the booking is released while its attempt is waiting for a credential slot, and the attempt then obtains a slot
+- **THEN** the attempt releases the slot and ends without applying, without a status change, and without scheduling a retry
 
 #### Scenario: Recovery re-dispatch proceeds
 - **WHEN** startup recovery re-dispatches provisioning for a booking still in PROVISIONING or CONFIGURING
@@ -77,7 +91,7 @@ When the VM is reachable and both steps succeed, or there are none to run, the s
 
 When an attempt fails with any error other than a configuration failure on a reachable VM or a secret-decryption failure, it SHALL set the status message to "Failed — see audit log". It SHALL then move the booking to RETRY when further attempts remain, or to FAILED on the last attempt. When attempts remain, another one SHALL be scheduled through the task queue's retry policy. On the last attempt the original error SHALL be surfaced as the task's failure, and no further attempt SHALL run. Neither write SHALL override a booking that provisioning no longer owns (see `progress-persistence`, "Provisioning never overwrites a released booking's status message"). A failure while recording these writes SHALL NOT hide the original error from the retry policy.
 
-When the attempt cannot obtain a cloud-provider credential slot within its wait, it SHALL be rescheduled through the retry policy without any status change.
+When an attempt for a booking that passed the first released-booking check cannot obtain a cloud-provider credential slot within its wait, it SHALL be rescheduled through the retry policy without any status change.
 
 #### Scenario: Not the last attempt
 - **WHEN** an apply fails with an unexpected error and retries remain
@@ -88,7 +102,7 @@ When the attempt cannot obtain a cloud-provider credential slot within its wait,
 - **THEN** the booking moves to FAILED with "Failed — see audit log", and no further attempt runs
 
 #### Scenario: No credential slot
-- **WHEN** no cloud-provider credential slot frees up within the attempt's wait
+- **WHEN** the booking is PENDING or RETRY, and no cloud-provider credential slot frees up within the attempt's wait
 - **THEN** the attempt is rescheduled and the booking's status is unchanged
 
 ### Requirement: A secret-decryption failure fails the booking at once
@@ -119,11 +133,12 @@ The rules in this capability SHALL be enforced by application code that depends 
 - VM configuration;
 - progress recording;
 - teardown dispatch;
-- environment lease start.
+- environment lease start;
+- the cloud-provider credential slot.
 
-That code SHALL be executable, and each rule SHALL be verifiable, with in-memory substitutes for all of them. The task-queue entry point SHALL keep only these adapter concerns:
+That code SHALL decide when the credential slot is taken and released, relative to the released-booking checks. It SHALL be executable, and each rule SHALL be verifiable, with in-memory substitutes for all of these abstractions. The task-queue entry point SHALL keep only these adapter concerns:
 - binding the correlation id;
-- the cloud-provider credential slot;
+- implementing the credential slot on its lock store;
 - the provisioning-lock marker around the apply;
 - running database work in short-lived sessions;
 - mapping outcomes onto the task queue's retry policy.
@@ -132,7 +147,7 @@ The entry point's task name and arguments SHALL stay unchanged, so provisioning 
 
 #### Scenario: Rules verified with in-memory substitutes
 - **WHEN** the provisioning lifecycle is run against in-memory substitutes, with no task queue, Redis, database or Terraform available
-- **THEN** each scenario in this capability produces its specified statuses, status messages, `config_failed` value, teardown dispatch and lease-start request
+- **THEN** each scenario in this capability produces its specified statuses, status messages, `config_failed` value, teardown dispatch, lease-start request, and credential-slot acquisition and release
 
 #### Scenario: Messages queued before a deploy
 - **WHEN** a provisioning message with the existing task name and the arguments `booking_id`, `image_id`, `hw_config_id` and optional `request_id` is consumed after the deploy
