@@ -4,43 +4,47 @@
 
 ### Requirement: Every pull request runs automated code quality checks
 
-Every pull request targeting `main` SHALL produce a CI check that validates Python code formatting and linting using Ruff. The check SHALL evaluate code changed or added in the pull request against repository rules configured in `ruff.toml`. Any formatting mismatch or lint violation SHALL fail the check.
+Every pull request targeting `main` SHALL produce a CI check that validates Python code formatting and linting using Ruff. Every Python file modified or added in the pull request SHALL be fully Ruff-clean: both `ruff check <file>` and `ruff format --check <file>` SHALL pass for all touched Python files against rules configured in `ruff.toml`. Any formatting mismatch or lint violation in a touched Python file SHALL fail the check.
 
-#### Scenario: Pull request with compliant code passes
-- **WHEN** a pull request targeting `main` contains Python code conforming to Ruff lint rules and format standards
+#### Scenario: Pull request with compliant touched files passes
+- **WHEN** a pull request targeting `main` contains Python files where every touched file conforms to Ruff lint rules and format standards
 - **THEN** the Ruff quality check succeeds
 
-#### Scenario: Pull request introducing formatting or lint violation fails
-- **WHEN** a pull request introduces an unformatted Python file or a lint violation (such as unused imports or syntax issues)
+#### Scenario: Pull request introducing formatting or lint violation in a touched file fails
+- **WHEN** a pull request modifies or adds a Python file that contains an unformatted block or a lint violation
 - **THEN** the Ruff quality check fails and identifies the offending file and line number in the output
 
 ### Requirement: Every pull request runs static type checking
 
-Every pull request targeting `main` SHALL produce a CI check that executes Mypy type analysis on core application components (`app/domain/`, `app/application/`, and targeted infrastructure modules). The check SHALL fail when type checking reports incompatible types, missing attributes, or invalid function signatures in the in-scope modules.
+Every pull request targeting `main` SHALL produce a CI check that executes Mypy type analysis strictly scoped to `app/domain/` and `app/application/ports.py`. The check SHALL fail if any type error, incompatible type assignment, or invalid function signature is reported in `app/domain/` or `app/application/ports.py`.
 
-#### Scenario: Pull request with valid static typing passes
-- **WHEN** a pull request maintains valid static type annotations and passes Mypy verification across in-scope modules
+#### Scenario: Pull request maintaining clean domain and port types passes
+- **WHEN** a pull request maintains valid static type annotations and passes Mypy verification across `app/domain/` and `app/application/ports.py`
 - **THEN** the static type checking CI check succeeds
 
-#### Scenario: Pull request introducing type mismatch fails
-- **WHEN** a pull request introduces an invalid type assignment or signature incompatibility in an in-scope module
+#### Scenario: Pull request introducing type mismatch in domain or ports fails
+- **WHEN** a pull request introduces an invalid type assignment or signature incompatibility in `app/domain/` or `app/application/ports.py`
 - **THEN** the type checking check fails and outputs the corresponding error and location
 
 ### Requirement: Every pull request runs static application security analysis
 
-Every pull request targeting `main` SHALL produce a CI check running static application security testing (SAST) using Bandit across `app/`. The check SHALL fail if any high-severity security flaw (such as hardcoded sensitive credentials or unverified host key policies) is detected in changed code.
+Every pull request targeting `main` SHALL produce a CI check running static application security testing (SAST) using Bandit across `app/`. The check SHALL fail if any high-severity security finding is reported outside the committed `.bandit-baseline.json`. The CI workflow SHALL also generate a non-blocking advisory summary of medium-severity findings.
 
-#### Scenario: Clean code passes security scan
-- **WHEN** a pull request contains application code with no high-severity Bandit security findings
+#### Scenario: Code without new high-severity findings passes
+- **WHEN** a pull request contains application code with no high-severity Bandit findings outside `.bandit-baseline.json`
 - **THEN** the SAST security check succeeds
 
-#### Scenario: High-severity security flaw detected
-- **WHEN** a pull request introduces a high-severity security finding identified by Bandit
+#### Scenario: High-severity security flaw outside baseline fails check
+- **WHEN** a pull request introduces a high-severity security flaw not present in `.bandit-baseline.json`
 - **THEN** the SAST check fails with an actionable diagnostic report
+
+#### Scenario: Medium-severity findings generate advisory summary
+- **WHEN** Bandit detects medium-severity findings during analysis
+- **THEN** the CI workflow records an advisory summary of the findings in the job output without blocking merge
 
 ### Requirement: Every pull request scans for exposed secrets
 
-Every pull request targeting `main` SHALL produce a CI check that scans changes for exposed secrets, including API tokens, private keys, authentication passwords, and high-entropy secret patterns. The detection of any committed secret SHALL fail the check.
+Every pull request targeting `main` SHALL produce a CI check that scans changes for exposed secrets, including API tokens, private keys, authentication passwords, and high-entropy secret patterns using Gitleaks with allowlists for synthetic test fixtures. The detection of any committed secret SHALL fail the check.
 
 #### Scenario: Pull request with no secret patterns passes
 - **WHEN** a pull request contains no API keys, private keys, or credentials
@@ -50,25 +54,25 @@ Every pull request targeting `main` SHALL produce a CI check that scans changes 
 - **WHEN** a pull request contains a plaintext token, credential, or secret key pattern
 - **THEN** the secret scanning check fails and alerts the reviewer
 
-### Requirement: Dependency vulnerability scanning is performed with clear failure policies
+### Requirement: Dependency vulnerability scanning is performed against locked dependency trees
 
-Every pull request targeting `main` SHALL produce a CI check that audits Python dependencies using `pip-audit` and frontend dependencies using `npm audit`. Known baseline vulnerabilities documented in tracking issues SHALL produce non-blocking warnings, whereas newly introduced vulnerabilities or unreviewed dependency additions SHALL alert reviewers.
+The repository SHALL commit `package-lock.json` alongside `package.json`, and every pull request targeting `main` SHALL produce a CI check that audits Python dependencies via `pip-audit` against `requirements.txt` and frontend dependencies via `npm audit` against `package-lock.json`. Known baseline vulnerabilities explicitly pinned by concrete vulnerability IDs (including Starlette CVEs PYSEC-2026-1942, PYSEC-2026-161, PYSEC-2026-2280, PYSEC-2026-2281, PYSEC-2026-248, PYSEC-2026-249) SHALL NOT block merging, whereas any new unpinned vulnerability outside the baseline SHALL fail the check.
 
-#### Scenario: Dependency audit generates visibility report
-- **WHEN** a pull request is created or updated
-- **THEN** the dependency audit step runs, inspects lockfiles and dependency declarations, and outputs an audit summary
+#### Scenario: Dependencies audited against locked definitions with pinned baseline
+- **WHEN** a pull request is created or updated and all reported vulnerabilities match pinned baseline IDs
+- **THEN** the dependency audit step succeeds and reports the audit summary
 
-#### Scenario: New vulnerable dependency introduced
-- **WHEN** a pull request adds a package with known critical CVEs outside the existing baseline
-- **THEN** the audit step flags the vulnerability and provides CVE advisory details
+#### Scenario: New unpinned vulnerable dependency fails check
+- **WHEN** a pull request introduces a dependency containing known vulnerabilities not present in the pinned baseline
+- **THEN** the audit check fails and outputs the CVE advisory details
 
 ### Requirement: Quality and security gates are reproducible locally
 
-The repository SHALL document canonical local commands in developer guidance for running Ruff, Mypy, Bandit, pip-audit, and secret scanning. Each documented command SHALL produce diagnostic output consistent with CI.
+The repository SHALL document canonical local commands in developer guidance for running Ruff on touched files, Mypy on `app/domain/` and `app/application/ports.py`, Bandit high-severity gate and medium reporting, pip-audit with baseline suppression, and secret scanning. Each documented command SHALL produce diagnostic output consistent with CI.
 
 #### Scenario: Developer runs local quality and security checks
 - **WHEN** a developer executes the documented local commands in a configured development environment
-- **THEN** each tool executes with the same configuration and rule set used by CI
+- **THEN** each tool executes with the same configuration, scope, and rule set used by CI
 
 ### Requirement: Quality and security workflow uses least privilege and bounded execution
 
