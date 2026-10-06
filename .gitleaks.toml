@@ -1,12 +1,18 @@
 title = "DevOps Portal Gitleaks Configuration"
 
+[extend]
+useDefault = true
+
 [allowlist]
-description = "Global allowlist for test suites, fixtures, and synthetic tokens"
-paths = [
-    '''(^|/)tests/''',
-    '''test_.*\.py$''',
-]
+description = "Global allowlist for synthetic test tokens, test fixtures, and doc placeholders"
 regexes = [
     '''dp_test_[a-zA-Z0-9_\-]+''',
     '''dp_sec_[a-zA-Z0-9_\-]+''',
+    '''dp_a1b2c3d4[a-zA-Z0-9_\-\.]*''',
+    '''vm-Pa55-0f7e3c''',
+    '''svm-Pa55-91ab2d''',
+    '''TestPass1234abCD''',
+    '''Abc123XyZ456qwER''',
 ]
+
+

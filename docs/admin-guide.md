@@ -2069,8 +2069,15 @@ ruff check <file> && ruff format --check <file>
 # Mypy on domain and port contracts
 mypy app/domain/ app/application/ports.py --ignore-missing-imports
 
-# Bandit security scan against baseline
+# Bandit high-severity security check against baseline (blocking)
 bandit -r app/ --severity-level high --exclude tests/ -b .bandit-baseline.json -q
+
+# Bandit medium-severity advisory report
+bandit -r app/ --severity-level medium --exclude tests/ -q
+
+# Gitleaks secret scanning (via binary or Docker)
+gitleaks detect --source . --config .gitleaks.toml --verbose
+docker run --rm -v $(pwd):/repo -w /repo zricethezav/gitleaks:latest detect --source . --config .gitleaks.toml --verbose
 
 # Dependency vulnerability audits
 python scripts/audit_python.py

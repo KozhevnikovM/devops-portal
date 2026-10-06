@@ -21,9 +21,16 @@ def load_baseline(path: Path) -> set[str]:
 def main() -> int:
     baseline = load_baseline(BASELINE_FILE)
     print("Running npm audit --json...")
-    res = subprocess.run(
-        ["npm", "audit", "--json"], capture_output=True, text=True, check=False
-    )
+    try:
+        res = subprocess.run(
+            ["npm", "audit", "--json"], capture_output=True, text=True, check=False
+        )
+    except FileNotFoundError:
+        print(
+            "FAIL: 'npm' command not found. Ensure Node.js and npm are installed.",
+            file=sys.stderr,
+        )
+        return 1
 
     try:
         data = json.loads(res.stdout)
@@ -33,8 +40,51 @@ def main() -> int:
             print(res.stderr, file=sys.stderr)
         return res.returncode or 1
 
-    vulns = data.get("vulnerabilities", {})
+    if "error" in data:
+        err = data["error"]
+        summary = ""
+        detail = ""
+        code = ""
+        if isinstance(err, dict):
+            summary = err.get("summary") or ""
+            detail = err.get("detail") or ""
+            code = err.get("code") or ""
+        elif isinstance(err, str):
+            summary = err
+        msg = data.get("message") or summary or "npm audit failed"
+        prefix = f"[{code}] " if code else ""
+        print(f"FAIL: npm audit operational error: {prefix}{msg}", file=sys.stderr)
+        if detail and detail != msg:
+            print(detail, file=sys.stderr)
+        if res.stderr:
+            print(res.stderr, file=sys.stderr)
+        return res.returncode or 1
+
+    vulns = data.get("vulnerabilities")
+    if vulns is None or not isinstance(vulns, dict):
+        if res.returncode != 0:
+            print(
+                f"FAIL: npm audit exited with code {res.returncode} without vulnerability data.",
+                file=sys.stderr,
+            )
+            if res.stderr:
+                print(res.stderr, file=sys.stderr)
+            return res.returncode
+        print(
+            "FAIL: Unexpected npm audit payload: missing vulnerabilities dictionary.",
+            file=sys.stderr,
+        )
+        return 1
+
     if not vulns:
+        if res.returncode != 0:
+            print(
+                f"FAIL: npm audit exited with code {res.returncode} but reported no vulnerabilities.",
+                file=sys.stderr,
+            )
+            if res.stderr:
+                print(res.stderr, file=sys.stderr)
+            return res.returncode
         print("✓ No npm vulnerabilities found.")
         return 0
 
