@@ -1,7 +1,8 @@
 -- #510 username-join probe. Runs on the #496 400k dataset (env_probe_496, see
 -- archive/2026-10-02-environment-list-owner-walks/probe/), inside a rolled-back transaction.
--- Usage:
---   docker exec -i portal-test-pg-466 psql -U portal -d env_probe_496 -v n=200000 < join_probe.sql
+-- Usage (PostgreSQL 15 is the supported baseline; 16 was also measured):
+--   docker exec -i <pg container> psql -U portal -d env_probe_496 -v n=200000 < join_probe.sql
+-- The guard is spelled with an enumerated ASCII class under COLLATE "C" (no collation-dependent ranges).
 -- :n extra users with random UUIDs are added. The 50 newest environments are re-pointed at random
 -- ones of them, and 4 get a creator, because the seed's own 200 users have sequential ids
 -- (00000000-…-0000…0199). Those sort first and hide how far a merge join walks.
@@ -31,9 +32,9 @@ SELECT e.id, u.username, c.username FROM environments e
 \echo === C: users.id = guarded CAST(ref AS uuid)
 EXPLAIN (ANALYZE, BUFFERS, COSTS OFF, TIMING OFF)
 SELECT e.id, u.username, c.username FROM environments e
-  LEFT JOIN users u ON u.id = CASE WHEN e.user_id ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+  LEFT JOIN users u ON u.id = CASE WHEN e.user_id COLLATE "C" ~ '^[0123456789abcdef]{8}-[0123456789abcdef]{4}-[0123456789abcdef]{4}-[0123456789abcdef]{4}-[0123456789abcdef]{12}$'
                                    THEN CAST(e.user_id AS uuid) END
-  LEFT JOIN users c ON c.id = CASE WHEN e.created_by ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+  LEFT JOIN users c ON c.id = CASE WHEN e.created_by COLLATE "C" ~ '^[0123456789abcdef]{8}-[0123456789abcdef]{4}-[0123456789abcdef]{4}-[0123456789abcdef]{4}-[0123456789abcdef]{12}$'
                                    THEN CAST(e.created_by AS uuid) END
  WHERE e.id IN (SELECT id FROM page_ids);
 
@@ -41,11 +42,24 @@ SELECT e.id, u.username, c.username FROM environments e
 SET plan_cache_mode = force_generic_plan;
 PREPARE q(int) AS
 SELECT e.id, u.username FROM environments e
-  LEFT JOIN users u ON u.id = CASE WHEN e.user_id ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+  LEFT JOIN users u ON u.id = CASE WHEN e.user_id COLLATE "C" ~ '^[0123456789abcdef]{8}-[0123456789abcdef]{4}-[0123456789abcdef]{4}-[0123456789abcdef]{4}-[0123456789abcdef]{12}$'
                                    THEN CAST(e.user_id AS uuid) END
  WHERE e.id IN (SELECT id FROM page_ids LIMIT $1);
 EXPLAIN (ANALYZE, BUFFERS, COSTS OFF, TIMING OFF) EXECUTE q(50);
 RESET plan_cache_mode;
+
+\echo === availability, enable_seqscan = off: A (current) vs C (guarded)
+SET enable_seqscan = off;
+EXPLAIN (COSTS OFF)
+SELECT e.id, u.username FROM environments e
+  LEFT JOIN users u ON CAST(u.id AS VARCHAR) = e.user_id
+ WHERE e.id IN (SELECT id FROM page_ids);
+EXPLAIN (COSTS OFF)
+SELECT e.id, u.username FROM environments e
+  LEFT JOIN users u ON u.id = CASE WHEN e.user_id COLLATE "C" ~ '^[0123456789abcdef]{8}-[0123456789abcdef]{4}-[0123456789abcdef]{4}-[0123456789abcdef]{4}-[0123456789abcdef]{12}$'
+                                   THEN CAST(e.user_id AS uuid) END
+ WHERE e.id IN (SELECT id FROM page_ids);
+RESET enable_seqscan;
 
 \echo === B: current spelling + expression index on CAST(users.id AS VARCHAR)
 CREATE INDEX ix_users_id_varchar ON users ((CAST(id AS VARCHAR)));
@@ -59,8 +73,9 @@ SELECT e.id, u.username, c.username FROM environments e
 \echo === truth table: current vs guarded, for legacy and non-canonical refs
 SELECT r,
        (SELECT username FROM users u WHERE CAST(u.id AS VARCHAR) = r) AS current,
-       (SELECT username FROM users u WHERE u.id = CASE WHEN r ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+       (SELECT username FROM users u WHERE u.id = CASE WHEN r COLLATE "C" ~ '^[0123456789abcdef]{8}-[0123456789abcdef]{4}-[0123456789abcdef]{4}-[0123456789abcdef]{4}-[0123456789abcdef]{12}$'
                                                       THEN CAST(r AS uuid) END) AS guarded
   FROM (VALUES ('dev-user'), (NULL), ('00000000-0000-0000-0000-000000000001'),
-               ('00000000-0000-0000-0000-00000000000A'), ('{00000000-0000-0000-0000-000000000001}')) v(r);
+               ('00000000-0000-0000-0000-00000000000A'), ('{00000000-0000-0000-0000-000000000001}'),
+               ('00000000-0000-0000-0000-00000000000٣'), ('00000000-0000-0000-0000-00000000000ä')) v(r);
 ROLLBACK;

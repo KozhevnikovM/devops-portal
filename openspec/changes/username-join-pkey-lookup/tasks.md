@@ -5,7 +5,8 @@
 ## 2. Helper
 
 - [ ] 2.1 Add `app/infrastructure/repositories/_user_ref.py` with `user_ref_uuid(ref)`, `user_by_ref(user_model, ref)` and `user_ref_for_username(username)` (design Decisions 1 and 2). Verify with unit tests of the compiled PostgreSQL SQL:
-  - `user_by_ref` renders `users.id = CASE WHEN <ref> ~ '<canonical pattern>' THEN CAST(<ref> AS UUID) END`, and it also works against an aliased users model;
+  - `user_by_ref` renders `users.id = CASE WHEN <ref> COLLATE "C" ~ '<canonical pattern>' THEN CAST(<ref> AS UUID) END`, and it also works against an aliased users model;
+  - the pattern is the enumerated class `[0123456789abcdef]` and contains no `0-9` or `a-f` range (design Decision 1, collation);
   - `user_ref_for_username` renders a scalar subquery on `users.username`.
 
 ## 3. Call sites
@@ -17,7 +18,7 @@
 
 ## 4. Postgres integration tests
 
-- [ ] 4.1 Name-equality fixture and test. Owner and creator references: canonical existing user, `dev-user`, a deleted user's id, an uppercase id, and a NULL creator; on bookings, environments with children, and held namespaces and static VMs. Each of these reads returns the same names as a reference query using the old `CAST(users.id AS VARCHAR)` join, run in the same test:
+- [ ] 4.1 Name-equality fixture and test. Owner and creator references: canonical existing user, `dev-user`, a deleted user's id, an uppercase id, ids ending in a non-ASCII digit (`٣`) and a non-ASCII letter (`ä`), and a NULL creator; on bookings, environments with children, and held namespaces and static VMs. Each of these reads returns the same names as a reference query using the old `CAST(users.id AS VARCHAR)` join, run in the same test:
   - booking list page;
   - booking `get`;
   - environment page;
@@ -25,17 +26,22 @@
   - `get_by_namespace`;
   - both `held_by` maps.
 
-  The legacy and deleted-owner rows must be listed with no name. Verify that it passes on PostgreSQL 16 (spec, first requirement).
-- [ ] 4.2 Plan test with 20,000 seeded users, built in the order VACUUM, seed, commit, VACUUM ANALYZE. Run the environments page row read and the bookings list item read for a 50-row page with distinct owners and some creators, under `force_custom_plan` and `force_generic_plan`. Assert every `users` node is an `Index Scan` on `users_pkey` with an `Index Cond`, and that the users rows read are at most the page's distinct references. Run once more on a small users table with `SET LOCAL enable_seqscan = off`, and assert the `users_pkey` path. Verify that it passes (spec, second requirement).
-- [ ] 4.3 Username-filter test. `list_held_by_username` and `list_active_not_held_by_username` for a user holding namespaces, a user holding none, and an unknown username, with results as in the spec scenarios. The plan reads `users` only through `users_username_key`. Verify that it passes (spec, third requirement).
+  The legacy, deleted-owner and non-ASCII rows must be listed with no name. Also resolve the non-ASCII references through `user_ref_uuid` with the reference collated as `und-x-icu`, and assert no user and no error. Verify that it passes on PostgreSQL 15, the CI baseline (spec, first requirement, including "Non-ASCII hex lookalikes do not resolve, whatever the collation").
+- [ ] 4.2 Availability plan test (normative). Run the environments page row read and the bookings list item read for a 50-row page with distinct owners and some creators, with `SET LOCAL enable_seqscan = off`, under `force_custom_plan` and `force_generic_plan`. Assert:
+  - every `users` node is an `Index Scan` on `users_pkey` with an `Index Cond` on the reference;
+  - the users rows read are at most the page's distinct references.
+
+  Verify that it passes on PostgreSQL 15 (spec, second requirement, both scenarios).
+- [ ] 4.3 Measured-regression plan test, not a spec guarantee. With 20,000 seeded users, build the data in the order VACUUM, seed, commit, VACUUM ANALYZE. With default settings, under both plan modes, assert that the planner's own plan for the reads in 4.2 is the per-row `users_pkey` probe. Label the test as pinning measured behaviour on the CI baseline (design Decision 5). Verify that it passes on PostgreSQL 15 in CI.
+- [ ] 4.4 Username-filter test. `list_held_by_username` and `list_active_not_held_by_username` for a user holding namespaces, a user holding none, and an unknown username, with results as in the spec scenarios. The plan reads `users` only through `users_username_key`. Verify that it passes (spec, third requirement).
 
 ## 5. Runtime check, docs and quality
 
-- [ ] 5.1 Re-run `probe/join_probe.sql` against the implemented statements, or a copy adapted to the compiled SQL, at n = 1, 20,000 and 200,000. Record the before/after table in the code PR. Verify by the table in the PR description.
+- [ ] 5.1 Re-run `probe/join_probe.sql` against the implemented statements, or a copy adapted to the compiled SQL, at n = 1, 20,000 and 200,000, on PostgreSQL 15. Record the before/after table in the code PR. Verify by the table in the PR description.
 - [ ] 5.2 In the running app, open the bookings and environments pages (Mine/All, Load more) and the admin namespaces and static-VMs pages, as admin and as a dispatcher. Call `GET /api/v1/namespaces?username=…` and `?not_username=…`. Verify that the owner and creator names and the results are unchanged.
 - [ ] 5.3 Docs: `docs/api-reference.md` and `docs/admin-guide.md` need no change, because the behaviour and the schema are unchanged. Confirm this in the PR description. Verify by a review of both files' relevant sections.
 - [ ] 5.4 Run the `py-review` skill on the changed Python files and fix any findings. Verify a clean report.
-- [ ] 5.5 Run `pytest tests/ -m "not integration"` and `pytest -m integration` against the test Postgres. Verify that both pass.
+- [ ] 5.5 Run `pytest tests/ -m "not integration"` and `pytest -m integration` against a PostgreSQL 15 test database, the CI baseline. Verify that both pass.
 
 ## 6. Spec sync (after the code PR is approved)
 

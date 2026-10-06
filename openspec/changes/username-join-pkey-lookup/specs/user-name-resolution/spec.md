@@ -1,14 +1,16 @@
 ## Purpose
 
-Defines how reads turn a stored owner or creator reference into a username: what name each stored value resolves to, and how much of the users table a read may examine to resolve it. Resolving names must cost a key lookup per row the read already returns, not a read of every user.
+Defines how reads turn a stored owner or creator reference into a username: what name each stored value resolves to, and how much of the users table a read may examine to resolve it. Resolving names must be possible with a key lookup per row the read already returns, never only by reading every user.
 
 ## ADDED Requirements
 
 ### Requirement: Owner and creator names resolve to the same user as before for every stored reference
 
 When a read shows the username of a booking's or environment's owner or creator, it SHALL resolve the stored reference to a user as follows:
-- A reference resolves to a user only when it is that user's id in canonical form: lowercase hexadecimal, hyphenated, 36 characters.
-- Any other stored value SHALL resolve to no user, and the read SHALL NOT fail. That includes a NULL creator, a legacy non-UUID owner such as `dev-user`, the id of a deleted user, and a UUID written with uppercase hex or braces.
+- A reference resolves to a user only when it is that user's id in canonical form: 36 characters, the ASCII digits `0`–`9` and lowercase ASCII letters `a`–`f` in the hyphenated 8-4-4-4-12 layout.
+- Any other stored value SHALL resolve to no user, and the read SHALL NOT fail. That includes a NULL creator, a legacy non-UUID owner such as `dev-user`, the id of a deleted user, a UUID written with uppercase hex or braces, and a value with any non-ASCII character, such as a non-ASCII digit or letter, in a canonical position.
+
+Which references resolve SHALL NOT depend on the collation of the database or of the referencing column.
 
 A reference that resolves to no user SHALL leave the row in the result with no name, exactly as a row whose owner was deleted is shown today.
 
@@ -33,28 +35,28 @@ This applies to every read that shows such a name:
 - **WHEN** a stored reference is an existing user's id written with uppercase hex digits
 - **THEN** it resolves to no user, as it does today
 
+#### Scenario: Non-ASCII hex lookalikes do not resolve, whatever the collation
+- **WHEN** a stored reference has the canonical layout but ends in a non-ASCII digit such as `٣`, or a non-ASCII letter such as `ä`, and the reference is compared under the database's default collation or under an ICU collation
+- **THEN** it resolves to no user, and the read does not fail
+
 #### Scenario: No creator
 - **WHEN** a booking has no creator
 - **THEN** its row shows no creator name, and the owner name is unaffected
 
-### Requirement: Name resolution reads users by primary key, not the whole users table
+### Requirement: Name resolution can read users by primary key, not only the whole users table
 
-Resolving the owner and creator names for the rows a read returns SHALL be possible through one primary-key lookup per reference. A read SHALL NOT be forced to examine users that none of its rows reference. In particular, the join condition SHALL be usable as an index condition on the users primary key, in both custom and generic plans. This bound SHALL be independent of how many users exist.
+The join that resolves an owner or creator reference SHALL be an equality between the users primary key itself and a value computed from the reference alone. The planner SHALL therefore be able to resolve each reference with one lookup on the users primary key, using the reference as the index condition, in both custom and generic plans. No read SHALL be written so that it can only resolve names by examining users that none of its rows reference. This availability SHALL hold however many users exist.
 
-The planner MAY still choose to read a small users table whole when that is cheaper. The guarantee is that the per-row key lookup is always available to it. With a users table of 20,000 users or more and current statistics, a page read SHALL use the per-row lookup.
+Which plan the planner chooses is not part of this requirement. It MAY read a small users table whole when it estimates that to be cheaper.
 
-#### Scenario: Page names are looked up by key
-- **WHEN** there are 20,000 users with current statistics, and a user reads a page of 50 environments whose owners are 50 different users, with 3 of the environments dispatched
+#### Scenario: Key lookup is available in a custom plan
+- **WHEN** a page of environments with owner and creator names is read with sequential scans disabled for the read
 - **THEN** users are read only through the users primary key, with the reference as the index condition
 - **AND** at most one user is read per owner reference and per creator reference on the page
 
-#### Scenario: Generic plan keeps the key lookup
-- **WHEN** the same read runs as a prepared statement under a generic plan
-- **THEN** users are still read only through the users primary key, with the reference as the index condition
-
-#### Scenario: Key lookup is available on a small users table
-- **WHEN** the users table is small enough that the planner prefers to read it whole, and sequential scans are disabled for the read
-- **THEN** the read uses the users primary key with the reference as the index condition, instead of failing over to a whole-table read
+#### Scenario: Key lookup is available in a generic plan
+- **WHEN** the same read runs as a prepared statement under a generic plan, with sequential scans disabled
+- **THEN** users are read only through the users primary key, with the reference as the index condition
 
 ### Requirement: Username filters resolve the username once
 

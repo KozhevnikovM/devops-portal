@@ -15,12 +15,12 @@
   | `static_vm_repo.py` | `held_by` |
 
   The creator side uses `_CreatorUser = aliased(UserModel)` in `booking_repo` and `environment_repo`.
-- The numbers behind every decision are in `measurements.md`.
+- The supported database is PostgreSQL 15+: `docker-compose.yml`, `docker-compose.prod.yml` and the CI Postgres job all use `postgres:15`. The measurements were taken on 15.18, the baseline, and on 16.14. The numbers behind every decision are in `measurements.md`.
 
 ## Goals / Non-Goals
 
 **Goals:**
-- Every name join is one `users_pkey` probe per reference, in custom and generic plans alike.
+- Every name join can be resolved by one `users_pkey` probe per reference, in custom and generic plans alike. That availability is the guarantee; the planner's choice is measured, not promised (Decision 5).
 - Every stored value resolves exactly as it does today (spec, first requirement).
 - One helper defines the conversion, and a test keeps the old spelling from coming back.
 
@@ -37,11 +37,15 @@
 A new module, `app/infrastructure/repositories/_user_ref.py`:
 
 ```python
-_CANONICAL_UUID = "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+_HEX = "[0123456789abcdef]"  # enumerated, not a range: regex ranges are collation-dependent
+_CANONICAL_UUID = f"^{_HEX}{{8}}-{_HEX}{{4}}-{_HEX}{{4}}-{_HEX}{{4}}-{_HEX}{{12}}$"
 
 def user_ref_uuid(ref):
     """The users.id a stored owner/creator reference names, or NULL when it names none."""
-    return case((ref.regexp_match(_CANONICAL_UUID), cast(ref, UUID(as_uuid=True))), else_=None)
+    return case(
+        (ref.collate("C").regexp_match(_CANONICAL_UUID), cast(ref, UUID(as_uuid=True))),
+        else_=None,
+    )
 
 def user_by_ref(user_model, ref):
     """Join condition: user_model is the user that ref names (primary-key equality)."""
@@ -50,15 +54,16 @@ def user_by_ref(user_model, ref):
 
 Every join site becomes, for example, `.join(UserModel, user_by_ref(UserModel, BookingModel.user_id), isouter=True)`.
 
-- **Why it uses the key.** The users side is the bare `users.id`. Each outer row's value is a computable expression, so the planner can probe `users_pkey` with it in a nested loop. That is the C row of `measurements.md`: 1 user per reference, 2–3 ms for 50 rows at 20k and 200k users, also under `force_generic_plan`.
-- **Why the guard is exact.** The regex is case-sensitive and anchored, and it admits exactly what `CAST(uuid AS VARCHAR)` outputs. The old condition matched a reference only when it equalled that output. The new one matches only when the reference has that output's form and parses to the same uuid. The two are the same set of matches, and the probe's truth table checks it (`dev-user`, NULL, uppercase, braced).
+- **Why it uses the key.** The users side is the bare `users.id`. Each outer row's value is a computable expression, so the planner can probe `users_pkey` with it in a nested loop. That is the C row of `measurements.md`. On PostgreSQL 15 it reads 1 user per reference: about 1.2 ms for 50 rows at 20k and at 200k users, and 0.8 ms under `force_generic_plan`. With sequential scans disabled, the current spelling still falls back to a `Seq Scan on users`, because it has no index path. The guarded one uses `users_pkey` with the reference as the `Index Cond`.
+- **Why the guard is exact.** The regex is case-sensitive and anchored, and it admits exactly what `CAST(uuid AS VARCHAR)` outputs. The old condition matched a reference only when it equalled that output. The new one matches only when the reference has that output's form and parses to the same uuid. The two are the same set of matches, and the probe's truth table checks it (`dev-user`, NULL, uppercase, braced, and a non-ASCII digit or letter in the last position).
+- **Why the guard is collation-independent.** PostgreSQL documents bracket ranges such as `[0-9]` and `[a-f]` as collation-dependent. So the class is enumerated, `[0123456789abcdef]`, and the match runs under `COLLATE "C"`. Neither the database's nor the column's collation can then change which characters pass. Measured on 15.18 and 16.14: under the default `en_US.utf8`, C, and the `und`, `en-US`, `tr-TR`, `sv-SE` and `da-DK` ICU collations, the range form already rejected `٣ ５ ａ é ² ä Ａ ⓐ ½ Ⅲ 𝟑`. The explicit spelling removes the dependence on that behaviour rather than relying on it. `EXPLAIN` does not print `COLLATE "C"`, because the planner folds the collation into the operator's input collation. `pg_get_viewdef` of the same expression shows it is kept.
 - **Why it cannot raise.** PostgreSQL evaluates only the selected `CASE` branch for non-constant input, so `CAST(ref AS uuid)` never sees a non-matching string. A constant reference cannot reach this path: references are always columns.
-- **The SQLAlchemy spelling is pinned by a unit test.** `regexp_match` compiles to `~` on PostgreSQL. A unit test asserts the compiled SQL contains the `CASE … ~ '<pattern>' THEN CAST(… AS UUID)` shape and the users side `users.id = …`.
+- **The SQLAlchemy spelling is pinned by a unit test.** `regexp_match` compiles to `~` on PostgreSQL. A unit test asserts the compiled SQL contains the `CASE WHEN <ref> COLLATE "C" ~ '<pattern>' THEN CAST(… AS UUID)` shape and the users side `users.id = …`. It also asserts that the pattern is the enumerated class and contains no `0-9` or `a-f` range.
 
 *Alternatives:*
-- **An expression index `ON users ((CAST(id AS VARCHAR)))`** (B in `measurements.md`). It needs no query change, but the planner merge-joins against the ordered index and walks up to the largest referenced key. With random UUIDs that is most of the table: 198k index rows at 200k users, 379 ms. Bounding it needs a plan pin on every read, and it adds a second index that only works around the cast. Rejected.
+- **An expression index `ON users ((CAST(id AS VARCHAR)))`** (B in `measurements.md`). It needs no query change, but the planner merge-joins against the ordered index and walks up to the largest referenced key. With random UUIDs that is most of the table: about 200k index rows at 200k users, 431 ms on PostgreSQL 15. Bounding it needs a plan pin on every read, and it adds a second index that only works around the cast. Rejected.
 - **An unguarded `CAST(ref AS uuid)`.** It errors on `dev-user`, and matches uppercase and braced references that never matched before. Rejected.
-- **`ref::uuid` inside a `pg_input_is_valid` guard (PostgreSQL 16).** This would accept the non-canonical spellings, which changes which rows match. It also ties the code to PostgreSQL 16. Rejected in favour of the regex.
+- **`ref::uuid` inside a `pg_input_is_valid` guard (PostgreSQL 16).** This would accept the non-canonical spellings, which changes which rows match. It also does not exist on PostgreSQL 15, the supported baseline. Rejected in favour of the regex.
 
 ### 2. Username filters resolve the username to an id once
 
@@ -104,15 +109,18 @@ A unit test scans `app/infrastructure/repositories/*.py` with `ast`, or a regex 
     - `dev-user`;
     - a deleted user's id;
     - uppercase;
+    - a non-ASCII digit (`٣`) and a non-ASCII letter (`ä`) in the last position;
     - NULL creator.
 
-    Booking list, booking `get`, environment page, environment `get` and children, and both `held_by` maps return the same names as the old join, evaluated in the same test as a reference query.
-  - **Plans.** With 20,000 seeded users, `EXPLAIN (ANALYZE, FORMAT JSON)` of the environments page row read and the bookings list item read must show every `users` node as an `Index Scan` on `users_pkey`, with an `Index Cond`. Each node must have `Actual Loops × Actual Rows` no greater than the page's distinct references. This is checked under `force_custom_plan` and `force_generic_plan`. A third run on the default small users table uses `SET LOCAL enable_seqscan = off`, to show the key path is available (spec: "Key lookup is available on a small users table").
+    Booking list, booking `get`, environment page, environment `get` and children, and both `held_by` maps return the same names as the old join, evaluated in the same test as a reference query. The non-ASCII references are also resolved through `user_ref_uuid` with the reference collated as `und-x-icu`; they give no user and no error.
+  - **Plans: availability (normative).** This tests the spec's second requirement. It runs `EXPLAIN (ANALYZE, FORMAT JSON)` of the environments page row read and the bookings list item read with `SET LOCAL enable_seqscan = off`, under `force_custom_plan` and `force_generic_plan`. Every `users` node must be an `Index Scan` on `users_pkey` with an `Index Cond` on the reference. `Actual Loops × Actual Rows` must be no greater than the page's distinct references. This depends only on the join being sargable, not on cost estimates.
+  - **Plans: measured regression (not a guarantee).** With 20,000 seeded users, current statistics and default settings, the planner's own choice for the same two reads is the per-row `users_pkey` probe, under both plan modes. This pins the planner behaviour measured on the PostgreSQL 15 baseline that CI runs (`postgres:15`), the way #496 pinned the viewer-keyed Mine path. The spec does not promise it. If a future Postgres version or cost change flips it, the test flags it for review.
   - **Username filters.** Results for a held user, a user holding nothing, and an unknown user, for both filters. The plan's `users` node is an index scan on `users_username_key`.
 
 ## Risks / Trade-offs
 
-- **[The custom plan on a tiny users table still hashes all users.]** At 201 users it costs 1.5 ms against today's 0.65 ms. That is the planner's cost choice for a 3-page table, plus about 1 µs of regex per row. → It is accepted. The spec guarantees that the key path is available, not that it is chosen when a full read is cheaper. It flips to the key path well before the cost matters (by 20k users: 3 ms against 59 ms).
+- **[On PostgreSQL 16, the custom plan on a tiny users table hashes all users.]** At 201 users it costs 1.7 ms against today's 0.9 ms. That is the planner's cost choice for a 3-page table, plus about 1 µs of regex per row. PostgreSQL 15, the baseline, probes `users_pkey` even at 201 users (0.77 ms against 0.56 ms). → It is accepted. The spec guarantees that the key path is available, not that it is chosen when a full read is cheaper. Both versions use the key path well before the cost matters: at 20k users it is 1.2 ms against 69 ms on PG 15, and 2.7 ms against 68 ms on PG 16.
+- **[A planner version or cost change stops choosing the probe.]** The read would cost what it does today, not more. → The measured-regression plan test fails on CI's PostgreSQL 15 and flags it. The spec promises only that the path is available, which the availability test checks independently of cost.
 - **[A future writer stores a non-canonical reference.]** Its owner would show no name. → That is already true today. Every writer uses `str(uuid)`, which is canonical. The name-equality integration test pins the behaviour.
 - **[Regex cost per row.]** It is evaluated once per row read, which is bounded by the page. It is not evaluated per user.
 
