@@ -1,0 +1,98 @@
+## Purpose
+
+Defines the operator-run load-test tooling under `loadtest/`: how it refuses unsafe targets, how it seeds test data, what traffic it simulates, and what counts as a passing run. It doubles as a regression guard for the SSE/DB-pool exhaustion class of bug (#407).
+
+## ADDED Requirements
+
+### Requirement: Load tooling refuses non-loopback targets by default
+
+The seed script and the load generator SHALL each check the target before sending any request that changes state. The target passes the host check only when its host is `localhost`, an IPv4 address in `127.0.0.0/8`, or `::1`. The check SHALL NOT resolve hostnames through DNS. Any other host SHALL be refused unless the operator sets the remote-target override to that exact host (case-insensitive, port ignored). When the target is refused, the tool SHALL exit non-zero, or stop the load run before any simulated user starts, with a message that names the target and explains how to override.
+
+#### Scenario: Loopback target accepted
+- **WHEN** the target is `http://localhost:8000` or `http://127.0.0.1:8000` and the target reports stub mode
+- **THEN** the tool proceeds
+
+#### Scenario: Remote target refused by default
+- **WHEN** the target is `https://portal.example.com` and no override is set
+- **THEN** the tool exits non-zero before any login, seeding or simulated user request, and the message names `portal.example.com`
+
+#### Scenario: Hostname that resolves to loopback is still refused
+- **WHEN** the target host is a non-literal name other than `localhost`, such as `host.docker.internal`, and no override is set
+- **THEN** the tool refuses the target without consulting DNS
+
+#### Scenario: Override must name the target
+- **WHEN** the remote-target override is set to a host other than the target's host
+- **THEN** the tool still refuses the target
+
+#### Scenario: Matching override accepted
+- **WHEN** the remote-target override equals the target's host and the target reports stub mode
+- **THEN** the tool proceeds
+
+### Requirement: Load tooling refuses targets not in stub provisioning mode
+
+Before sending any request that changes state, the seed script and the load generator SHALL request `GET /health` from the target. They SHALL proceed only when the response is `200` and reports `stub_terraform: true`. A non-`200` response, an unreachable target, a missing field, or a `false` value SHALL each be treated as refusal. No override SHALL relax this check.
+
+#### Scenario: Real-provisioning target refused
+- **WHEN** the target passes the host check but `GET /health` reports `stub_terraform: false`
+- **THEN** the tool exits non-zero before any login, seeding or simulated user request
+
+#### Scenario: Older server without the field refused
+- **WHEN** `GET /health` returns `200` without a `stub_terraform` field
+- **THEN** the tool refuses the target
+
+#### Scenario: Remote override does not bypass stub check
+- **WHEN** the remote-target override matches the target host but the target reports `stub_terraform: false`
+- **THEN** the tool refuses the target
+
+### Requirement: Seeding is idempotent and reports failures
+
+The seed script SHALL create or reuse a fixed set of test accounts, `loadtest-0001` through `loadtest-1000`, all with the same known test password and the `user` role. It SHALL give each account a quota high enough that quota limits do not cap the test. It SHALL create or reuse one VM image and one hardware config, plus a pool of static VMs and a pool of namespaces. Before creating any account or pool entry it SHALL check whether that item already exists, so re-running the script against a seeded stack creates nothing new and still succeeds. Any create that the server rejects, including a `200` response that carries the HTMX error-retarget headers, SHALL be reported. If any such failure occurred, the script SHALL exit non-zero.
+
+#### Scenario: First run on an empty stack
+- **WHEN** the seed script runs against a fresh stub stack
+- **THEN** it exits `0`, and the 1000 accounts, the catalog entries and both pools exist
+
+#### Scenario: Re-run on a seeded stack
+- **WHEN** the seed script runs a second time against the same stack
+- **THEN** it creates no new accounts, catalog entries or pool entries, and exits `0`
+
+#### Scenario: Server rejects a pool entry
+- **WHEN** a static-VM or namespace create returns `200` with HTMX error-retarget headers
+- **THEN** the script reports that entry as failed and exits non-zero at the end
+
+### Requirement: Simulated traffic models open tabs and active ordering
+
+The load generator SHALL simulate two kinds of user, each logged in as a distinct seeded account:
+
+- **Passive watchers**, about 85% of users: each holds one `GET /events/stream` connection open for its whole lifetime. Each also periodically loads the bookings dashboard or the environments page, and repeats that page's background reconcile poll.
+- **Active orderers**, about 15% of users: each also holds an SSE connection open, and repeatedly runs one booking flow. The flow orders a booking, mostly `VM` and sometimes `STATIC_VM` or `NAMESPACE`, then polls it until it is no longer in a transient state, holds it, and releases it.
+
+Every JSON API request SHALL ask for a JSON response, so that an unauthenticated request is recorded as a failure rather than as a successful redirect to the login page. Each request type SHALL appear under its own name in the run's statistics. The SSE connection SHALL be recorded as a failure when it cannot be established. An ordered booking that ends up `QUEUED` because the pool is empty SHALL NOT be recorded as a failure.
+
+#### Scenario: Session survives plain-http localhost
+- **WHEN** a simulated user logs in to `http://localhost:8000` and the server marks the session cookie `Secure`
+- **THEN** that user's later requests, including the SSE connection, are still authenticated
+
+#### Scenario: Lost authentication is a failure
+- **WHEN** a simulated user's session is no longer valid and it makes a JSON API request
+- **THEN** the request is recorded as a failure, not as a success
+
+#### Scenario: Booking lifecycle completes
+- **WHEN** an active orderer orders a VM booking against the stub stack
+- **THEN** the booking reaches `READY`, is released with a `202` response, and each step is recorded under its own request name
+
+#### Scenario: Pool empty
+- **WHEN** an active orderer orders a pooled resource while the pool is exhausted
+- **THEN** the booking is accepted as `QUEUED`, no failure is recorded, and the user does not try to release it
+
+### Requirement: Load runs have documented pass criteria
+
+The tooling documentation SHALL define a passing run as follows:
+- the run's statistics show a 0% failure rate across all request names;
+- the app and worker logs from the run's time window contain no DB-pool exhaustion signature (`QueuePool` limit or timeout errors).
+
+The documentation SHALL also give the command that checks the logs for exactly that window. It SHALL describe a 100-user smoke run to do before the 1000-user run. It SHALL state the host prerequisites the load generator needs, including the open-file-descriptor limit.
+
+#### Scenario: Operator verifies a run
+- **WHEN** an operator follows `loadtest/README.md` after a run
+- **THEN** they can decide pass or fail from the CSV statistics and the scoped log check, without other knowledge
