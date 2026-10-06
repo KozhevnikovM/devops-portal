@@ -1,12 +1,13 @@
 from uuid import UUID, uuid4
 
-from sqlalchemy import String, cast, func, select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.booking_status import LIVE_STATUSES
 from app.domain.entities import StaticVM
 from app.domain.exceptions import StaticVMNotFoundError
 from app.infrastructure.database.models import BookingModel, StaticVMModel, UserModel
+from app.infrastructure.repositories._user_ref import user_by_ref
 
 _LIVE_STATUSES = [s.value for s in LIVE_STATUSES]
 
@@ -75,7 +76,7 @@ class StaticVMRepository:
         """Map static_vm_id → owner username for currently-held static VMs."""
         result = await session.execute(
             select(BookingModel.static_vm_id, UserModel.username)
-            .join(UserModel, cast(UserModel.id, String) == BookingModel.user_id, isouter=True)
+            .join(UserModel, user_by_ref(UserModel, BookingModel.user_id), isouter=True)
             .where(
                 BookingModel.static_vm_id.is_not(None),
                 BookingModel.status.in_(_LIVE_STATUSES),
