@@ -34,12 +34,14 @@ Currently, pull requests never build the Docker image or run it in a container. 
 - Pushing built images to external container registries (image publishing belongs to release/CD pipelines).
 - Running end-to-end browser tests or full load suites against the smoke-tested container (addressed in #455 and load testing changes).
 - Altering production orchestration, multi-worker configurations, or blue-green cutover automation in `docker-compose.prod.yml`.
+- Configuring repository branch protection rules or rulesets to require the status check before merging (enabling `docker-smoke-test` as a required status check in branch protection or repository rulesets is a separate repository-admin step, documented but not performed by this change).
 
 ## Decisions
 
 ### Decision 1: Dedicated Workflow File (`docker-smoke-test.yml`)
 - **Choice**: Implement the smoke test in a standalone workflow `.github/workflows/docker-smoke-test.yml` producing a distinct check named `docker-smoke-test`.
 - **Rationale**: Isolates Docker build and runtime verification from unit test and lint runs. Parallelizes execution with other CI checks and produces a clear, dedicated status check on pull requests.
+- **Status check enforcement note**: This change produces the CI check and ensures it fails when the container cannot be built or run, but does not configure repository branch protection or rulesets to make it merge-blocking. Enabling `docker-smoke-test` as a required status check in branch protection or rulesets is a separate repository-admin step, documented in developer guidance but not performed by this change.
 - **Alternatives considered**:
   - *Add a job to `fast-tests.yml`*: Slows down fast-feedback unit tests and muddles unit testing with container packaging concerns.
   - *Add a job to `postgres-integration.yml`*: While both use Postgres, merging them couples test execution with container builds, increasing workflow runtime and complicating failure triage.

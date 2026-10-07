@@ -1,6 +1,6 @@
 ## Why
 
-Code that passes pytest and static quality gates can still fail to package into a deployable container or fail to boot in production due to broken `COPY` instructions, missing system dependencies, invalid file permissions, or unhandled startup crashes. Without an automated gate verifying container artifact creation and runtime viability, packaging regressions can reach `main`. Issue #454 introduces an automated CI check that builds the production Docker image and runs a container runtime smoke test before changes merge.
+Code that passes pytest and static quality gates can still fail to package into a deployable container or fail to boot in production due to broken `COPY` instructions, missing system dependencies, invalid file permissions, or unhandled startup crashes. Without an automated check verifying container artifact creation and runtime viability, packaging regressions can reach `main`. Issue #454 introduces an automated CI check on pull requests that builds the production Docker image and runs a container runtime smoke test.
 
 ## What Changes
 
@@ -21,11 +21,11 @@ Code that passes pytest and static quality gates can still fail to package into 
 
 ### Modified Capabilities
 
-- `continuous-integration`: add an automated pull-request gate that builds the production Docker image, starts the container with minimal configuration, verifies successful startup and liveness probe response, and fails if the container cannot be built or run.
+- `continuous-integration`: add an automated pull-request check that builds the production Docker image, starts the container with minimal configuration, verifies successful startup and health probe responses (both liveness and readiness), and fails if the container cannot be built or run.
 
 ## Impact
 
 - `.github/workflows/`: add `docker-smoke-test.yml` workflow.
 - Developer documentation: update `CLAUDE.md` and `AGENTS.md` with the local command to build and smoke-test the Docker image.
-- Pull request checks: introduces a new blocking CI status check (`docker-smoke-test`).
+- Pull request checks: introduces a new CI status check (`docker-smoke-test`) that fails if container build or runtime smoke testing fails. (Enabling the check as a required status check in repository branch protection or rulesets is a separate repository-admin step not performed by this change.)
 - Application runtime: zero runtime performance or functional impact on the deployed application.

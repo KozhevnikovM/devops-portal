@@ -14,5 +14,5 @@
 ## 3. Documentation and Developer Workflow
 
 - [ ] 3.1 Update `CLAUDE.md` and `AGENTS.md` with `./scripts/smoke_test_docker.sh` as the canonical local command, including Docker/port prerequisites and the disposable-service behavior.
-- [ ] 3.2 Update developer and CI documentation describing the Docker smoke test gate, exact backing-service versions/URLs, migration step, explicit app command, probe assertions, and failure triage/log cleanup.
+- [ ] 3.2 Update developer and CI documentation describing the Docker smoke test workflow and check, exact backing-service versions/URLs, migration step, explicit app command, probe assertions, and failure triage/log cleanup; document that enabling `docker-smoke-test` as a required status check in branch protection or repository rulesets is a separate repository-admin step not performed by this change.
 - [ ] 3.3 Verify the completed artifacts with `openspec validate ci-docker-smoke-test --strict`; run `pytest tests/ -m "not integration"` only as an implementation regression check after code/workflow changes are applied.
