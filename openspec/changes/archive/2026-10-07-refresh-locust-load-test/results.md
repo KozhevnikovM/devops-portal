@@ -6,7 +6,7 @@ Pass criteria are the `load-testing` spec's "Load runs have documented pass crit
 | Run | Users | Duration | Requests | Failures | Pool-exhaustion signature | Verdict |
 |---|---|---|---|---|---|---|
 | Smoke (`smoke`) | 100 | 3 m (full) | 766 | **0 (0.00%)** | none | **Pass** |
-| Characterization (`run1`) | 1000 | 15 m (full) | 20 994 | 524 (2.50%) | none | **Pass, pending follow-up issue links** (see "Failures and attribution") |
+| Characterization (`run1`) | 1000 | 15 m (full) | 20 994 | 524 (2.50%) | none | **Pass** — all failures attributed to non-pool causes and linked to follow-up issues [#522](https://github.com/KozhevnikovM/devops-portal/issues/522) / [#523](https://github.com/KozhevnikovM/devops-portal/issues/523) (see "Failures and attribution") |
 
 ## Stack configuration
 
@@ -119,14 +119,14 @@ requests timed out waiting for a pool connection.
 | `/book/vm/reconcile` | 3 | `HTTP 0` | Same as above: app/host CPU saturation. | [#523](https://github.com/KozhevnikovM/devops-portal/issues/523) |
 | `/api/bookings/[id] [release]` | 1 | `HTTP 0` | Same as above: app/host CPU saturation. | [#523](https://github.com/KozhevnikovM/devops-portal/issues/523) |
 
-D10 requires each failing request name to link a follow-up issue. Filing them publishes to GitHub,
-Both were filed upstream (approved by the maintainer) as [#522](https://github.com/KozhevnikovM/devops-portal/issues/522)and[#523](https://github.com/KozhevnikovM/devops-portal/issues/523):
+D10 requires each failing request name to link a follow-up issue. Every failing request name above
+is attributed to a non-pool cause and linked to one of these two filed issues:
 
-- **Draft A — "Stub-mode VM provisioning backs up under load-test order rates (#505 follow-up)".**
+- **[#522](https://github.com/KozhevnikovM/devops-portal/issues/522) — "Stub-mode VM provisioning backs up under load-test order rates (#505 follow-up)".**
   One worker at `-c 4` completes about 35 stub VMs/min, and the 1000-user mix orders about 57/min.
   The question is whether the load test should order fewer VMs, use a longer settle window, or
   document a worker scale (`--scale worker=N`) for the characterization run.
-- **Draft B — "Single uvicorn worker CPU-bound at ~1000 concurrent users on 2 vCPU (#505 follow-up)".**
+- **[#523](https://github.com/KozhevnikovM/devops-portal/issues/523) — "Single uvicorn worker CPU-bound at ~1000 concurrent users on 2 vCPU (#505 follow-up)".**
   p50 was ~8 s on every endpoint and a few connections were dropped. The task is to re-measure with
   Locust on a separate host and with more uvicorn workers before drawing capacity conclusions. This
   is out of scope for #505 (Non-Goals: no worker/pool tuning).
