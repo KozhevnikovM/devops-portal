@@ -12,7 +12,7 @@ Every pull request targeting `main` SHALL produce a CI check named `docker-smoke
 
 #### Scenario: Production image build fails
 - **WHEN** a pull request introduces an invalid Dockerfile instruction, broken `COPY` path, missing source artifact, or dependency installation failure
-- **THEN** the `docker-smoke-test` check fails during image build and blocks the pull request
+- **THEN** the `docker-smoke-test` check fails during image build
 
 #### Scenario: Container crashes on startup
 - **WHEN** the container image builds successfully but the application process crashes during startup due to missing runtime libraries, broken imports, or configuration errors
@@ -20,13 +20,13 @@ Every pull request targeting `main` SHALL produce a CI check named `docker-smoke
 
 #### Scenario: Application fails the liveness probe
 - **WHEN** the container starts but `GET /health` times out, fails to connect, or returns an error status code
-- **THEN** the `docker-smoke-test` check fails and blocks merge
+- **THEN** the `docker-smoke-test` check fails and outputs the container runtime logs
 
 #### Scenario: Application fails the readiness probe
 - **WHEN** the container starts but `GET /health/ready` times out, fails to connect, returns an error status code, or reports an unavailable PostgreSQL or Redis dependency
-- **THEN** the `docker-smoke-test` check fails, emits the container logs, and blocks merge
+- **THEN** the `docker-smoke-test` check fails and emits the container logs
 
-### Requirement: The Docker smoke test gate is reproducible locally
+### Requirement: The Docker smoke test is reproducible locally
 
 The repository SHALL document `./scripts/smoke_test_docker.sh` as the single canonical local command. The script SHALL build the repository `Dockerfile`, use disposable PostgreSQL 15 and Redis 7 services, apply `alembic upgrade head` from the built image to the same database used by the app, explicitly start Uvicorn, verify both health endpoints with the same status assertions as CI, print logs on failure, and clean up containers on success or failure.
 
