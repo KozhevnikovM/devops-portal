@@ -28,9 +28,19 @@ server-side one.
 
 ### `GET /health`
 
-Liveness probe. Always returns `200 OK` with `{"status": "ok"}` — no dependency checks. This is
-what the `app` container's own `healthcheck:` polls; it should never fail just because Postgres
-or Redis had a transient blip.
+Liveness probe. Always returns `200 OK`, without authentication, and runs no dependency checks.
+This is what the `app` container's own `healthcheck:` polls; it should never fail just because
+Postgres or Redis had a transient blip.
+
+```json
+{"status": "ok", "stub_terraform": true, "slot": "blue"}
+```
+
+| Field | Type | Meaning |
+|---|---|---|
+| `status` | string | Always `"ok"`. |
+| `stub_terraform` | boolean | `true` when the server uses the stub Terraform adapter (`USE_STUB_TERRAFORM`), so VM orders never reach real infrastructure; `false` on a deployment that provisions for real. The load-test tooling refuses any target that doesn't report `true` (see `loadtest/README.md`). |
+| `slot` | string | The blue/green deployment slot (`APP_SLOT`). Present only when one is configured. |
 
 ### `GET /health/ready`
 

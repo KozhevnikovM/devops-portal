@@ -171,6 +171,8 @@ The 60-second per-row `hx-get` fallback is covered by the same reconcile path on
 - **[Risk] Changes to the reconcile poller's or rows' markup break the parser.** → A missing poller or missing attributes is recorded as a failure (D7), so the test breaks loudly.
 - **[Risk] `select_batch` in the load test and `selectBatch` in the browser diverge.** → The load test uses the same oracle that the fast suite already checks against the JS cases, so there is no separate copy that could drift.
 - **[Trade-off] Stub mode becomes visible on an unauthenticated endpoint.** → The information value is low (D1). Real deployments report `false`.
+- **[Found in apply] The stub stack needs `PROVISION_RATE_LIMIT` lifted.** At the default `0.5/m` Celery rate limit on `provision_vm_task` (a vCloud Director guard), ordering users outrun provisioning, and VM bookings sit `PENDING` past the 60 s settle window, which fails the smoke run. → `loadtest/README.md` lists `PROVISION_RATE_LIMIT=1000/s` as a stub-stack prerequisite. This is a narrow exception to D4's "no stack configuration change", recorded in `results.md`.
+- **[Found in apply] Reconcile requests are not in the app's access log.** `app/main.py` filters `/reconcile` and `/row` lines out of the uvicorn access log on purpose. → The `r=` check in task 4.2 used a client-side record of the URLs the server answered, not the app log.
 - **[Trade-off] Seed data persists in the database.** → This is the same as #409. The README says to use `docker compose down -v` or the admin UI to clean up.
 
 ## Migration Plan

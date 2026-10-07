@@ -2036,6 +2036,20 @@ Scale workers to match the total slot count (`tokens × max_parallel`):
 docker compose up -d --scale worker=4
 ```
 
+## Load testing
+
+`loadtest/` (repo root) holds an operator-run Locust load test that simulates about 1000
+concurrent portal users against a **stub-mode** stack. Most simulated users keep a tab open (one
+held `GET /events/stream` connection plus the list page's 60 s reconcile poll); about 15% also
+order and release bookings. It doubles as a regression check for the DB-pool exhaustion class of
+bug (`docs/bugfix/407-sse-session-pins-db-connection.md`).
+
+Both the seed script and the load generator refuse a target that isn't loopback (unless named in
+`LOADTEST_ALLOW_REMOTE_HOST`) or that doesn't report `"stub_terraform": true` on `GET /health` —
+the stub check has no override. See [`loadtest/README.md`](../loadtest/README.md) for setup, the
+smoke and 1000-user runs, and their pass criteria. It can run alongside the Grafana overlay above
+to watch container CPU/memory during a run.
+
 ## Continuous Integration & Quality Gates
 
 Pull requests targeting `main` automatically run continuous quality and security checks (`.github/workflows/quality-security-gates.yml`) alongside unit and PostgreSQL integration tests.
