@@ -1,0 +1,141 @@
+name: Production Docker smoke test
+
+on:
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  docker-smoke-test:
+    name: docker-smoke-test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: portal
+          POSTGRES_PASSWORD: portal
+          POSTGRES_DB: portal_smoke
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U portal -d portal_smoke"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build production Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          load: true
+          tags: portal-smoke:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Run database migrations
+        run: |
+          docker run --rm \
+            --network host \
+            -e DATABASE_URL_SYNC=postgresql+psycopg2://portal:portal@127.0.0.1:5432/portal_smoke \
+            portal-smoke:latest \
+            alembic upgrade head
+
+      - name: Start application container
+        run: |
+          docker run -d \
+            --name portal-app \
+            --network host \
+            -e DATABASE_URL=postgresql+asyncpg://portal:portal@127.0.0.1:5432/portal_smoke \
+            -e DATABASE_URL_SYNC=postgresql+psycopg2://portal:portal@127.0.0.1:5432/portal_smoke \
+            -e REDIS_URL=redis://127.0.0.1:6379/0 \
+            -e USE_STUB_TERRAFORM=true \
+            -e ADMIN_PASSWORD=smoke-test-admin \
+            portal-smoke:latest \
+            uvicorn app.main:app --host 0.0.0.0 --port 8000
+
+      - name: Verify health and readiness probes
+        run: |
+          echo "Polling GET /health (liveness)..."
+          HEALTH_OK=false
+          for i in $(seq 1 30); do
+            if ! docker inspect -f '{{.State.Running}}' portal-app 2>/dev/null | grep -q true; then
+              echo "Error: portal-app container crashed or stopped prematurely." >&2
+              exit 1
+            fi
+            HTTP_CODE=$(curl -s -o /tmp/health.json -w "%{http_code}" http://127.0.0.1:8000/health || true)
+            if [ "$HTTP_CODE" = "200" ]; then
+              if python3 -c "import sys, json; data = json.load(open('/tmp/health.json')); assert data.get('status') == 'ok', f'Invalid status: {data}'; assert 'slot' not in data, f'APP_SLOT should be unset: {data}'" 2>/dev/null; then
+                HEALTH_OK=true
+                echo "Liveness probe succeeded: $(cat /tmp/health.json)"
+                break
+              fi
+            fi
+            sleep 1
+          done
+
+          if [ "$HEALTH_OK" != "true" ]; then
+            echo "Error: Liveness probe failed or timed out." >&2
+            exit 1
+          fi
+
+          echo "Polling GET /health/ready (readiness)..."
+          READY_OK=false
+          for i in $(seq 1 30); do
+            if ! docker inspect -f '{{.State.Running}}' portal-app 2>/dev/null | grep -q true; then
+              echo "Error: portal-app container crashed or stopped prematurely." >&2
+              exit 1
+            fi
+            HTTP_CODE=$(curl -s -o /tmp/ready.json -w "%{http_code}" http://127.0.0.1:8000/health/ready || true)
+            if [ "$HTTP_CODE" = "200" ]; then
+              if python3 -c "import sys, json; data = json.load(open('/tmp/ready.json')); assert data.get('status') == 'ok', f'Invalid status: {data}'" 2>/dev/null; then
+                READY_OK=true
+                echo "Readiness probe succeeded: $(cat /tmp/ready.json)"
+                break
+              fi
+            fi
+            sleep 1
+          done
+
+          if [ "$READY_OK" != "true" ]; then
+            echo "Error: Readiness probe failed or timed out." >&2
+            exit 1
+          fi
+
+      - name: Dump container diagnostics on failure
+        if: failure()
+        run: |
+          echo "=== Application container logs ==="
+          docker logs portal-app || true
+
+      - name: Clean up application container
+        if: always()
+        run: |
+          docker stop portal-app || true
+          docker rm portal-app || true
