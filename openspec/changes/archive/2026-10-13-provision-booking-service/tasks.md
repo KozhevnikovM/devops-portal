@@ -116,4 +116,4 @@
 
 ## 7. Spec sync (after the code PR is approved)
 
-- [ ] 7.1 Run `/opsx:sync` to create `openspec/specs/vm-provisioning-lifecycle/spec.md`, then `/opsx:archive`, and commit both to the code PR branch before merging. Verify that `openspec validate --strict` passes on the main specs.
+- [x] 7.1 Run `/opsx:sync` to create `openspec/specs/vm-provisioning-lifecycle/spec.md`, then `/opsx:archive`, and commit both to the code PR branch before merging. Verify that `openspec validate --strict` passes on the main specs.
