@@ -19,7 +19,7 @@ import secrets
 import string
 from collections.abc import Callable
 from enum import Enum
-from typing import Any
+from typing import Any, NoReturn
 from uuid import UUID
 
 from sqlalchemy.orm import Session
@@ -43,7 +43,11 @@ from app.domain.booking_status import (
     PROVISIONING_PROGRESS_STATUSES,
 )
 from app.domain.enums import BookingStatus
-from app.domain.exceptions import SecretDecryptionError, VmConfigurationError
+from app.domain.exceptions import (
+    IllegalStatusTransitionError,
+    SecretDecryptionError,
+    VmConfigurationError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -123,17 +127,17 @@ class ProvisionBooking:
     ) -> ProvisionOutcome:
         booking_str = str(booking_id)
 
-        # Guard 1: Check before waiting for a credential slot.
-        existing = self.run(lambda s: self.bookings.sync_get(s, booking_id))
-        if existing.status in _TERMINAL_OR_RELEASING:
-            logger.info(
-                "Booking %s was released (status=%s) — skipping provisioning",
-                booking_str,
-                existing.status.value,
-            )
-            return ProvisionOutcome.SKIPPED_RELEASED
-
         try:
+            # Guard 1: Check before waiting for a credential slot.
+            existing = self.run(lambda s: self.bookings.sync_get(s, booking_id))
+            if existing.status in _TERMINAL_OR_RELEASING:
+                logger.info(
+                    "Booking %s was released (status=%s) — skipping provisioning",
+                    booking_str,
+                    existing.status.value,
+                )
+                return ProvisionOutcome.SKIPPED_RELEASED
+
             with self.credential_slot.acquire() as lease:
                 return self._execute_with_lease(
                     booking_id=booking_id,
@@ -147,6 +151,15 @@ class ProvisionBooking:
                 "Token acquire timed out for booking %s, retrying", booking_str
             )
             raise ProvisioningDeferred(exc) from exc
+        except (ProvisioningDeferred, ProvisioningAttemptFailed):
+            raise
+        except Exception as exc:  # noqa: BLE001
+            self._handle_generic_failure(
+                booking_id,
+                exc,
+                is_last_attempt=is_last_attempt,
+                lifecycle=self.run,
+            )
 
     def _execute_with_lease(
         self,
@@ -159,16 +172,6 @@ class ProvisionBooking:
     ) -> ProvisionOutcome:
         booking_str = str(booking_id)
 
-        # Guard 2: Check again once the credential slot is held.
-        existing = self.run(lambda s: self.bookings.sync_get(s, booking_id))
-        if existing.status in _TERMINAL_OR_RELEASING:
-            logger.info(
-                "Booking %s was released (status=%s) — skipping provisioning",
-                booking_str,
-                existing.status.value,
-            )
-            return ProvisionOutcome.SKIPPED_RELEASED
-
         sink: ProgressSink | None = None
 
         def _lifecycle(work: Callable[[Session], Any]) -> Any:
@@ -177,6 +180,16 @@ class ProvisionBooking:
             return self.run(work)
 
         try:
+            # Guard 2: Check again once the credential slot is held.
+            existing = self.run(lambda s: self.bookings.sync_get(s, booking_id))
+            if existing.status in _TERMINAL_OR_RELEASING:
+                logger.info(
+                    "Booking %s was released (status=%s) — skipping provisioning",
+                    booking_str,
+                    existing.status.value,
+                )
+                return ProvisionOutcome.SKIPPED_RELEASED
+
             image = self.run(lambda s: self.images.sync_get(s, image_id))
             hw = self.run(lambda s: self.hw_configs.sync_get(s, hw_config_id))
 
@@ -372,41 +385,55 @@ class ProvisionBooking:
                 )
             return ProvisionOutcome.FAILED_PERMANENTLY
 
-        except Exception as exc:
-            logger.exception("Provisioning failed for booking %s", booking_str)
-            new_status = (
-                BookingStatus.FAILED if is_last_attempt else BookingStatus.RETRY
+        except Exception as exc:  # noqa: BLE001
+            self._handle_generic_failure(
+                booking_id,
+                exc,
+                is_last_attempt=is_last_attempt,
+                lifecycle=_lifecycle,
             )
-            try:
-                _lifecycle(
-                    lambda s: self.bookings.sync_set_status_message(
-                        s,
-                        booking_id,
-                        "Failed — see audit log",
-                        if_status_in=PROVISIONING_OWNED_STATUSES,
-                    )
-                )
-                _lifecycle(
-                    lambda s: self.bookings.sync_update_status(
-                        s, booking_id, new_status
-                    )
-                )
-                if new_status == BookingStatus.FAILED:
-                    _lifecycle(
-                        lambda s: (
-                            self.environments.sync_start_lease_if_ready_for_booking(
-                                s, booking_id
-                            )
-                        )
-                    )
-            except Exception as write_exc:  # noqa: BLE001
-                logger.warning(
-                    "Best-effort failure write failed for booking %s: %s",
-                    booking_str,
-                    write_exc,
-                )
-            raise ProvisioningAttemptFailed(exc) from exc
 
         finally:
             if sink is not None:
                 sink.close()
+
+    def _handle_generic_failure(
+        self,
+        booking_id: UUID,
+        exc: Exception,
+        *,
+        is_last_attempt: bool,
+        lifecycle: Callable[[Callable[[Session], Any]], Any],
+    ) -> NoReturn:
+        booking_str = str(booking_id)
+        logger.exception("Provisioning failed for booking %s", booking_str)
+        new_status = BookingStatus.FAILED if is_last_attempt else BookingStatus.RETRY
+        try:
+            lifecycle(
+                lambda s: self.bookings.sync_set_status_message(
+                    s,
+                    booking_id,
+                    "Failed — see audit log",
+                    if_status_in=PROVISIONING_OWNED_STATUSES,
+                )
+            )
+            lifecycle(
+                lambda s: self.bookings.sync_update_status(s, booking_id, new_status)
+            )
+            if new_status == BookingStatus.FAILED:
+                lifecycle(
+                    lambda s: self.environments.sync_start_lease_if_ready_for_booking(
+                        s, booking_id
+                    )
+                )
+        except IllegalStatusTransitionError:
+            # A booking still in PENDING cannot transition to RETRY; it remains
+            # in its current status for the next retry attempt.
+            pass
+        except Exception as write_exc:  # noqa: BLE001
+            logger.warning(
+                "Best-effort failure write failed for booking %s: %s",
+                booking_str,
+                write_exc,
+            )
+        raise ProvisioningAttemptFailed(exc) from exc

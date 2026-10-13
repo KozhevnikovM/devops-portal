@@ -283,7 +283,7 @@ async def test_create_use_case_persists_startup_script():
 
 
 def test_order_api_threads_startup_script():
-    from datetime import datetime, timedelta, timezone
+    from datetime import UTC, datetime, timedelta
 
     from fastapi.testclient import TestClient
 
@@ -294,7 +294,7 @@ def test_order_api_threads_startup_script():
     from app.main import app
     from tests.conftest import make_fake_user
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     booking = Booking(
         id=uuid4(),
         user_id="u",

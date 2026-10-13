@@ -246,5 +246,7 @@ def provision_vm_task(
             raise self.retry(exc=exc.cause)
         except ProvisioningAttemptFailed as exc:
             raise self.retry(exc=exc.cause)
+        except Exception as exc:  # noqa: BLE001
+            raise self.retry(exc=exc)
     finally:
         request_id_ctx_var.reset(request_id_token)

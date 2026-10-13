@@ -95,3 +95,66 @@ def test_pending_booking_reschedules_when_slots_busy():
     # No booking writes were performed
     mock_repo.sync_update_status.assert_not_called()
     mock_repo.sync_set_status_message.assert_not_called()
+
+
+def test_pre_slot_guard_db_failure_retries_task():
+    """Regression: Pre-slot guard DB failure retries task without attempting slot acquisition."""
+    booking_id = str(uuid4())
+    image_id = str(uuid4())
+    hw_config_id = str(uuid4())
+
+    mock_repo = MagicMock()
+    mock_repo.sync_get.side_effect = RuntimeError("DB disconnect during pre-slot check")
+
+    mock_redis = MagicMock()
+
+    with (
+        patch("app.tasks.provision.settings.USE_STUB_TERRAFORM", False),
+        patch("app.tasks.provision.settings.VCD_API_TOKENS", "vcd-token-1"),
+        patch("app.tasks.provision.settings.VCD_TOKEN_MAX_PARALLEL", 1),
+        patch("app.tasks.provision.redis_lib.Redis.from_url", return_value=mock_redis),
+        patch("app.tasks.provision.repo", mock_repo),
+        patch("app.tasks.provision.SyncSessionLocal"),
+        pytest.raises(Retry),
+    ):
+        provision_vm_task.apply(args=[booking_id, image_id, hw_config_id], throw=True)
+
+    # Slot acquisition was NEVER attempted on Redis
+    mock_redis.set.assert_not_called()
+    # Best-effort failure writes were attempted
+    mock_repo.sync_update_status.assert_called_once()
+    assert mock_repo.sync_update_status.call_args[0][2] == BookingStatus.RETRY
+
+
+def test_post_slot_guard_db_failure_retries_task_and_releases_slot():
+    """Regression: Post-slot guard DB failure retries task and releases acquired slot."""
+    booking_id = str(uuid4())
+    image_id = str(uuid4())
+    hw_config_id = str(uuid4())
+
+    mock_repo = MagicMock()
+    mock_repo.sync_get.side_effect = [
+        MagicMock(id=booking_id, status=BookingStatus.PENDING, vm_password=None),
+        RuntimeError("DB disconnect during post-slot check"),
+    ]
+
+    mock_redis = MagicMock()
+    mock_redis.set.return_value = True
+
+    with (
+        patch("app.tasks.provision.settings.USE_STUB_TERRAFORM", False),
+        patch("app.tasks.provision.settings.VCD_API_TOKENS", "vcd-token-1"),
+        patch("app.tasks.provision.settings.VCD_TOKEN_MAX_PARALLEL", 1),
+        patch("app.tasks.provision.redis_lib.Redis.from_url", return_value=mock_redis),
+        patch("app.tasks.provision.repo", mock_repo),
+        patch("app.tasks.provision.SyncSessionLocal"),
+        pytest.raises(Retry),
+    ):
+        provision_vm_task.apply(args=[booking_id, image_id, hw_config_id], throw=True)
+
+    # Slot acquisition was attempted on Redis and released
+    mock_redis.set.assert_called_once()
+    mock_redis.delete.assert_called_once()
+    # Best-effort failure writes were attempted
+    mock_repo.sync_update_status.assert_called_once()
+    assert mock_repo.sync_update_status.call_args[0][2] == BookingStatus.RETRY

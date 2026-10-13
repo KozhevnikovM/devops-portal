@@ -10,7 +10,7 @@ Fix has three parts, one test group each:
      case) instead of attempting an illegal status transition.
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
@@ -24,7 +24,7 @@ def _make_image():
         name="Ubuntu",
         vapp_template_id="tpl-1",
         is_active=True,
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
 
 
@@ -36,7 +36,7 @@ def _make_hw():
         memory_mb=4096,
         disk_mb=26624,
         is_active=True,
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
 
 

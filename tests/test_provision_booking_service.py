@@ -7,7 +7,7 @@ in-memory fakes. No patch(), no Celery, no Redis, no Terraform, and no real data
 import importlib
 from collections.abc import Callable
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -71,11 +71,19 @@ class FakeBookingStore:
         self.bookings: dict[UUID, Booking] = {}
         self.event_log = event_log
         self.fail_writes = False
+        self.sync_get_calls = 0
+        self.fail_get_on_call: int | None = None
 
     def add(self, booking: Booking) -> None:
         self.bookings[booking.id] = booking
 
     def sync_get(self, session: Any, booking_id: UUID) -> Booking:
+        self.sync_get_calls += 1
+        if (
+            self.fail_get_on_call is not None
+            and self.sync_get_calls == self.fail_get_on_call
+        ):
+            raise RuntimeError("Database connection lost during sync_get")
         return self.bookings[booking_id]
 
     def sync_update_status(
@@ -144,7 +152,7 @@ class FakeImageStore:
                 name="Ubuntu",
                 vapp_template_id="tpl-ub-22",
                 is_active=True,
-                created_at=datetime.now(timezone.utc),
+                created_at=datetime.now(UTC),
             ),
         )
 
@@ -164,7 +172,7 @@ class FakeHWConfigStore:
                 disk_mb=40960,
                 drive_type=DriveType.SSD,
                 is_active=True,
-                created_at=datetime.now(timezone.utc),
+                created_at=datetime.now(UTC),
             ),
         )
 
@@ -329,7 +337,7 @@ def _make_booking(
     config_roles: list[str] | None = None,
     vm_password: str | None = None,
 ) -> Booking:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     return Booking(
         id=uuid4(),
         user_id="user-1",
@@ -559,15 +567,15 @@ def test_existing_password_is_reused():
     """Scenario: Existing password is reused across attempts."""
     h = Harness(run_configuration=False)
     booking = _make_booking(
-        status=BookingStatus.PENDING, vm_password="ExistingSecret123"
+        status=BookingStatus.PENDING, vm_password="hunter2-plaintext"
     )
     h.booking_store.add(booking)
 
     outcome = h.service.execute(booking.id, uuid4(), uuid4(), is_last_attempt=False)
 
     assert outcome == ProvisionOutcome.READY
-    assert booking.vm_password == "ExistingSecret123"
-    assert h.applier.applied_configs[0]["vm_password"] == "ExistingSecret123"
+    assert booking.vm_password == "hunter2-plaintext"
+    assert h.applier.applied_configs[0]["vm_password"] == "hunter2-plaintext"
 
 
 def test_password_generated_when_missing():
@@ -775,3 +783,71 @@ def test_lease_start_matrix():
     with pytest.raises(ProvisioningAttemptFailed):
         h_failed.service.execute(b_failed.id, uuid4(), uuid4(), is_last_attempt=True)
     assert b_failed.id in h_failed.env_store.lease_started_for
+
+
+def test_guard_1_db_failure_records_retry_and_raises_attempt_failed():
+    """Pre-slot guard DB failure: stays PENDING, attempts status message, never acquires slot."""
+    h = Harness(run_configuration=False)
+    booking = _make_booking(status=BookingStatus.PENDING)
+    h.booking_store.add(booking)
+    h.booking_store.fail_get_on_call = 1
+
+    with pytest.raises(ProvisioningAttemptFailed) as exc_info:
+        h.service.execute(booking.id, uuid4(), uuid4(), is_last_attempt=False)
+
+    assert "Database connection lost during sync_get" in str(exc_info.value.cause)
+    assert h.slot.acquire_count == 0
+    # Booking stays PENDING because PENDING cannot transition to RETRY; Celery retries the PENDING booking.
+    assert booking.status == BookingStatus.PENDING
+    assert booking.status_message == "Failed — see audit log"
+
+
+def test_guard_1_db_failure_on_provisioning_transitions_to_retry():
+    """Pre-slot guard DB failure on a booking already in PROVISIONING transitions to RETRY."""
+    h = Harness(run_configuration=False)
+    booking = _make_booking(status=BookingStatus.PROVISIONING)
+    h.booking_store.add(booking)
+    h.booking_store.fail_get_on_call = 1
+
+    with pytest.raises(ProvisioningAttemptFailed) as exc_info:
+        h.service.execute(booking.id, uuid4(), uuid4(), is_last_attempt=False)
+
+    assert "Database connection lost during sync_get" in str(exc_info.value.cause)
+    assert h.slot.acquire_count == 0
+    assert booking.status == BookingStatus.RETRY
+    assert booking.status_message == "Failed — see audit log"
+
+
+def test_guard_2_db_failure_records_retry_releases_slot_and_raises_attempt_failed():
+    """Post-slot guard DB failure: stays PENDING, releases slot, raises ProvisioningAttemptFailed."""
+    h = Harness(run_configuration=False)
+    booking = _make_booking(status=BookingStatus.PENDING)
+    h.booking_store.add(booking)
+    h.booking_store.fail_get_on_call = 2
+
+    with pytest.raises(ProvisioningAttemptFailed) as exc_info:
+        h.service.execute(booking.id, uuid4(), uuid4(), is_last_attempt=False)
+
+    assert "Database connection lost during sync_get" in str(exc_info.value.cause)
+    assert h.slot.acquire_count == 1
+    assert h.slot.release_count == 1
+    # Booking stays PENDING because PENDING cannot transition to RETRY; Celery retries the PENDING booking.
+    assert booking.status == BookingStatus.PENDING
+    assert booking.status_message == "Failed — see audit log"
+
+
+def test_guard_2_db_failure_on_provisioning_transitions_to_retry():
+    """Post-slot guard DB failure on a booking already in PROVISIONING transitions to RETRY."""
+    h = Harness(run_configuration=False)
+    booking = _make_booking(status=BookingStatus.PROVISIONING)
+    h.booking_store.add(booking)
+    h.booking_store.fail_get_on_call = 2
+
+    with pytest.raises(ProvisioningAttemptFailed) as exc_info:
+        h.service.execute(booking.id, uuid4(), uuid4(), is_last_attempt=False)
+
+    assert "Database connection lost during sync_get" in str(exc_info.value.cause)
+    assert h.slot.acquire_count == 1
+    assert h.slot.release_count == 1
+    assert booking.status == BookingStatus.RETRY
+    assert booking.status_message == "Failed — see audit log"
