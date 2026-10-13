@@ -19,6 +19,7 @@ from app.domain.validation import validate_var_names
 from app.infrastructure.auth import require_user
 from app.infrastructure.database.session import get_async_session
 from app.presentation import deps
+from app.presentation.forms import OptionalFormUUID
 from app.presentation.middleware.correlation_id import get_request_id
 from app.presentation.routes._queue import attach_queue_positions
 from app.presentation.pagination import (
@@ -392,8 +393,8 @@ async def create_booking(
     label: str = Form(""),
     image_id: UUID | None = Form(None),
     hw_config_id: UUID | None = Form(None),
-    namespace_id: UUID | None = Form(None),
-    static_vm_id: UUID | None = Form(None),
+    namespace_id: OptionalFormUUID = None,
+    static_vm_id: OptionalFormUUID = None,
     roles: list[str] = Form([]),
     vars_yaml: str = Form(""),
     session: AsyncSession = Depends(get_async_session),

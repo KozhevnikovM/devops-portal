@@ -17,6 +17,7 @@ from app.domain.exceptions import (
 )
 from app.infrastructure.auth import require_user
 from app.infrastructure.database.session import get_async_session
+from app.presentation.forms import OptionalFormUUID
 from app.presentation.middleware.correlation_id import get_request_id
 from app.presentation.pagination import (
     InvalidCursorError, decode_cursor, encode_cursor, filter_params,
@@ -258,7 +259,7 @@ async def order_environment(
     request: Request,
     blueprint_name: str = Form(...),
     ttl_minutes: int = Form(...),
-    namespace_id: UUID | None = Form(None),
+    namespace_id: OptionalFormUUID = None,
     session: AsyncSession = Depends(get_async_session),
     current_user: User = Depends(require_user),
 ):
