@@ -6,7 +6,7 @@ default option's value as the server renders it.
 """
 
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4
@@ -37,7 +37,7 @@ def client():
 
 
 def _booking(user, resource_type):
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     return Booking(
         id=uuid4(),
         user_id=str(user.id),
@@ -50,7 +50,7 @@ def _booking(user, resource_type):
 
 
 def _environment(user):
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     return Environment(
         id=uuid4(),
         name="dev-stack",
@@ -169,7 +169,7 @@ def _render_environments_page(cl):
         name="dev-stack",
         description="",
         is_active=True,
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
         items=[],
     )
     with (
