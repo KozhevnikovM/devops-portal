@@ -28,7 +28,7 @@ Every pull request targeting `main` SHALL produce a CI check named `docker-smoke
 
 ### Requirement: The Docker smoke test is reproducible locally
 
-The repository SHALL document `./scripts/smoke_test_docker.sh` as the single canonical local command. The script SHALL build the repository `Dockerfile`, use disposable PostgreSQL 15 and Redis 7 services, apply `alembic upgrade head` from the built image to the same database used by the app, explicitly start Uvicorn, verify both health endpoints with the same status assertions as CI, print logs on failure, and clean up containers on success or failure.
+The repository SHALL document `./scripts/smoke_test_docker.sh` as the single canonical local command. The script SHALL build the repository `Dockerfile`, use disposable PostgreSQL 15 and Redis 7 services on a dedicated bridge network, apply `alembic upgrade head` from the built image to the same database used by the app, explicitly start Uvicorn with loopback-only published port 8000, verify both health endpoints with the same status assertions as CI, print logs on failure, and clean up containers and networks on success or failure.
 
 #### Scenario: Developer reproduces the Docker smoke test locally
 - **WHEN** a developer executes `./scripts/smoke_test_docker.sh`

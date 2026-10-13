@@ -2074,6 +2074,16 @@ Pull requests targeting `main` automatically run continuous quality and security
    - Audits committed frontend lockfile (`package-lock.json`) via `python scripts/audit_npm.py` using `.npm-audit-baseline.json`.
    - **Status**: Blocking on any newly introduced or unapproved vulnerability outside the baseline allowlists.
 
+5. **Production Docker Smoke Test (`docker-smoke-test`)**:
+   - Workflow: `.github/workflows/docker-smoke-test.yml` (check name: `docker-smoke-test`).
+   - Builds the production container image from the repository `Dockerfile` using Docker BuildKit caching without requiring external secrets or private registry credentials.
+   - Runs ephemeral `postgres:15` and `redis:7` service containers with `POSTGRES_DB=portal_smoke` published on host ports 5432 and 6379.
+   - Executes database migrations inside the built image via `alembic upgrade head` targeting `DATABASE_URL_SYNC=postgresql+psycopg2://portal:portal@127.0.0.1:5432/portal_smoke`.
+   - Starts the application container explicitly with `uvicorn app.main:app --host 0.0.0.0 --port 8000` using host networking, `DATABASE_URL=postgresql+asyncpg://portal:portal@127.0.0.1:5432/portal_smoke`, `DATABASE_URL_SYNC=postgresql+psycopg2://portal:portal@127.0.0.1:5432/portal_smoke`, `REDIS_URL=redis://127.0.0.1:6379/0`, `USE_STUB_TERRAFORM=true`, and `ADMIN_PASSWORD=smoke-test-admin`.
+   - Verifies container startup and asserts HTTP 200 plus JSON `{"status": "ok"}` on both `GET /health` (liveness probe, with `APP_SLOT` unset) and `GET /health/ready` (readiness probe).
+   - On build failure, premature container crash, or probe timeout, dumps application, migration, and backing service container logs to step output and performs teardown cleanup in an `always()` step.
+   - **Status**: Non-blocking by default. Enabling `docker-smoke-test` as a required status check in repository branch protection or rulesets is a separate repository-admin step not performed by this workflow.
+
 ### Local Commands
 
 ```bash
@@ -2096,4 +2106,9 @@ docker run --rm -v $(pwd):/repo -w /repo zricethezav/gitleaks:latest detect --so
 # Dependency vulnerability audits
 python scripts/audit_python.py
 python scripts/audit_npm.py
+
+# Production Docker build and container runtime smoke test (matches CI check)
+# Requires Docker running; host port 8000 must be free.
+# Starts disposable Postgres 15 and Redis 7 containers, runs migrations, verifies /health & /health/ready, and cleans up on exit.
+./scripts/smoke_test_docker.sh
 ```
