@@ -46,9 +46,14 @@ class FakeCredentialLease:
 
 class FakeCredentialSlot:
     def __init__(
-        self, *, raise_unavailable: bool = False, api_token: str | None = "token-1"
+        self,
+        *,
+        raise_unavailable: bool = False,
+        api_token: str | None = "token-1",
+        raise_on_release: Exception | None = None,
     ) -> None:
         self.raise_unavailable = raise_unavailable
+        self.raise_on_release = raise_on_release
         self.api_token = api_token
         self.acquire_count = 0
         self.release_count = 0
@@ -64,6 +69,8 @@ class FakeCredentialSlot:
             yield lease
         finally:
             self.release_count += 1
+            if self.raise_on_release:
+                raise self.raise_on_release
 
 
 class FakeBookingStore:
@@ -358,6 +365,7 @@ class Harness:
         *,
         run_configuration: bool = True,
         raise_slot_unavailable: bool = False,
+        raise_on_slot_release: Exception | None = None,
         slot_token: str | None = "vcd-token-abc",
         applier_ip: str = "10.0.0.99",
         applier_exc: Exception | None = None,
@@ -374,7 +382,9 @@ class Harness:
         self.hw_config_store = FakeHWConfigStore()
         self.env_store = FakeEnvironmentStore(self.event_log)
         self.slot = FakeCredentialSlot(
-            raise_unavailable=raise_slot_unavailable, api_token=slot_token
+            raise_unavailable=raise_slot_unavailable,
+            api_token=slot_token,
+            raise_on_release=raise_on_slot_release,
         )
         self.applier = FakeApplier(
             self.event_log, ip=applier_ip, raise_exc=applier_exc, on_apply=on_apply
@@ -851,3 +861,37 @@ def test_guard_2_db_failure_on_provisioning_transitions_to_retry():
     assert h.slot.release_count == 1
     assert booking.status == BookingStatus.RETRY
     assert booking.status_message == "Failed — see audit log"
+
+
+def test_slot_release_failure_after_successful_provision_does_not_fail_or_retry():
+    """Regression: Slot-release failure after successful provisioning does not fail or retry."""
+    h = Harness(
+        run_configuration=False,
+        raise_on_slot_release=RuntimeError("Redis connection lost on slot release"),
+    )
+    booking = _make_booking(status=BookingStatus.PENDING)
+    h.booking_store.add(booking)
+
+    outcome = h.service.execute(booking.id, uuid4(), uuid4(), is_last_attempt=False)
+
+    assert outcome == ProvisionOutcome.READY
+    assert booking.status == BookingStatus.READY
+    assert h.slot.acquire_count == 1
+    assert h.slot.release_count == 1
+    assert booking.id in h.env_store.lease_started_for
+
+
+def test_slot_release_failure_on_last_attempt_does_not_mark_booking_failed():
+    """Regression: Slot-release failure on last attempt must not transition READY booking to FAILED."""
+    h = Harness(
+        run_configuration=False,
+        raise_on_slot_release=RuntimeError("Redis connection lost on slot release"),
+    )
+    booking = _make_booking(status=BookingStatus.PENDING)
+    h.booking_store.add(booking)
+
+    outcome = h.service.execute(booking.id, uuid4(), uuid4(), is_last_attempt=True)
+
+    assert outcome == ProvisionOutcome.READY
+    assert booking.status == BookingStatus.READY
+    assert booking.status != BookingStatus.FAILED

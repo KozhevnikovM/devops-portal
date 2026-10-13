@@ -127,6 +127,7 @@ class ProvisionBooking:
     ) -> ProvisionOutcome:
         booking_str = str(booking_id)
 
+        outcome: ProvisionOutcome | None = None
         try:
             # Guard 1: Check before waiting for a credential slot.
             existing = self.run(lambda s: self.bookings.sync_get(s, booking_id))
@@ -139,13 +140,14 @@ class ProvisionBooking:
                 return ProvisionOutcome.SKIPPED_RELEASED
 
             with self.credential_slot.acquire() as lease:
-                return self._execute_with_lease(
+                outcome = self._execute_with_lease(
                     booking_id=booking_id,
                     image_id=image_id,
                     hw_config_id=hw_config_id,
                     lease=lease,
                     is_last_attempt=is_last_attempt,
                 )
+                return outcome
         except CredentialSlotUnavailable as exc:
             logger.warning(
                 "Token acquire timed out for booking %s, retrying", booking_str
@@ -154,6 +156,15 @@ class ProvisionBooking:
         except (ProvisioningDeferred, ProvisioningAttemptFailed):
             raise
         except Exception as exc:  # noqa: BLE001
+            if outcome is not None:
+                # Provisioning completed successfully; a cleanup or slot-release
+                # error on context exit must not fail or retry the booking.
+                logger.warning(
+                    "Post-provision cleanup error for booking %s: %s",
+                    booking_str,
+                    exc,
+                )
+                return outcome
             self._handle_generic_failure(
                 booking_id,
                 exc,

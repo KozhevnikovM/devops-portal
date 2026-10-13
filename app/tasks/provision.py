@@ -154,12 +154,20 @@ class _AdapterCredentialSlot:
         try:
             yield lease
         finally:
-            redis_client.delete(lock_key)
-            logger.info(
-                "Released token lock %s for booking %s",
-                lock_key,
-                self.booking_id,
-            )
+            try:
+                redis_client.delete(lock_key)
+                logger.info(
+                    "Released token lock %s for booking %s",
+                    lock_key,
+                    self.booking_id,
+                )
+            except Exception as rel_exc:  # noqa: BLE001
+                logger.warning(
+                    "Failed to release token lock %s for booking %s: %s (lock will expire via TTL)",
+                    lock_key,
+                    self.booking_id,
+                    rel_exc,
+                )
 
 
 class _AdapterApplier:

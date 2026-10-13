@@ -158,3 +158,63 @@ def test_post_slot_guard_db_failure_retries_task_and_releases_slot():
     # Best-effort failure writes were attempted
     mock_repo.sync_update_status.assert_called_once()
     assert mock_repo.sync_update_status.call_args[0][2] == BookingStatus.RETRY
+
+
+def test_slot_release_failure_after_successful_provision_does_not_retry_task():
+    """Regression: Redis slot-release failure after successful provisioning does not retry task."""
+    booking_id = str(uuid4())
+    image_id = str(uuid4())
+    hw_config_id = str(uuid4())
+    fake_ip = "10.0.0.42"
+
+    mock_redis = MagicMock()
+    mock_redis.set.return_value = True
+    # Simulate Redis connection failure when releasing the slot
+    mock_redis.delete.side_effect = RuntimeError("Redis connection error on delete")
+
+    mock_session = MagicMock()
+    mock_repo = MagicMock()
+    mock_repo.sync_get = MagicMock(
+        return_value=MagicMock(
+            status=BookingStatus.PENDING,
+            vm_password=None,
+            startup_script=None,
+            config_roles=None,
+        )
+    )
+    mock_image_repo = MagicMock()
+    mock_image_repo.sync_get = MagicMock(
+        return_value=MagicMock(vapp_template_id="tpl-1")
+    )
+    mock_hw_repo = MagicMock()
+    mock_hw_repo.sync_get = MagicMock(
+        return_value=MagicMock(cpus=2, memory_mb=4096, disk_mb=20480)
+    )
+
+    with (
+        patch("app.tasks.provision.settings.USE_STUB_TERRAFORM", False),
+        patch("app.tasks.provision.settings.VCD_API_TOKENS", "vcd-token-1"),
+        patch("app.tasks.provision.settings.VCD_TOKEN_MAX_PARALLEL", 1),
+        patch("app.tasks.provision.redis_lib.Redis.from_url", return_value=mock_redis),
+        patch("app.tasks.provision.SyncSessionLocal") as mock_session_factory,
+        patch("app.tasks.provision.repo", mock_repo),
+        patch("app.tasks.provision.image_repo", mock_image_repo),
+        patch("app.tasks.provision.hw_config_repo", mock_hw_repo),
+        patch("app.tasks.provision.asyncio.run", return_value={"ip": fake_ip}),
+    ):
+        mock_session_factory.return_value.__enter__ = MagicMock(
+            return_value=mock_session
+        )
+        mock_session_factory.return_value.__exit__ = MagicMock(return_value=False)
+
+        # Must NOT raise Retry!
+        provision_vm_task.apply(args=[booking_id, image_id, hw_config_id], throw=True)
+
+    # Slot acquisition and release were both attempted on Redis
+    mock_redis.set.assert_called_once()
+    mock_redis.delete.assert_called_once()
+    # Booking reached READY, never RETRY or FAILED
+    statuses = [c.args[2] for c in mock_repo.sync_update_status.call_args_list]
+    assert BookingStatus.READY in statuses
+    assert BookingStatus.RETRY not in statuses
+    assert BookingStatus.FAILED not in statuses
