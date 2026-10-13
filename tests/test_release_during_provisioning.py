@@ -9,7 +9,8 @@ Fix has three parts, one test group each:
   3. provision_vm_task bails out (queued-release case) or hands off to teardown (mid-apply-release
      case) instead of attempting an illegal status transition.
 """
-from datetime import datetime, timezone
+
+from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
@@ -18,13 +19,25 @@ from app.domain.enums import BookingStatus
 
 
 def _make_image():
-    return VMImage(id=uuid4(), name="Ubuntu", vapp_template_id="tpl-1",
-                   is_active=True, created_at=datetime.now(timezone.utc))
+    return VMImage(
+        id=uuid4(),
+        name="Ubuntu",
+        vapp_template_id="tpl-1",
+        is_active=True,
+        created_at=datetime.now(UTC),
+    )
 
 
 def _make_hw():
-    return HWConfig(id=uuid4(), name="medium", cpus=2, memory_mb=4096, disk_mb=26624,
-                    is_active=True, created_at=datetime.now(timezone.utc))
+    return HWConfig(
+        id=uuid4(),
+        name="medium",
+        cpus=2,
+        memory_mb=4096,
+        disk_mb=26624,
+        is_active=True,
+        created_at=datetime.now(UTC),
+    )
 
 
 # ── provision_vm_task: holds a provisioning lock across terraform.apply() ────────────────
@@ -54,6 +67,7 @@ def test_provisioning_lock_acquired_and_released_around_apply():
         mock_sf.return_value.__exit__ = MagicMock(return_value=False)
 
         from app.tasks.provision import provision_vm_task
+
         provision_vm_task.apply(args=[booking_id, image_id, hw_config_id])
 
     mock_lock.acquire.assert_called_once_with("fake-redis-client", booking_id)
@@ -86,6 +100,7 @@ def test_provisioning_lock_released_even_if_apply_raises():
         mock_sf.return_value.__exit__ = MagicMock(return_value=False)
 
         from app.tasks.provision import provision_vm_task
+
         provision_vm_task.apply(args=[booking_id, image_id, hw_config_id])
 
     # Celery's eager ``Task.apply`` executes the configured retries inline. Each attempt acquires
@@ -121,6 +136,7 @@ def test_provisioning_lock_skipped_under_stub_adapter():
         mock_sf.return_value.__exit__ = MagicMock(return_value=False)
 
         from app.tasks.provision import provision_vm_task
+
         provision_vm_task.apply(args=[booking_id, image_id, hw_config_id])
 
     mock_lock.get_client.assert_not_called()
@@ -136,7 +152,9 @@ def test_provision_task_noops_when_booking_already_released_at_start():
     hw_config_id = str(uuid4())
 
     mock_repo = MagicMock()
-    mock_repo.sync_get = MagicMock(return_value=MagicMock(status=BookingStatus.RELEASING))
+    mock_repo.sync_get = MagicMock(
+        return_value=MagicMock(status=BookingStatus.RELEASING)
+    )
     mock_image_repo = MagicMock(sync_get=MagicMock(return_value=_make_image()))
     mock_hw_repo = MagicMock(sync_get=MagicMock(return_value=_make_hw()))
 
@@ -151,6 +169,7 @@ def test_provision_task_noops_when_booking_already_released_at_start():
         mock_sf.return_value.__exit__ = MagicMock(return_value=False)
 
         from app.tasks.provision import provision_vm_task
+
         result = provision_vm_task.apply(args=[booking_id, image_id, hw_config_id])
 
     assert result.successful()
@@ -165,13 +184,17 @@ def test_provision_task_hands_off_to_teardown_when_released_mid_apply():
     image_id = str(uuid4())
     hw_config_id = str(uuid4())
 
-    # First sync_get (pre-apply "existing" check) sees PENDING; second (post-apply) sees the
+    # Pre-slot and post-slot sync_get calls see PENDING; third (post-apply) sees the
     # booking was released while apply was in flight.
-    statuses = [BookingStatus.PENDING, BookingStatus.RELEASING]
+    statuses = [BookingStatus.PENDING, BookingStatus.PENDING, BookingStatus.RELEASING]
 
     def _fake_sync_get(*_args, **_kwargs):
-        return MagicMock(status=statuses.pop(0), vm_password=None,
-                          startup_script=None, config_roles=None)
+        return MagicMock(
+            status=statuses.pop(0),
+            vm_password=None,
+            startup_script=None,
+            config_roles=None,
+        )
 
     mock_repo = MagicMock()
     mock_repo.sync_get = MagicMock(side_effect=_fake_sync_get)
@@ -190,6 +213,7 @@ def test_provision_task_hands_off_to_teardown_when_released_mid_apply():
         mock_sf.return_value.__exit__ = MagicMock(return_value=False)
 
         from app.tasks.provision import provision_vm_task
+
         result = provision_vm_task.apply(args=[booking_id, image_id, hw_config_id])
 
     assert result.successful()
@@ -209,8 +233,14 @@ def test_teardown_waits_for_provisioning_lock_before_destroy():
 
     mock_repo = MagicMock()
     mock_repo.sync_get = MagicMock(return_value=mock_booking)
-    mock_image_repo = MagicMock(sync_get=MagicMock(return_value=MagicMock(vapp_template_id="tpl")))
-    mock_hw_repo = MagicMock(sync_get=MagicMock(return_value=MagicMock(cpus=2, memory_mb=4096, disk_mb=26624)))
+    mock_image_repo = MagicMock(
+        sync_get=MagicMock(return_value=MagicMock(vapp_template_id="tpl"))
+    )
+    mock_hw_repo = MagicMock(
+        sync_get=MagicMock(
+            return_value=MagicMock(cpus=2, memory_mb=4096, disk_mb=26624)
+        )
+    )
 
     # Held for the first two checks, then clears.
     mock_lock = MagicMock()
@@ -231,6 +261,7 @@ def test_teardown_waits_for_provisioning_lock_before_destroy():
         mock_sf.return_value.__exit__ = MagicMock(return_value=False)
 
         from app.tasks.teardown import teardown_vm_task
+
         teardown_vm_task.apply(args=[booking_id])
 
     assert mock_lock.is_held.call_count == 3
@@ -250,8 +281,14 @@ def test_teardown_does_not_wait_when_force():
 
     mock_repo = MagicMock()
     mock_repo.sync_get = MagicMock(return_value=mock_booking)
-    mock_image_repo = MagicMock(sync_get=MagicMock(return_value=MagicMock(vapp_template_id="tpl")))
-    mock_hw_repo = MagicMock(sync_get=MagicMock(return_value=MagicMock(cpus=2, memory_mb=4096, disk_mb=26624)))
+    mock_image_repo = MagicMock(
+        sync_get=MagicMock(return_value=MagicMock(vapp_template_id="tpl"))
+    )
+    mock_hw_repo = MagicMock(
+        sync_get=MagicMock(
+            return_value=MagicMock(cpus=2, memory_mb=4096, disk_mb=26624)
+        )
+    )
     mock_lock = MagicMock()
 
     with (
@@ -267,6 +304,7 @@ def test_teardown_does_not_wait_when_force():
         mock_sf.return_value.__exit__ = MagicMock(return_value=False)
 
         from app.tasks.teardown import teardown_vm_task
+
         teardown_vm_task.apply(args=[booking_id], kwargs={"force": True})
 
     mock_lock.is_held.assert_not_called()
@@ -280,8 +318,14 @@ def test_teardown_does_not_wait_under_stub_adapter():
 
     mock_repo = MagicMock()
     mock_repo.sync_get = MagicMock(return_value=mock_booking)
-    mock_image_repo = MagicMock(sync_get=MagicMock(return_value=MagicMock(vapp_template_id="tpl")))
-    mock_hw_repo = MagicMock(sync_get=MagicMock(return_value=MagicMock(cpus=2, memory_mb=4096, disk_mb=26624)))
+    mock_image_repo = MagicMock(
+        sync_get=MagicMock(return_value=MagicMock(vapp_template_id="tpl"))
+    )
+    mock_hw_repo = MagicMock(
+        sync_get=MagicMock(
+            return_value=MagicMock(cpus=2, memory_mb=4096, disk_mb=26624)
+        )
+    )
     mock_lock = MagicMock()
 
     with (
@@ -296,6 +340,7 @@ def test_teardown_does_not_wait_under_stub_adapter():
         mock_sf.return_value.__exit__ = MagicMock(return_value=False)
 
         from app.tasks.teardown import teardown_vm_task
+
         teardown_vm_task.apply(args=[booking_id])
 
     mock_lock.is_held.assert_not_called()

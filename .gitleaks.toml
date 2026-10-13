@@ -13,6 +13,7 @@ regexes = [
     '''svm-Pa55-91ab2d''',
     '''TestPass1234abCD''',
     '''Abc123XyZ456qwER''',
+    '''ExistingSecret123''',
 ]
 
 

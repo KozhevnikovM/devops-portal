@@ -11,11 +11,13 @@ distinct so the provision task can react differently:
 
 ``StubConfigRunner`` is used in stub/dev mode where there is no real VM.
 """
+
 import logging
 import time
 from typing import Protocol
 
 from app.config import settings
+from app.domain.exceptions import VmConfigurationError
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +30,7 @@ class VmUnreachableError(ConfigError):
     """The VM never became reachable over SSH within the timeout (infrastructure failure)."""
 
 
-class ConfigScriptError(ConfigError):
+class ConfigScriptError(ConfigError, VmConfigurationError):
     """SSH worked but the configuration script exited non-zero (software failure)."""
 
 
@@ -43,7 +45,6 @@ class StubConfigRunner:
 
     def connect(self, ip: str, password: str, on_progress=None):
         logger.info("StubConfigRunner: pretending %s is reachable", ip)
-        return None  # sentinel client
 
     def run_script(self, client, script: str, on_progress=None) -> None:
         logger.info("StubConfigRunner: skipping startup script")
@@ -68,7 +69,8 @@ class SshConfigRunner:
 
         pkey = (
             paramiko.RSAKey.from_private_key_file(settings.VM_SSH_PRIVATE_KEY)
-            if settings.VM_SSH_PRIVATE_KEY else None
+            if settings.VM_SSH_PRIVATE_KEY
+            else None
         )
         interval = max(1, settings.CONFIG_SSH_RETRY_INTERVAL)
         deadline = time.monotonic() + settings.CONFIG_SSH_TIMEOUT
@@ -80,15 +82,21 @@ class SshConfigRunner:
             client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
             try:
                 client.connect(
-                    hostname=ip, port=settings.VM_SSH_PORT, username=settings.VM_SSH_USER,
-                    password=None if pkey else password, pkey=pkey,
-                    timeout=10, banner_timeout=15, auth_timeout=15,
-                    look_for_keys=False, allow_agent=False,
+                    hostname=ip,
+                    port=settings.VM_SSH_PORT,
+                    username=settings.VM_SSH_USER,
+                    password=None if pkey else password,
+                    pkey=pkey,
+                    timeout=10,
+                    banner_timeout=15,
+                    auth_timeout=15,
+                    look_for_keys=False,
+                    allow_agent=False,
                 )
                 if on_progress:
                     on_progress(f"SSH connected to {ip} as {settings.VM_SSH_USER}")
                 return client
-            except Exception as exc:  # retry until the deadline — the VM may still be booting
+            except Exception as exc:  # noqa: BLE001  # retry until the deadline — the VM may still be booting
                 last_err = exc
                 client.close()
                 if time.monotonic() + interval >= deadline:
@@ -119,7 +127,9 @@ class SshConfigRunner:
         if exit_code != 0:
             err = stderr.read().decode(errors="replace").strip()
             tail = "\n".join(lines[-5:])
-            raise ConfigScriptError(f"startup script failed (exit {exit_code}): {err or tail}")
+            raise ConfigScriptError(
+                f"startup script failed (exit {exit_code}): {err or tail}"
+            )
 
     @staticmethod
     def close(client) -> None:

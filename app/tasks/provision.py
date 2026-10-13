@@ -1,28 +1,45 @@
+"""Celery task adapter for VM provisioning (#429).
+
+This module is a thin Celery adapter around the `ProvisionBooking` application service.
+It owns Celery and infrastructure-specific concerns:
+- binding and resetting the request correlation id;
+- implementing the CredentialSlotPort on Redis / stub;
+- managing the provisioning-lock marker and asyncio.run around Terraform;
+- mapping service outcomes to Celery retry control flow;
+- providing short-lived database sessions via _run.
+
+All lifecycle policy (transitions, error classification, lease start) is owned
+by ProvisionBooking in app/application/use_cases/provision_booking.py.
+"""
+
 import asyncio
 import logging
-import secrets
-import string
 import time
+from collections.abc import Callable
+from contextlib import contextmanager
+from typing import Any
 from uuid import UUID
 
 import redis as redis_lib
 
-from app.application.ports import SyncBookingRepositoryPort
+from app.application.ports import CredentialSlotUnavailable, SyncBookingRepositoryPort
+from app.application.use_cases.provision_booking import (
+    ProvisionBooking,
+    ProvisioningAttemptFailed,
+    ProvisioningDeferred,
+)
 from app.config import settings
-from app.domain.booking_status import PROVISIONING_OWNED_STATUSES, PROVISIONING_PROGRESS_STATUSES
-from app.domain.enums import BookingStatus
-from app.domain.exceptions import SecretDecryptionError
 from app.infrastructure import provisioning_lock
 from app.infrastructure.celery_app import celery_app
-from app.infrastructure.database.session import SyncSessionLocal
-from app.infrastructure.logging_config import request_id_ctx_var
-from app.infrastructure.progress_recorder import ProgressRecorder, recorder_from_settings
-from app.infrastructure.repositories.booking_repo import BookingRepository
-from app.infrastructure.repositories.environment_repo import EnvironmentRepository
-from app.infrastructure.repositories.image_repo import ImageRepository
-from app.infrastructure.repositories.hw_config_repo import HWConfigRepository
 from app.infrastructure.config.ansible import AnsibleConfigError, build_ansible_runner
 from app.infrastructure.config.runner import ConfigScriptError, build_config_runner
+from app.infrastructure.database.session import SyncSessionLocal
+from app.infrastructure.logging_config import request_id_ctx_var
+from app.infrastructure.progress_recorder import recorder_from_settings
+from app.infrastructure.repositories.booking_repo import BookingRepository
+from app.infrastructure.repositories.environment_repo import EnvironmentRepository
+from app.infrastructure.repositories.hw_config_repo import HWConfigRepository
+from app.infrastructure.repositories.image_repo import ImageRepository
 from app.infrastructure.terraform.stub_adapter import StubTerraformAdapter
 from app.infrastructure.terraform.vcd_adapter import TerraformVcdAdapter
 from app.tasks.teardown import teardown_vm_task
@@ -33,25 +50,29 @@ repo: SyncBookingRepositoryPort = BookingRepository()
 env_repo = EnvironmentRepository()
 image_repo = ImageRepository()
 hw_config_repo = HWConfigRepository()
-terraform = StubTerraformAdapter() if settings.USE_STUB_TERRAFORM else TerraformVcdAdapter()
+terraform = (
+    StubTerraformAdapter() if settings.USE_STUB_TERRAFORM else TerraformVcdAdapter()
+)
 config_runner = build_config_runner()
 ansible_runner = build_ansible_runner()
 
 # A reachable-but-failed configuration (bad script or Ansible run) keeps the VM (READY +
-# config_failed); only an unreachable VM fails outright.
+# config_failed); only an unreachable VM fails outright. Kept for test compatibility.
 _CONFIG_SOFTWARE_ERRORS = (ConfigScriptError, AnsibleConfigError)
 
 
-def _needs_configuration(booking) -> bool:
+def _needs_configuration(booking: Any) -> bool:
     """Whether a provisioned VM has post-create configuration to run.
 
     True when a booking carries a ``startup_script`` or selected ``config_roles``. VMs with neither
     go PROVISIONING → READY unchanged.
     """
-    return bool(getattr(booking, "startup_script", None)) or bool(getattr(booking, "config_roles", None))
+    return bool(getattr(booking, "startup_script", None)) or bool(
+        getattr(booking, "config_roles", None)
+    )
 
 
-def _run(work):
+def _run(work: Callable[[Any], Any]) -> Any:
     """Run one unit of DB work in a short-lived session, releasing the connection at once.
 
     Keeps the worker from pinning a pool connection (and risking idle-in-transaction
@@ -69,7 +90,9 @@ def _token_pool() -> list[str]:
     return []
 
 
-def _acquire_token(tokens: list[str], redis_client, timeout: int = 60) -> tuple[str, str]:
+def _acquire_token(
+    tokens: list[str], redis_client: Any, timeout: int = 60
+) -> tuple[str, str]:
     """Poll until a slot is free; return (lock_key, token)."""
     max_parallel = settings.VCD_TOKEN_MAX_PARALLEL
     deadline = time.monotonic() + timeout
@@ -77,10 +100,110 @@ def _acquire_token(tokens: list[str], redis_client, timeout: int = 60) -> tuple[
         for i, token in enumerate(tokens):
             for slot in range(max_parallel):
                 lock_key = f"vcd_token_lock:{i}:{slot}"
-                if redis_client.set(lock_key, "1", nx=True, ex=settings.VCD_TOKEN_LOCK_TTL):
+                if redis_client.set(
+                    lock_key, "1", nx=True, ex=settings.VCD_TOKEN_LOCK_TTL
+                ):
                     return lock_key, token
         time.sleep(5)
     raise RuntimeError(f"no VCD token available after {timeout}s")
+
+
+class _NullLease:
+    api_token: str | None = None
+
+    def renew(self) -> None:
+        pass
+
+
+class _RedisCredentialLease:
+    def __init__(self, redis_client: Any, lock_key: str, api_token: str) -> None:
+        self.redis_client = redis_client
+        self.lock_key = lock_key
+        self.api_token = api_token
+
+    def renew(self) -> None:
+        self.redis_client.expire(self.lock_key, settings.VCD_TOKEN_LOCK_TTL)
+
+
+class _AdapterCredentialSlot:
+    def __init__(self, booking_id: str) -> None:
+        self.booking_id = booking_id
+
+    @contextmanager
+    def acquire(self):
+        tokens = _token_pool()
+        use_semaphore = not settings.USE_STUB_TERRAFORM and bool(tokens)
+        if not use_semaphore:
+            yield _NullLease()
+            return
+
+        redis_client = redis_lib.Redis.from_url(settings.REDIS_URL)
+        try:
+            lock_key, api_token = _acquire_token(tokens, redis_client)
+            logger.info(
+                "Acquired token lock %s for booking %s", lock_key, self.booking_id
+            )
+        except RuntimeError as exc:
+            logger.warning(
+                "Token acquire timed out for booking %s, retrying",
+                self.booking_id,
+            )
+            raise CredentialSlotUnavailable(str(exc)) from exc
+
+        lease = _RedisCredentialLease(redis_client, lock_key, api_token)
+        try:
+            yield lease
+        finally:
+            try:
+                redis_client.delete(lock_key)
+                logger.info(
+                    "Released token lock %s for booking %s",
+                    lock_key,
+                    self.booking_id,
+                )
+            except Exception as rel_exc:  # noqa: BLE001
+                logger.warning(
+                    "Failed to release token lock %s for booking %s: %s (lock will expire via TTL)",
+                    lock_key,
+                    self.booking_id,
+                    rel_exc,
+                )
+
+
+class _AdapterApplier:
+    def __init__(self, booking_id: str) -> None:
+        self.booking_id = booking_id
+
+    def apply(
+        self,
+        workspace_id: str,
+        config: dict[str, Any],
+        *,
+        api_token: str | None = None,
+        on_progress: Callable[[str], None] | None = None,
+    ) -> dict[str, Any]:
+        lock_client = (
+            None if settings.USE_STUB_TERRAFORM else provisioning_lock.get_client()
+        )
+        if lock_client:
+            provisioning_lock.acquire(lock_client, self.booking_id)
+        try:
+            return asyncio.run(
+                terraform.apply(
+                    workspace_id,
+                    config,
+                    api_token=api_token,
+                    on_progress=on_progress,
+                )
+            )
+        finally:
+            if lock_client:
+                provisioning_lock.release(lock_client, self.booking_id)
+
+
+class _AdapterTeardownHandoff:
+    def hand_off(self, booking_id: str, request_id: str | None = None) -> None:
+        teardown_vm_task.delay(booking_id, request_id=request_id)
 
 
 @celery_app.task(
@@ -90,206 +213,48 @@ def _acquire_token(tokens: list[str], redis_client, timeout: int = 60) -> tuple[
     rate_limit=settings.PROVISION_RATE_LIMIT,
 )
 def provision_vm_task(
-    self, booking_id: str, image_id: str, hw_config_id: str, request_id: str | None = None,
+    self,
+    booking_id: str,
+    image_id: str,
+    hw_config_id: str,
+    request_id: str | None = None,
 ) -> None:
-    # Bind the dispatching request's correlation id (if any) for the duration of this run, so
-    # this task's own log lines carry it too (#371 F-3) — contextvars don't cross the process
-    # boundary, so it arrives as an explicit argument rather than via the shared contextvar.
-    # The whole body (including the token-acquire retry path below) runs inside this try/finally
-    # so the reset always happens, even on the early `self.retry(...)` on a token-acquire timeout.
     request_id_token = request_id_ctx_var.set(request_id)
     try:
         booking_uuid = UUID(booking_id)
-        workspace_id = f"booking-{booking_id}"
+        image_uuid = UUID(image_id)
+        hw_config_uuid = UUID(hw_config_id)
+        is_last_attempt = self.request.retries >= self.max_retries
 
-        tokens = _token_pool()
-        use_semaphore = not settings.USE_STUB_TERRAFORM and bool(tokens)
-
-        lock_key = None
-        redis_client = None
-        api_token = None
-        # Progress output is buffered and persisted in batches (#444). One recorder per execution
-        # (a Celery retry is a new execution), closed in the `finally` below so nothing buffered
-        # by this attempt is ever written after it returns.
-        recorder: ProgressRecorder | None = None
-
-        def _lifecycle(work):
-            """A lifecycle write: first flush buffered progress (a barrier), so a buffered line can
-            never land after — and overwrite — the status message/transition written here."""
-            if recorder is not None:
-                recorder.flush()
-            return _run(work)
-
-        if use_semaphore:
-            redis_client = redis_lib.Redis.from_url(settings.REDIS_URL)
-            try:
-                lock_key, api_token = _acquire_token(tokens, redis_client)
-                logger.info("Acquired token lock %s for booking %s", lock_key, booking_id)
-            except RuntimeError as exc:
-                logger.warning("Token acquire timed out for booking %s, retrying", booking_id)
-                raise self.retry(exc=exc)
-
+        service = ProvisionBooking(
+            bookings=repo,
+            images=image_repo,
+            hw_configs=hw_config_repo,
+            environments=env_repo,
+            run=_run,
+            applier=_AdapterApplier(booking_id),
+            config_runner=config_runner,
+            role_applier=ansible_runner,
+            progress_sink_factory=lambda persist, label: recorder_from_settings(
+                persist, label=label
+            ),
+            teardown=_AdapterTeardownHandoff(),
+            run_configuration=not settings.USE_STUB_TERRAFORM,
+            credential_slot=_AdapterCredentialSlot(booking_id),
+            request_id=request_id,
+        )
         try:
-            try:
-                # Read config in a short session; no session is held during the apply below.
-                image = _run(lambda s: image_repo.sync_get(s, UUID(image_id)))
-                hw = _run(lambda s: hw_config_repo.sync_get(s, UUID(hw_config_id)))
-                existing = _run(lambda s: repo.sync_get(s, booking_uuid))
-                if existing.status in (BookingStatus.RELEASING, BookingStatus.RELEASED, BookingStatus.FAILED):
-                    # Booking was released while this task sat queued or waited out a RETRY
-                    # backoff — starting provisioning now would attempt an illegal transition and
-                    # spin into a retry storm (#394). Nothing to do. (Deny-list, not an allow-list
-                    # of PENDING/RETRY: startup recovery re-dispatches this task for bookings still
-                    # sitting in PROVISIONING/CONFIGURING after a restart, and that must proceed.)
-                    logger.info(
-                        "Booking %s was released (status=%s) — skipping provisioning",
-                        booking_id, existing.status.value,
-                    )
-                    return
-                vm_password = existing.vm_password or "".join(
-                    secrets.choice(string.ascii_letters + string.digits) for _ in range(16)
-                )
-                config = {
-                    "name":             f"portal-{booking_id[:8]}",
-                    "vapp_template_id": image.vapp_template_id,
-                    "cpus":             hw.cpus,
-                    "memory":           hw.memory_mb,
-                    "disk_size":        hw.disk_mb,
-                    "vm_password":      vm_password,
-                }
-
-                _run(lambda s: repo.sync_update_status(s, booking_uuid, BookingStatus.PROVISIONING))
-                logger.info("Provisioning started for booking %s", booking_id)
-
-                recorder = recorder_from_settings(
-                    # Each flush gets its own short-lived session/connection; none is held between.
-                    lambda chunk, last: _run(lambda s: repo.sync_append_progress(
-                        s, booking_uuid, chunk, last, PROVISIONING_PROGRESS_STATUSES,
-                    )),
-                    label=booking_id,
-                )
-
-                def _on_progress(msg: str) -> None:
-                    if redis_client and lock_key:
-                        redis_client.expire(lock_key, settings.VCD_TOKEN_LOCK_TTL)
-                    recorder.record(msg)
-
-                # A provisioning-lock marker is held for the duration of the apply so
-                # teardown_vm_task (dispatched if this booking gets released mid-flight) never
-                # races terraform destroy against this still-running apply on the same workspace
-                # (#394). Skipped under the stub adapter — no real state lock to race.
-                lock_client = None if settings.USE_STUB_TERRAFORM else provisioning_lock.get_client()
-                if lock_client:
-                    provisioning_lock.acquire(lock_client, booking_id)
-                try:
-                    # No DB connection is held across the (minutes-long) terraform apply.
-                    result = asyncio.run(
-                        terraform.apply(workspace_id, config, api_token=api_token, on_progress=_on_progress)
-                    )
-                finally:
-                    if lock_client:
-                        provisioning_lock.release(lock_client, booking_id)
-                ip = result["ip"]
-                _lifecycle(lambda s: repo.sync_set_status_message(
-                    s, booking_uuid, None, if_status_in=PROVISIONING_OWNED_STATUSES,
-                ))
-
-                # ── Post-provision: wait for SSH reachability, then run the startup script ──
-                # Two distinct outcomes: an unreachable VM is an infra failure (raises → FAILED); a
-                # reachable VM whose script fails is still usable → READY with config_failed=True.
-                booking = _run(lambda s: repo.sync_get(s, booking_uuid))
-                if booking.status not in PROVISIONING_OWNED_STATUSES:
-                    # Released while the apply above was in flight — don't configure a VM that's
-                    # being (or has been) torn down (#394). While teardown is still RELEASING, hand
-                    # off to it; if a waiting teardown already settled the booking (RELEASED /
-                    # FAILED) once the provisioning lock was released, there is nothing left to do.
-                    logger.info(
-                        "Booking %s was released while its terraform apply was in flight "
-                        "(status=%s) — not configuring", booking_id, booking.status.value,
-                    )
-                    recorder.close()
-                    if booking.status == BookingStatus.RELEASING:
-                        teardown_vm_task.delay(booking_id, request_id=request_id)
-                    return
-                config_failed = False
-                config_message = None
-                if not settings.USE_STUB_TERRAFORM:
-                    _lifecycle(lambda s: repo.sync_update_status(
-                        s, booking_uuid, BookingStatus.CONFIGURING, vm_ip=ip, vm_password=vm_password
-                    ))
-                    _on_progress(f"Waiting for {ip} to become reachable…")
-                    client = config_runner.connect(ip, vm_password, on_progress=_on_progress)  # VmUnreachableError → FAILED
-                    try:
-                        # Reachable: run the bash startup script (if any), then apply Ansible roles
-                        # (if any). Either software failure keeps the VM (READY + config_failed).
-                        if booking.startup_script:
-                            logger.info("Running startup script for booking %s — IP: %s", booking_id, ip)
-                            config_runner.run_script(client, booking.startup_script, on_progress=_on_progress)
-                        if booking.config_roles:
-                            logger.info("Applying %d role(s) for booking %s", len(booking.config_roles), booking_id)
-                            ansible_runner.apply_roles(
-                                booking, ip=ip, password=vm_password, on_progress=_on_progress,
-                                extra_vars=booking.extra_vars or {},
-                                label=booking.environment_label or "",
-                            )
-                    except _CONFIG_SOFTWARE_ERRORS as cfg_exc:
-                        # VM is up but configuration failed — keep the VM, flag the failure.
-                        config_failed = True
-                        config_message = str(cfg_exc)
-                        logger.warning("Configuration failed for booking %s: %s", booking_id, cfg_exc)
-                    finally:
-                        config_runner.close(client)
-                    _lifecycle(lambda s: repo.sync_set_status_message(
-                        s, booking_uuid, config_message, if_status_in=PROVISIONING_OWNED_STATUSES,
-                    ))
-
-                _lifecycle(lambda s: repo.sync_update_status(
-                    s, booking_uuid, BookingStatus.READY,
-                    vm_ip=ip, vm_password=vm_password, config_failed=config_failed,
-                    start_lease=True,  # #223 — the lease starts now that the VM is usable
-                ))
-                # If this VM is part of an environment, the lease for the whole stack starts once
-                # every child has settled — the last one to settle stamps the environment + children.
-                _lifecycle(lambda s: env_repo.sync_start_lease_if_ready_for_booking(s, booking_uuid))
-                logger.info(
-                    "Provisioning complete for booking %s — IP: %s (config_failed=%s)",
-                    booking_id, ip, config_failed,
-                )
-
-            except SecretDecryptionError as exc:
-                # Permanent configuration error — wrong/missing SECRETS_ENCRYPTION_KEY.
-                # Do not retry; retries would all fail identically and delay the failure signal.
-                logger.error("Secret decryption failed for booking %s (not retrying): %s", booking_id, exc)
-                try:
-                    _lifecycle(lambda s: repo.sync_set_status_message(
-                        s, booking_uuid, f"Secret decryption failed: {exc}", if_status_in=PROVISIONING_OWNED_STATUSES,
-                    ))
-                    _lifecycle(lambda s: repo.sync_update_status(s, booking_uuid, BookingStatus.FAILED))
-                    # A failed child has settled — it must not hold its environment's lease back (#434).
-                    _lifecycle(lambda s: env_repo.sync_start_lease_if_ready_for_booking(s, booking_uuid))
-                except Exception:
-                    pass
-                return
-            except Exception as exc:
-                logger.exception("Provisioning failed for booking %s: %s", booking_id, exc)
-                is_last_attempt = self.request.retries >= self.max_retries
-                new_status = BookingStatus.FAILED if is_last_attempt else BookingStatus.RETRY
-                try:
-                    _lifecycle(lambda s: repo.sync_set_status_message(
-                        s, booking_uuid, "Failed — see audit log", if_status_in=PROVISIONING_OWNED_STATUSES,
-                    ))
-                    _lifecycle(lambda s: repo.sync_update_status(s, booking_uuid, new_status))
-                    if new_status == BookingStatus.FAILED:
-                        # Final failure: the child has settled — start the env lease if due (#434).
-                        _lifecycle(lambda s: env_repo.sync_start_lease_if_ready_for_booking(s, booking_uuid))
-                except Exception:
-                    pass
-                raise self.retry(exc=exc)
-        finally:
-            if recorder is not None:
-                recorder.close()
-            if redis_client and lock_key:
-                redis_client.delete(lock_key)
-                logger.info("Released token lock %s for booking %s", lock_key, booking_id)
+            service.execute(
+                booking_uuid,
+                image_uuid,
+                hw_config_uuid,
+                is_last_attempt=is_last_attempt,
+            )
+        except ProvisioningDeferred as exc:
+            raise self.retry(exc=exc.cause)
+        except ProvisioningAttemptFailed as exc:
+            raise self.retry(exc=exc.cause)
+        except Exception as exc:  # noqa: BLE001
+            raise self.retry(exc=exc)
     finally:
         request_id_ctx_var.reset(request_id_token)
