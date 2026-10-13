@@ -61,7 +61,7 @@ jobs:
 
       - name: Run database migrations
         run: |
-          docker run --rm \
+          docker run --name portal-migrate \
             --network host \
             -e DATABASE_URL_SYNC=postgresql+psycopg2://portal:portal@127.0.0.1:5432/portal_smoke \
             portal-smoke:latest \
@@ -132,10 +132,36 @@ jobs:
         if: failure()
         run: |
           echo "=== Application container logs ==="
-          docker logs portal-app || true
+          if docker inspect portal-app >/dev/null 2>&1; then
+            docker logs portal-app || true
+          else
+            echo "portal-app container was not created or started."
+          fi
 
-      - name: Clean up application container
+          echo "=== Migration container logs ==="
+          if docker inspect portal-migrate >/dev/null 2>&1; then
+            docker logs portal-migrate || true
+          else
+            echo "portal-migrate container does not exist."
+          fi
+
+          echo "=== PostgreSQL service container logs ==="
+          PG_ID=$(docker ps -aq --filter "ancestor=postgres:15" | head -n 1)
+          if [ -n "$PG_ID" ]; then
+            docker logs "$PG_ID" || true
+          else
+            echo "PostgreSQL service container not found."
+          fi
+
+          echo "=== Redis service container logs ==="
+          REDIS_ID=$(docker ps -aq --filter "ancestor=redis:7" | head -n 1)
+          if [ -n "$REDIS_ID" ]; then
+            docker logs "$REDIS_ID" || true
+          else
+            echo "Redis service container not found."
+          fi
+
+      - name: Clean up containers
         if: always()
         run: |
-          docker stop portal-app || true
-          docker rm portal-app || true
+          docker rm -f portal-app portal-migrate 2>/dev/null || true

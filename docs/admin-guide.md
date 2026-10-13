@@ -2081,7 +2081,7 @@ Pull requests targeting `main` automatically run continuous quality and security
    - Executes database migrations inside the built image via `alembic upgrade head` targeting `DATABASE_URL_SYNC=postgresql+psycopg2://portal:portal@127.0.0.1:5432/portal_smoke`.
    - Starts the application container explicitly with `uvicorn app.main:app --host 0.0.0.0 --port 8000` using host networking, `DATABASE_URL=postgresql+asyncpg://portal:portal@127.0.0.1:5432/portal_smoke`, `DATABASE_URL_SYNC=postgresql+psycopg2://portal:portal@127.0.0.1:5432/portal_smoke`, `REDIS_URL=redis://127.0.0.1:6379/0`, `USE_STUB_TERRAFORM=true`, and `ADMIN_PASSWORD=smoke-test-admin`.
    - Verifies container startup and asserts HTTP 200 plus JSON `{"status": "ok"}` on both `GET /health` (liveness probe, with `APP_SLOT` unset) and `GET /health/ready` (readiness probe).
-   - On build failure, premature container crash, or probe timeout, dumps container logs to step output and performs teardown cleanup in an `always()` step.
+   - On build failure, premature container crash, or probe timeout, dumps application, migration, and backing service container logs to step output and performs teardown cleanup in an `always()` step.
    - **Status**: Non-blocking by default. Enabling `docker-smoke-test` as a required status check in repository branch protection or rulesets is a separate repository-admin step not performed by this workflow.
 
 ### Local Commands
@@ -2108,7 +2108,7 @@ python scripts/audit_python.py
 python scripts/audit_npm.py
 
 # Production Docker build and container runtime smoke test (matches CI check)
-# Requires Docker running; host ports 5432, 6379, and 8000 must be free.
+# Requires Docker running; host port 8000 must be free.
 # Starts disposable Postgres 15 and Redis 7 containers, runs migrations, verifies /health & /health/ready, and cleans up on exit.
 ./scripts/smoke_test_docker.sh
 ```
