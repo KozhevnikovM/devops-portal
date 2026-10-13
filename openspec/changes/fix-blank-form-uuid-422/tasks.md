@@ -17,5 +17,5 @@
 
 - [x] 4.1 Run `pytest tests/ -m "not integration"` and confirm it is green, including existing tests such as `test_post_booking_namespace_no_id_uses_any_available` and the environment namespace-override tests.
 - [x] 4.2 Run the `py-review` gate (ruff, mypy, bandit) on the changed Python files and confirm it is clean.
-- [ ] 4.3 Runtime check: start the app (`docker compose up`, or uvicorn on :8001), then from the browser order an environment with "Blueprint default", book a namespace with "Any available", and reserve a static VM with "Any available". Confirm each succeeds (201 row rendered, not 422).
-- [ ] 4.4 Docs: confirm no change is needed in `docs/api-reference.md`/`docs/admin-guide.md` (browser-only fix, no API change), or add a short note if the browser ordering workflow is documented there.
+- [x] 4.3 Runtime check: start the app (`docker compose up`, or uvicorn on :8001), then from the browser order an environment with "Blueprint default", book a namespace with "Any available", and reserve a static VM with "Any available". Confirm each succeeds (201 row rendered, not 422).
+- [x] 4.4 Docs: confirm no change is needed in `docs/api-reference.md`/`docs/admin-guide.md` (browser-only fix, no API change), or add a short note if the browser ordering workflow is documented there.
