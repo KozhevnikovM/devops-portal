@@ -14,9 +14,11 @@ The one pragmatic concession (see `docs/refactor/repository-interfaces.md`): the
 `AsyncSession`/`Session` still appears in signatures — the established "use cases receive a session
 parameter" contract — rather than introducing a Unit-of-Work abstraction.
 """
-from collections.abc import Sequence
+
+from collections.abc import Callable, Sequence
+from contextlib import AbstractContextManager
 from datetime import datetime
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, TypeVar, runtime_checkable
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -24,7 +26,14 @@ from sqlalchemy.orm import Session
 
 from app.domain.booking_list import BookingListItem
 from app.domain.entities import (
-    Booking, Environment, EnvironmentBlueprint, HWConfig, Namespace, Role, StaticVM, VMImage,
+    Booking,
+    Environment,
+    EnvironmentBlueprint,
+    HWConfig,
+    Namespace,
+    Role,
+    StaticVM,
+    VMImage,
 )
 from app.domain.enums import BookingStatus
 from app.domain.pagination import KeysetCursor
@@ -42,12 +51,20 @@ class TaskDispatcher(Protocol):
     contextvar crossing the process boundary — it has to travel as an explicit argument."""
 
     def dispatch_provision(
-        self, booking_id: str, image_id: str, hw_config_id: str, request_id: str | None = None,
+        self,
+        booking_id: str,
+        image_id: str,
+        hw_config_id: str,
+        request_id: str | None = None,
     ) -> None: ...
 
-    def dispatch_teardown(self, booking_id: str, request_id: str | None = None) -> None: ...
+    def dispatch_teardown(
+        self, booking_id: str, request_id: str | None = None
+    ) -> None: ...
 
-    def dispatch_teardown_force(self, booking_id: str, request_id: str | None = None) -> None: ...
+    def dispatch_teardown_force(
+        self, booking_id: str, request_id: str | None = None
+    ) -> None: ...
 
 
 @runtime_checkable
@@ -55,33 +72,68 @@ class BookingRepositoryPort(Protocol):
     async def create(self, session: AsyncSession, booking: Booking) -> Booking: ...
     async def get(self, session: AsyncSession, booking_id: UUID) -> Booking: ...
     async def update_status(
-        self, session: AsyncSession, booking_id: UUID, status: BookingStatus,
-        vm_ip: str | None = None, vm_password: str | None = None, actor_id: str = "system",
+        self,
+        session: AsyncSession,
+        booking_id: UUID,
+        status: BookingStatus,
+        vm_ip: str | None = None,
+        vm_password: str | None = None,
+        actor_id: str = "system",
     ) -> None: ...
     async def extend(
-        self, session: AsyncSession, booking_id: UUID, extend_minutes: int, actor_id: str,
+        self,
+        session: AsyncSession,
+        booking_id: UUID,
+        extend_minutes: int,
+        actor_id: str,
     ) -> None: ...
     async def update_label(
-        self, session: AsyncSession, booking_id: UUID, label: str | None, actor_id: str,
+        self,
+        session: AsyncSession,
+        booking_id: UUID,
+        label: str | None,
+        actor_id: str,
     ) -> None: ...
-    async def promote_next_queued(self, session: AsyncSession, resource_type: str) -> Booking | None: ...
+    async def promote_next_queued(
+        self, session: AsyncSession, resource_type: str
+    ) -> Booking | None: ...
     async def queue_positions(
-        self, session: AsyncSession, bookings: Sequence[Booking | BookingListItem],
+        self,
+        session: AsyncSession,
+        bookings: Sequence[Booking | BookingListItem],
     ) -> dict[UUID, int]: ...
     async def list_items_by_ids(
-        self, session: AsyncSession, ids: Sequence[UUID], *, user_id: str | None,
+        self,
+        session: AsyncSession,
+        ids: Sequence[UUID],
+        *,
+        user_id: str | None,
         resource_types: Sequence[str],
     ) -> list[BookingListItem]: ...
     async def newest_key(
-        self, session: AsyncSession, *, user_id: str | None, resource_types: list[str],
-        label: str | None, include_released: bool, scan_size: int,
+        self,
+        session: AsyncSession,
+        *,
+        user_id: str | None,
+        resource_types: list[str],
+        label: str | None,
+        include_released: bool,
+        scan_size: int,
     ) -> KeysetCursor | None: ...
     async def get_live_standalone_namespace_booking(
-        self, session: AsyncSession, user_id: str, namespace_id: UUID,
+        self,
+        session: AsyncSession,
+        user_id: str,
+        namespace_id: UUID,
     ) -> Booking | None: ...
     async def set_environment(
-        self, session: AsyncSession, booking_id: UUID, environment_id: UUID | None,
-        environment_label: str | None, ttl_minutes: int, expires_at: datetime,
+        self,
+        session: AsyncSession,
+        booking_id: UUID,
+        environment_id: UUID | None,
+        environment_label: str | None,
+        ttl_minutes: int,
+        expires_at: datetime,
     ) -> None: ...
 
 
@@ -90,21 +142,37 @@ class SyncBookingRepositoryPort(Protocol):
     """Sync twin of `BookingRepositoryPort`, for the Celery worker path (`provision.py`,
     `teardown.py`). Models only the `sync_*` methods those two tasks actually call — other
     sync methods (e.g. `sync_list_expired`, used only by `beat_tasks.py`) aren't included."""
+
     def sync_get(self, session: Session, booking_id: UUID) -> Booking: ...
     def sync_update_status(
-        self, session: Session, booking_id: UUID, status: BookingStatus,
-        vm_ip: str | None = None, vm_password: str | None = None,
-        config_failed: bool | None = None, start_lease: bool = False, actor_id: str = "system",
+        self,
+        session: Session,
+        booking_id: UUID,
+        status: BookingStatus,
+        vm_ip: str | None = None,
+        vm_password: str | None = None,
+        config_failed: bool | None = None,
+        start_lease: bool = False,
+        actor_id: str = "system",
     ) -> None: ...
     def sync_set_status_message(
-        self, session: Session, booking_id: UUID, message: str | None,
+        self,
+        session: Session,
+        booking_id: UUID,
+        message: str | None,
         if_status_in: frozenset[BookingStatus] | None = None,
     ) -> bool: ...
     def sync_append_progress(
-        self, session: Session, booking_id: UUID, chunk: str, last_message: str,
+        self,
+        session: Session,
+        booking_id: UUID,
+        chunk: str,
+        last_message: str,
         accepting: frozenset[BookingStatus],
     ) -> None: ...
-    def sync_promote_next_queued(self, session: Session, resource_type: str) -> Booking | None: ...
+    def sync_promote_next_queued(
+        self, session: Session, resource_type: str
+    ) -> Booking | None: ...
 
 
 @runtime_checkable
@@ -116,13 +184,19 @@ class ImageRepositoryPort(Protocol):
 @runtime_checkable
 class HWConfigRepositoryPort(Protocol):
     async def get(self, session: AsyncSession, hw_config_id: UUID) -> HWConfig: ...
-    async def get_by_name(self, session: AsyncSession, name: str) -> HWConfig | None: ...
+    async def get_by_name(
+        self, session: AsyncSession, name: str
+    ) -> HWConfig | None: ...
 
 
 @runtime_checkable
 class QuotaRepositoryPort(Protocol):
-    async def get_limits_for_update(self, session: AsyncSession, user_id: str) -> dict: ...
-    async def count_active_resources(self, session: AsyncSession, user_id: str) -> dict: ...
+    async def get_limits_for_update(
+        self, session: AsyncSession, user_id: str
+    ) -> dict: ...
+    async def count_active_resources(
+        self, session: AsyncSession, user_id: str
+    ) -> dict: ...
 
 
 @runtime_checkable
@@ -132,7 +206,10 @@ class PooledResourceRepositoryPort(Protocol):
     The lock methods return the concrete pooled-resource ORM row (or None); the use case only reads
     `.id` / `.is_active` / `.name` off it, so the port keeps the return loose to avoid importing an
     infrastructure model into the application layer."""
-    async def lock_for_allocation(self, session: AsyncSession, resource_id: UUID) -> object | None: ...
+
+    async def lock_for_allocation(
+        self, session: AsyncSession, resource_id: UUID
+    ) -> object | None: ...
     async def lock_next_available(self, session: AsyncSession) -> object | None: ...
     async def is_held(self, session: AsyncSession, resource_id: UUID) -> bool: ...
 
@@ -140,44 +217,189 @@ class PooledResourceRepositoryPort(Protocol):
 @runtime_checkable
 class NamespaceRepositoryPort(PooledResourceRepositoryPort, Protocol):
     async def get_by_name_and_cluster(
-        self, session: AsyncSession, name: str, cluster_name: str,
+        self,
+        session: AsyncSession,
+        name: str,
+        cluster_name: str,
     ) -> Namespace | None: ...
     async def list_held_standalone_by_user(
-        self, session: AsyncSession, user_id: str,
+        self,
+        session: AsyncSession,
+        user_id: str,
     ) -> list[Namespace]: ...
 
 
 @runtime_checkable
 class StaticVMRepositoryPort(PooledResourceRepositoryPort, Protocol):
-    async def get_by_name(self, session: AsyncSession, name: str) -> StaticVM | None: ...
+    async def get_by_name(
+        self, session: AsyncSession, name: str
+    ) -> StaticVM | None: ...
 
 
 @runtime_checkable
 class EnvironmentRepositoryPort(Protocol):
     async def create(
-        self, session: AsyncSession, name: str, blueprint_name: str | None,
-        user_id: str, ttl_minutes: int, expires_at, created_by: str | None = None,
+        self,
+        session: AsyncSession,
+        name: str,
+        blueprint_name: str | None,
+        user_id: str,
+        ttl_minutes: int,
+        expires_at,
+        created_by: str | None = None,
     ) -> Environment: ...
     async def get(self, session: AsyncSession, environment_id: UUID) -> Environment: ...
     async def delete(self, session: AsyncSession, environment_id: UUID) -> None: ...
-    async def mark_construction_complete(self, session: AsyncSession, environment_id: UUID) -> None: ...
-    async def start_lease_if_ready(self, session: AsyncSession, environment_id: UUID) -> bool: ...
-    async def start_lease_if_ready_for_booking(self, session: AsyncSession, booking_id: UUID) -> bool: ...
-    async def update_name(self, session: AsyncSession, environment_id: UUID, name: str) -> None: ...
+    async def mark_construction_complete(
+        self, session: AsyncSession, environment_id: UUID
+    ) -> None: ...
+    async def start_lease_if_ready(
+        self, session: AsyncSession, environment_id: UUID
+    ) -> bool: ...
+    async def start_lease_if_ready_for_booking(
+        self, session: AsyncSession, booking_id: UUID
+    ) -> bool: ...
+    async def update_name(
+        self, session: AsyncSession, environment_id: UUID, name: str
+    ) -> None: ...
     async def list_items_by_ids(
-        self, session: AsyncSession, ids: list[UUID], *, user_id: str | None, child_limit: int,
+        self,
+        session: AsyncSession,
+        ids: list[UUID],
+        *,
+        user_id: str | None,
+        child_limit: int,
     ) -> tuple[list[Environment], list[Environment]]: ...
     async def newest_key(
-        self, session: AsyncSession, *, user_id: str | None, label: str | None,
+        self,
+        session: AsyncSession,
+        *,
+        user_id: str | None,
+        label: str | None,
         include_released: bool,
     ) -> KeysetCursor | None: ...
 
 
 @runtime_checkable
 class BlueprintRepositoryPort(Protocol):
-    async def get_by_name(self, session: AsyncSession, name: str) -> EnvironmentBlueprint | None: ...
+    async def get_by_name(
+        self, session: AsyncSession, name: str
+    ) -> EnvironmentBlueprint | None: ...
 
 
 @runtime_checkable
 class RoleRepositoryPort(Protocol):
     async def get_by_name(self, session: AsyncSession, name: str) -> Role | None: ...
+
+
+T = TypeVar("T")
+
+
+class CredentialSlotUnavailable(Exception):
+    """Raised when a cloud-provider credential slot cannot be acquired within the wait."""
+
+
+@runtime_checkable
+class SyncImageReadPort(Protocol):
+    def sync_get(self, session: Session, image_id: UUID) -> VMImage: ...
+
+
+@runtime_checkable
+class SyncHWConfigReadPort(Protocol):
+    def sync_get(self, session: Session, hw_config_id: UUID) -> HWConfig: ...
+
+
+@runtime_checkable
+class SyncEnvironmentLeasePort(Protocol):
+    def sync_start_lease_if_ready_for_booking(
+        self, session: Session, booking_id: UUID
+    ) -> bool: ...
+
+
+@runtime_checkable
+class SessionRunner(Protocol):
+    """Runs database work inside a short-lived sync session."""
+
+    def __call__(self, work: Callable[[Session], T]) -> T: ...
+
+
+@runtime_checkable
+class CredentialLease(Protocol):
+    """A held cloud-provider credential slot (e.g. VCD API token)."""
+
+    api_token: str | None
+
+    def renew(self) -> None: ...
+
+
+@runtime_checkable
+class CredentialSlotPort(Protocol):
+    """Acquires a slot for provider operations, yielding a renew-able lease."""
+
+    def acquire(self) -> AbstractContextManager[CredentialLease]: ...
+
+
+@runtime_checkable
+class VmApplier(Protocol):
+    """Sync port for applying Terraform configuration for a VM booking."""
+
+    def apply(
+        self,
+        workspace_id: str,
+        config: dict[str, Any],
+        *,
+        api_token: str | None = None,
+        on_progress: Callable[[str], None] | None = None,
+    ) -> dict[str, Any]: ...
+
+
+@runtime_checkable
+class VmConfigRunnerPort(Protocol):
+    """SSH connectivity and startup script runner for provisioned VMs."""
+
+    def connect(
+        self, ip: str, password: str, on_progress: Callable[[str], None] | None = None
+    ) -> Any: ...
+
+    def run_script(
+        self, client: Any, script: str, on_progress: Callable[[str], None] | None = None
+    ) -> None: ...
+
+    def close(self, client: Any) -> None: ...
+
+
+@runtime_checkable
+class RoleApplierPort(Protocol):
+    """Applies Ansible roles to a provisioned VM."""
+
+    def apply_roles(
+        self,
+        booking: Booking,
+        *,
+        ip: str,
+        password: str,
+        on_progress: Callable[[str], None] | None = None,
+        extra_vars: dict[str, Any] | None = None,
+        label: str = "",
+    ) -> None: ...
+
+
+@runtime_checkable
+class ProgressSink(Protocol):
+    """Buffered progress output sink for a provisioning attempt."""
+
+    def record(self, message: str) -> None: ...
+
+    def flush(self) -> None: ...
+
+    def close(self) -> None: ...
+
+
+@runtime_checkable
+class TeardownHandoff(Protocol):
+    """Dispatches teardown when a booking is released mid-apply.
+
+    Note: TeardownHandoff is a subset of TaskDispatcher, to collapse in the teardown slice.
+    """
+
+    def hand_off(self, booking_id: str, request_id: str | None = None) -> None: ...

@@ -24,7 +24,6 @@ class StaticVMUnavailableError(BookingError):
 
 class IllegalStatusTransitionError(BookingError):
     """A booking status move that the transition machine forbids (#238)."""
-    pass
 
 
 class EnvironmentError(Exception):
@@ -77,6 +76,10 @@ class BookingPermissionError(Exception):
 
 class SecretDecryptionError(BookingError):
     """Fernet key mismatch or corrupted ciphertext — permanent, must not be retried."""
+
+
+class VmConfigurationError(BookingError):
+    """The VM is reachable and running, but its post-provision configuration failed (#429)."""
 
 
 class EnvironmentChildReleaseError(BookingError):
