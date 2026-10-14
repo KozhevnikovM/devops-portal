@@ -54,8 +54,9 @@ class UpdateEnvironmentRequest(BaseModel):
 
 class ExtendEnvironmentRequest(BaseModel):
     # Minutes to add to the whole stack's lease. Positive only: unlike a booking, an environment
-    # extension never makes the lease permanent (#532).
-    extend_minutes: int = Field(gt=0)
+    # extension never makes the lease permanent (#532). Strict, so JSON 1.0 / "1" / true are
+    # rejected (422) rather than coerced to an int that would extend the whole stack.
+    extend_minutes: int = Field(strict=True, gt=0)
 
 
 class OrderEnvironmentRequest(BaseModel):

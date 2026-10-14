@@ -27,6 +27,7 @@ _T = datetime(2026, 10, 14, 12, 0, tzinfo=UTC)
 class _MemoryEnvRepo:
     def __init__(self, env: Environment) -> None:
         self.env = env
+        self.extend_calls = 0
 
     async def get(self, session, environment_id):
         if environment_id != self.env.id:
@@ -34,6 +35,7 @@ class _MemoryEnvRepo:
         return self.env
 
     async def extend_lease(self, session, environment_id, extend_minutes, actor_id):
+        self.extend_calls += 1
         new = Lease(self.env.ttl_minutes, self.env.expires_at).extended_within_term_by(
             extend_minutes
         )
@@ -186,6 +188,24 @@ def test_invalid_increment_422(api, body):
     resp = client.put(f"/api/v1/environments/{env.id}/extend", json=body)
     assert resp.status_code == 422
     assert repo.env.expires_at == _T and repo.env.ttl_minutes == 60
+
+
+@pytest.mark.parametrize(
+    "value",
+    [1.0, "1", True, "60", 60.0],
+    ids=["float", "str", "bool", "numeric-str", "whole-float"],
+)
+def test_coercible_non_integer_is_rejected_not_coerced(api, value):
+    """PR #534 review: lax Pydantic would coerce these to an int and extend the whole stack."""
+    env = _env()
+    client, repo = api(env)
+    resp = client.put(
+        f"/api/v1/environments/{env.id}/extend", json={"extend_minutes": value}
+    )
+    assert resp.status_code == 422
+    assert repo.extend_calls == 0  # nothing written — no lease change, no audit entry
+    assert (repo.env.ttl_minutes, repo.env.expires_at) == (60, _T)
+    assert {(b.ttl_minutes, b.expires_at) for b in repo.env.bookings} == {(60, _T)}
 
 
 def test_increment_reaching_sentinel_422(api):

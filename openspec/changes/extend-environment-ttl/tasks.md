@@ -18,7 +18,7 @@
 
 ## 4. JSON API
 
-- [x] 4.1 Add `ExtendEnvironmentRequest` (`extend_minutes: int = Field(gt=0)`) and `PUT /{environment_id}/extend` to `api_environments.py` with 404/403/422/409 mapping and the `{id, status, ttl_minutes, expires_at}` response; verify with API tests on both `/api/v1/environments/...` and the legacy `/api/environments/...` path, including that `GET /api/v1/environments/{id}` and the list reflect the new expiry and every child shares it
+- [x] 4.1 Add `ExtendEnvironmentRequest` (`extend_minutes: int = Field(strict=True, gt=0)` — strict so `1.0`/`"1"`/`true` are 422, not coerced) and `PUT /{environment_id}/extend` to `api_environments.py` with 404/403/422/409 mapping and the `{id, status, ttl_minutes, expires_at}` response; verify with API tests on both `/api/v1/environments/...` and the legacy `/api/environments/...` path, including that `GET /api/v1/environments/{id}` and the list reflect the new expiry and every child shares it
 - [x] 4.2 Verify the endpoint appears in `/openapi.json` under `/api/v1` only (test or runtime check)
 
 ## 5. Browser UI

@@ -71,7 +71,7 @@ This replaces `sync_live_children` in `enforce_environment_ttl`. It locks the en
 
 ### 5. API surface
 
-- `ExtendEnvironmentRequest(BaseModel)`: `extend_minutes: int = Field(gt=0)`. FastAPI rejects non-positive values and non-integers with `422` before the use case runs. The use case still validates as a second line of defence, and its `InvalidExtensionError` (e.g. the sentinel overflow) maps to `422`.
+- `ExtendEnvironmentRequest(BaseModel)`: `extend_minutes: int = Field(strict=True, gt=0)`. FastAPI rejects non-positive values and non-integers with `422` before the use case runs. The field is strict (PR #534 review) because lax Pydantic would coerce JSON `1.0`, `"1"` or `true` to `1` and extend the whole stack. The use case still validates as a second line of defence, and its `InvalidExtensionError` (e.g. the sentinel overflow) maps to `422`.
 - Error mapping matches booking extend: `EnvironmentNotFoundError → 404`, `BookingPermissionError → 403`, `InvalidExtensionError → 422`, other `EnvironmentError → 409`.
 - The response is `{"id", "status", "ttl_minutes", "expires_at"}`, where `status` is the derived status. The route lives on the shared `api_environments` router, so it appears under `/api/v1` (in OpenAPI) and under the hidden legacy `/api` mount.
 
