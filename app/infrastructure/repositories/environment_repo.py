@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 from sqlalchemy import func, literal, or_, select, true, tuple_, union_all
@@ -10,15 +10,26 @@ from app.domain.booking_status import CAN_BECOME_READY, LIVE_CHILD_STATUSES
 from app.domain.constants import PERMANENT_EXPIRES_AT
 from app.domain.entities import Environment
 from app.domain.enums import BookingStatus, ResourceType
-from app.domain.exceptions import EnvironmentNotFoundError
-from app.domain.lease import Lease, lease_can_start
+from app.domain.environment_status import derive_environment_status
+from app.domain.exceptions import EnvironmentError, EnvironmentNotFoundError
+from app.domain.lease import Lease, environment_extend_blocker, lease_can_start
 from app.domain.pagination import EnvironmentPage, KeysetCursor
 from app.infrastructure.database.models import (
-    BOOKING_NOT_RELEASED, BookingModel, EnvironmentModel, NamespaceModel, StaticVMModel, UserModel,
+    BOOKING_NOT_RELEASED,
+    BookingAuditModel,
+    BookingModel,
+    EnvironmentModel,
+    NamespaceModel,
+    StaticVMModel,
+    UserModel,
 )
+from app.infrastructure.events import Routing
 from app.infrastructure.repositories._ordered_walk import _OrderedWalk
 from app.infrastructure.repositories._user_ref import user_by_ref
-from app.infrastructure.repositories.booking_repo import _to_entity as _booking_to_entity
+from app.infrastructure.repositories.booking_repo import (
+    _to_entity as _booking_to_entity,
+)
+from app.infrastructure.repositories.booking_repo import apublish_children_lifecycle
 
 # Second alias of users to resolve created_by (the dispatcher) → username, distinct from the owner.
 _CreatorUser = aliased(UserModel)
@@ -51,10 +62,19 @@ def _stamp_lease(env: EnvironmentModel, children) -> bool:
     return True
 
 
+def _raise_if_not_extendable(lease: Lease, children) -> None:
+    """``EnvironmentError`` with the reason if the stack's lease can't be extended (#532)."""
+    status = derive_environment_status(BookingStatus(c.status) for c in children)
+    blocker = environment_extend_blocker(status, lease)
+    if blocker is not None:
+        raise EnvironmentError(blocker)
+
+
 def _children_stmt(environment_id: UUID):
     # populate_existing: re-read statuses committed by other workers since this session loaded them.
     return (
-        select(BookingModel).where(BookingModel.environment_id == environment_id)
+        select(BookingModel)
+        .where(BookingModel.environment_id == environment_id)
         .execution_options(populate_existing=True)
     )
 
@@ -105,17 +125,26 @@ def _list_stmt(user_id: str | None, *, label: str | None, include_released: bool
     """The unpaginated environments-list query (children are fetched separately, only for the rows
     it returns)."""
     # id breaks created_at ties so the order is total — keyset pagination relies on it (#467).
-    stmt = _with_usernames().order_by(EnvironmentModel.created_at.desc(), EnvironmentModel.id.desc())
+    stmt = _with_usernames().order_by(
+        EnvironmentModel.created_at.desc(), EnvironmentModel.id.desc()
+    )
     if user_id is not None:
         # Visible to user: owned, plus any dispatched on someone's behalf (created_by).
         stmt = stmt.where(
-            or_(EnvironmentModel.user_id == user_id, EnvironmentModel.created_by == user_id)
+            or_(
+                EnvironmentModel.user_id == user_id,
+                EnvironmentModel.created_by == user_id,
+            )
         )
     return _apply_filters(stmt, label=label, include_released=include_released)
 
 
 def _page_keys_stmt(
-    user_id: str | None, *, label: str | None, include_released: bool, limit: int,
+    user_id: str | None,
+    *,
+    label: str | None,
+    include_released: bool,
+    limit: int,
     after: KeysetCursor | None,
 ):
     """Phase 1 of an environments page (#467, #496): the (created_at, id) keys of up to `limit + 1`
@@ -133,7 +162,11 @@ def _page_keys_stmt(
     viewer both owns and dispatched.
     """
     size = limit + 1
-    scopes = [None] if user_id is None else [EnvironmentModel.user_id, EnvironmentModel.created_by]
+    scopes = (
+        [None]
+        if user_id is None
+        else [EnvironmentModel.user_id, EnvironmentModel.created_by]
+    )
     walks = []
     for owner_column in scopes:
         walk = select(EnvironmentModel.created_at, EnvironmentModel.id)
@@ -153,7 +186,9 @@ def _page_keys_stmt(
             )
         walk = _apply_filters(walk, label=label, include_released=include_released)
         walks.append(
-            walk.order_by(EnvironmentModel.created_at.desc(), EnvironmentModel.id.desc()).limit(size)
+            walk.order_by(
+                EnvironmentModel.created_at.desc(), EnvironmentModel.id.desc()
+            ).limit(size)
         )
     if len(walks) == 1:
         return walks[0]
@@ -176,10 +211,17 @@ def _bounded_children_stmt(env_ids: list[UUID], per_environment: int):
     """
     children = (
         select(
-            BookingModel.id, BookingModel.environment_id, BookingModel.status,
-            BookingModel.resource_type, BookingModel.created_at, BookingModel.environment_label,
-            NamespaceModel.name.label("namespace_name"), StaticVMModel.name.label("static_vm_name"),
-            StaticVMModel.host.label("static_vm_host"), BookingModel.image_name, BookingModel.vm_ip,
+            BookingModel.id,
+            BookingModel.environment_id,
+            BookingModel.status,
+            BookingModel.resource_type,
+            BookingModel.created_at,
+            BookingModel.environment_label,
+            NamespaceModel.name.label("namespace_name"),
+            StaticVMModel.name.label("static_vm_name"),
+            StaticVMModel.host.label("static_vm_host"),
+            BookingModel.image_name,
+            BookingModel.vm_ip,
             BookingModel.config_failed,
         )
         .outerjoin(NamespaceModel, NamespaceModel.id == BookingModel.namespace_id)
@@ -198,10 +240,16 @@ def _bounded_children_stmt(env_ids: list[UUID], per_environment: int):
 
 def _to_child_item(row) -> EnvironmentChildItem:
     return EnvironmentChildItem(
-        id=row.id, status=BookingStatus(row.status), resource_type=ResourceType(row.resource_type),
-        created_at=row.created_at, environment_label=row.environment_label,
-        namespace_name=row.namespace_name, static_vm_name=row.static_vm_name,
-        static_vm_host=row.static_vm_host, image_name=row.image_name, vm_ip=row.vm_ip,
+        id=row.id,
+        status=BookingStatus(row.status),
+        resource_type=ResourceType(row.resource_type),
+        created_at=row.created_at,
+        environment_label=row.environment_label,
+        namespace_name=row.namespace_name,
+        static_vm_name=row.static_vm_name,
+        static_vm_host=row.static_vm_host,
+        image_name=row.image_name,
+        vm_ip=row.vm_ip,
         config_failed=row.config_failed,
     )
 
@@ -211,9 +259,8 @@ def _live_children_stmt(limit: int):
     `limit` (#497 D3a). The not-RELEASED test is the literal BOOKING_NOT_RELEASED, never a bound
     parameter: PostgreSQL can't prove a partial index's predicate from a parameter under a generic
     plan, and this query must use ix_bookings_environment_id_unreleased (#479)."""
-    live_envs = (
-        select(BookingModel.environment_id)
-        .where(BookingModel.environment_id.is_not(None), BOOKING_NOT_RELEASED)
+    live_envs = select(BookingModel.environment_id).where(
+        BookingModel.environment_id.is_not(None), BOOKING_NOT_RELEASED
     )
     counts = (
         select(func.count().label("n"))
@@ -221,26 +268,48 @@ def _live_children_stmt(limit: int):
         .group_by(BookingModel.environment_id)
         .subquery()
     )
-    return select(func.coalesce(func.max(counts.c.n), 0), func.count().filter(counts.c.n > limit))
+    return select(
+        func.coalesce(func.max(counts.c.n), 0), func.count().filter(counts.c.n > limit)
+    )
 
 
-def _to_entity(m: EnvironmentModel, bookings=None, owner_username=None, created_by_username=None) -> Environment:
+def _to_entity(
+    m: EnvironmentModel, bookings=None, owner_username=None, created_by_username=None
+) -> Environment:
     return Environment(
-        id=m.id, name=m.name, blueprint_name=m.blueprint_name, user_id=m.user_id,
-        ttl_minutes=m.ttl_minutes, expires_at=m.expires_at, created_at=m.created_at,
-        bookings=bookings or [], owner_username=owner_username, created_by=m.created_by,
+        id=m.id,
+        name=m.name,
+        blueprint_name=m.blueprint_name,
+        user_id=m.user_id,
+        ttl_minutes=m.ttl_minutes,
+        expires_at=m.expires_at,
+        created_at=m.created_at,
+        bookings=bookings or [],
+        owner_username=owner_username,
+        created_by=m.created_by,
         created_by_username=created_by_username,
     )
 
 
 class EnvironmentRepository:
     async def create(
-        self, session: AsyncSession, name: str, blueprint_name: str | None,
-        user_id: str, ttl_minutes: int, expires_at, created_by: str | None = None,
+        self,
+        session: AsyncSession,
+        name: str,
+        blueprint_name: str | None,
+        user_id: str,
+        ttl_minutes: int,
+        expires_at,
+        created_by: str | None = None,
     ) -> Environment:
         model = EnvironmentModel(
-            id=uuid4(), name=name, blueprint_name=blueprint_name, user_id=user_id,
-            ttl_minutes=ttl_minutes, expires_at=expires_at, created_by=created_by,
+            id=uuid4(),
+            name=name,
+            blueprint_name=blueprint_name,
+            user_id=user_id,
+            ttl_minutes=ttl_minutes,
+            expires_at=expires_at,
+            created_by=created_by,
             construction_complete=False,  # the order marks it once every child exists (#434)
         )
         session.add(model)
@@ -253,7 +322,9 @@ class EnvironmentRepository:
             await session.delete(model)
             await session.commit()
 
-    async def mark_construction_complete(self, session: AsyncSession, environment_id: UUID) -> None:
+    async def mark_construction_complete(
+        self, session: AsyncSession, environment_id: UUID
+    ) -> None:
         """Every child the order intended now exists — from here on the lease may start (#434)."""
         model = await session.get(EnvironmentModel, environment_id)
         if model is None:
@@ -261,7 +332,9 @@ class EnvironmentRepository:
         model.construction_complete = True
         await session.commit()
 
-    async def update_name(self, session: AsyncSession, environment_id: UUID, name: str) -> None:
+    async def update_name(
+        self, session: AsyncSession, environment_id: UUID, name: str
+    ) -> None:
         model = await session.get(EnvironmentModel, environment_id)
         if model is None:
             raise EnvironmentNotFoundError(f"Environment {environment_id} not found")
@@ -283,7 +356,9 @@ class EnvironmentRepository:
         ]
 
     async def _children_batch(
-        self, session: AsyncSession, env_ids: list[UUID],
+        self,
+        session: AsyncSession,
+        env_ids: list[UUID],
     ) -> dict[UUID, list]:
         """Fetch all children for a batch of environment IDs in a single query."""
         if not env_ids:
@@ -306,8 +381,14 @@ class EnvironmentRepository:
     async def get(self, session: AsyncSession, environment_id: UUID) -> Environment:
         result = await session.execute(
             select(EnvironmentModel, UserModel.username, _CreatorUser.username)
-            .join(UserModel, user_by_ref(UserModel, EnvironmentModel.user_id), isouter=True)
-            .outerjoin(_CreatorUser, user_by_ref(_CreatorUser, EnvironmentModel.created_by))
+            .join(
+                UserModel,
+                user_by_ref(UserModel, EnvironmentModel.user_id),
+                isouter=True,
+            )
+            .outerjoin(
+                _CreatorUser, user_by_ref(_CreatorUser, EnvironmentModel.created_by)
+            )
             .where(EnvironmentModel.id == environment_id)
         )
         row = result.first()
@@ -315,10 +396,15 @@ class EnvironmentRepository:
             raise EnvironmentNotFoundError(f"Environment {environment_id} not found")
         model, owner, creator = row
         children = await self._children(session, environment_id)
-        return _to_entity(model, bookings=children, owner_username=owner, created_by_username=creator)
+        return _to_entity(
+            model, bookings=children, owner_username=owner, created_by_username=creator
+        )
 
     async def get_by_namespace(
-        self, session: AsyncSession, namespace_name: str, cluster_name: str | None = None,
+        self,
+        session: AsyncSession,
+        namespace_name: str,
+        cluster_name: str | None = None,
     ) -> list[Environment]:
         """Environments currently holding a namespace named `namespace_name` via a live child.
 
@@ -346,32 +432,58 @@ class EnvironmentRepository:
             return []
         env_result = await session.execute(
             select(EnvironmentModel, UserModel.username, _CreatorUser.username)
-            .join(UserModel, user_by_ref(UserModel, EnvironmentModel.user_id), isouter=True)
-            .outerjoin(_CreatorUser, user_by_ref(_CreatorUser, EnvironmentModel.created_by))
+            .join(
+                UserModel,
+                user_by_ref(UserModel, EnvironmentModel.user_id),
+                isouter=True,
+            )
+            .outerjoin(
+                _CreatorUser, user_by_ref(_CreatorUser, EnvironmentModel.created_by)
+            )
             .where(EnvironmentModel.id.in_(env_ids))
         )
         env_rows = env_result.all()
         children_by_env = await self._children_batch(session, env_ids)
         return [
-            _to_entity(model, bookings=children_by_env.get(model.id, []),
-                       owner_username=owner, created_by_username=creator)
+            _to_entity(
+                model,
+                bookings=children_by_env.get(model.id, []),
+                owner_username=owner,
+                created_by_username=creator,
+            )
             for model, owner, creator in env_rows
         ]
 
     async def list_all(
-        self, session: AsyncSession, label: str | None = None, include_released: bool = True,
-    ) -> list[Environment]:
-        return await self._list(session, None, label=label, include_released=include_released)
-
-    async def list_by_user(
-        self, session: AsyncSession, user_id: str, label: str | None = None,
+        self,
+        session: AsyncSession,
+        label: str | None = None,
         include_released: bool = True,
     ) -> list[Environment]:
-        return await self._list(session, user_id, label=label, include_released=include_released)
+        return await self._list(
+            session, None, label=label, include_released=include_released
+        )
+
+    async def list_by_user(
+        self,
+        session: AsyncSession,
+        user_id: str,
+        label: str | None = None,
+        include_released: bool = True,
+    ) -> list[Environment]:
+        return await self._list(
+            session, user_id, label=label, include_released=include_released
+        )
 
     async def list_page(
-        self, session: AsyncSession, *, user_id: str | None, label: str | None,
-        include_released: bool, limit: int, after: KeysetCursor | None,
+        self,
+        session: AsyncSession,
+        *,
+        user_id: str | None,
+        label: str | None,
+        include_released: bool,
+        limit: int,
+        after: KeysetCursor | None,
     ) -> EnvironmentPage:
         """One keyset page of the environments list, newest first (#467).
 
@@ -382,9 +494,17 @@ class EnvironmentRepository:
         """
         # Phase 1 under the ordered-walk pin: no sequential/bitmap scan, no sort, no JIT (#496).
         async with _OrderedWalk(session):
-            keys = (await session.execute(_page_keys_stmt(
-                user_id, label=label, include_released=include_released, limit=limit, after=after,
-            ))).all()
+            keys = (
+                await session.execute(
+                    _page_keys_stmt(
+                        user_id,
+                        label=label,
+                        include_released=include_released,
+                        limit=limit,
+                        after=after,
+                    )
+                )
+            ).all()
         has_more = len(keys) > limit
         keys = keys[:limit]
         # Phase 2, unpinned: the page's rows and usernames, then their children, by id.
@@ -396,10 +516,16 @@ class EnvironmentRepository:
             rows_by_id = {row[0].id: row for row in result.all()}
         # Key order is page order; an environment deleted between the phases is skipped.
         rows = [rows_by_id[k.id] for k in keys if k.id in rows_by_id]
-        children_by_env = await self._children_batch(session, [model.id for model, _, _ in rows])
+        children_by_env = await self._children_batch(
+            session, [model.id for model, _, _ in rows]
+        )
         items = [
-            _to_entity(model, bookings=children_by_env.get(model.id, []),
-                       owner_username=owner, created_by_username=creator)
+            _to_entity(
+                model,
+                bookings=children_by_env.get(model.id, []),
+                owner_username=owner,
+                created_by_username=creator,
+            )
             for model, owner, creator in rows
         ]
         next_cursor = None
@@ -409,7 +535,12 @@ class EnvironmentRepository:
         return EnvironmentPage(items=items, next_cursor=next_cursor)
 
     async def list_items_by_ids(
-        self, session: AsyncSession, ids: list[UUID], *, user_id: str | None, child_limit: int,
+        self,
+        session: AsyncSession,
+        ids: list[UUID],
+        *,
+        user_id: str | None,
+        child_limit: int,
     ) -> tuple[list[Environment], list[Environment]]:
         """The given environments visible on a page, with their children, in two statements (#497).
 
@@ -424,32 +555,56 @@ class EnvironmentRepository:
         """
         if not ids:
             return [], []
-        stmt = _with_usernames().where(EnvironmentModel.id.in_(list(ids))).order_by(
-            EnvironmentModel.created_at.desc(), EnvironmentModel.id.desc(),
+        stmt = (
+            _with_usernames()
+            .where(EnvironmentModel.id.in_(list(ids)))
+            .order_by(
+                EnvironmentModel.created_at.desc(),
+                EnvironmentModel.id.desc(),
+            )
         )
         if user_id is not None:
             stmt = stmt.where(
-                or_(EnvironmentModel.user_id == user_id, EnvironmentModel.created_by == user_id)
+                or_(
+                    EnvironmentModel.user_id == user_id,
+                    EnvironmentModel.created_by == user_id,
+                )
             )
         rows = (await session.execute(stmt)).all()
         if not rows:
             return [], []
-        children: dict[UUID, list[EnvironmentChildItem]] = {model.id: [] for model, _, _ in rows}
-        result = await session.execute(_bounded_children_stmt(list(children), child_limit + 1))
+        children: dict[UUID, list[EnvironmentChildItem]] = {
+            model.id: [] for model, _, _ in rows
+        }
+        result = await session.execute(
+            _bounded_children_stmt(list(children), child_limit + 1)
+        )
         for row in result.all():
             children[row.environment_id].append(_to_child_item(row))
         items, over_limit = [], []
         for model, owner, creator in rows:
             kids = children[model.id]
             if len(kids) > child_limit:
-                over_limit.append(_to_entity(model, owner_username=owner, created_by_username=creator))
+                over_limit.append(
+                    _to_entity(model, owner_username=owner, created_by_username=creator)
+                )
             else:
-                items.append(_to_entity(model, bookings=sorted(kids, key=lambda c: c.created_at),
-                                        owner_username=owner, created_by_username=creator))
+                items.append(
+                    _to_entity(
+                        model,
+                        bookings=sorted(kids, key=lambda c: c.created_at),
+                        owner_username=owner,
+                        created_by_username=creator,
+                    )
+                )
         return items, over_limit
 
     async def newest_key(
-        self, session: AsyncSession, *, user_id: str | None, label: str | None,
+        self,
+        session: AsyncSession,
+        *,
+        user_id: str | None,
+        label: str | None,
         include_released: bool,
     ) -> KeysetCursor | None:
         """The key of the newest environment the page's filters match, or None (#497 D8).
@@ -458,13 +613,26 @@ class EnvironmentRepository:
         statement, nothing hydrated.
         """
         async with _OrderedWalk(session):
-            row = (await session.execute(_page_keys_stmt(
-                user_id, label=label, include_released=include_released, limit=0, after=None,
-            ))).first()
-        return None if row is None else KeysetCursor(created_at=row.created_at, id=row.id)
+            row = (
+                await session.execute(
+                    _page_keys_stmt(
+                        user_id,
+                        label=label,
+                        include_released=include_released,
+                        limit=0,
+                        after=None,
+                    )
+                )
+            ).first()
+        return (
+            None if row is None else KeysetCursor(created_at=row.created_at, id=row.id)
+        )
 
     async def _list(
-        self, session: AsyncSession, user_id: str | None, label: str | None = None,
+        self,
+        session: AsyncSession,
+        user_id: str | None,
+        label: str | None = None,
         include_released: bool = True,
     ) -> list[Environment]:
         stmt = _list_stmt(user_id, label=label, include_released=include_released)
@@ -472,13 +640,19 @@ class EnvironmentRepository:
         env_ids = [model.id for model, _, _ in rows]
         children_by_env = await self._children_batch(session, env_ids)
         return [
-            _to_entity(model, bookings=children_by_env.get(model.id, []),
-                       owner_username=owner, created_by_username=creator)
+            _to_entity(
+                model,
+                bookings=children_by_env.get(model.id, []),
+                owner_username=owner,
+                created_by_username=creator,
+            )
             for model, owner, creator in rows
         ]
 
     # ── Sync helpers (Celery beat — env-aware TTL enforcement) ──────────────────
-    async def live_children_over(self, session: AsyncSession, limit: int) -> tuple[int, int]:
+    async def live_children_over(
+        self, session: AsyncSession, limit: int
+    ) -> tuple[int, int]:
         """(largest child count of any not-fully-released environment, how many exceed `limit`) (#497).
 
         `(0, 0)` when no environment is live. Sizes the effective child limit: environments ordered
@@ -494,21 +668,36 @@ class EnvironmentRepository:
 
     def sync_list_expired(self, session: Session) -> list[Environment]:
         """Return environments past their expires_at that still have at least one live child."""
-        live_child = (
-            select(BookingModel.environment_id)
-            .where(BookingModel.status.in_(_LIVE_CHILD_STATUSES),
-                   BookingModel.environment_id.is_not(None))
+        live_child = select(BookingModel.environment_id).where(
+            BookingModel.status.in_(_LIVE_CHILD_STATUSES),
+            BookingModel.environment_id.is_not(None),
         )
         result = session.execute(
             select(EnvironmentModel).where(
-                EnvironmentModel.expires_at < datetime.now(timezone.utc),
+                EnvironmentModel.expires_at < datetime.now(UTC),
                 EnvironmentModel.id.in_(live_child),
             )
         )
         return [_to_entity(m) for m in result.scalars().all()]
 
-    def sync_live_children(self, session: Session, environment_id: UUID):
-        """Return the still-live child bookings of an environment (for grouped teardown)."""
+    def sync_live_children_if_expired(self, session: Session, environment_id: UUID):
+        """The still-live children of an environment to tear down for TTL — or ``[]`` if it is no
+        longer expired (#532).
+
+        ``sync_list_expired`` is only a preselection: an extension may commit between it and this
+        call. So the environment row is locked (the same lock ``extend_lease`` takes) and its
+        deadline rechecked here; the lock is held until the caller's first child release commits,
+        after which an extension sees a released child and is rejected.
+        """
+        env = session.get(
+            EnvironmentModel,
+            environment_id,
+            with_for_update=True,
+            populate_existing=True,
+        )
+        if env is None or env.expires_at >= datetime.now(UTC):
+            session.rollback()  # release the row lock
+            return []
         result = session.execute(
             select(BookingModel).where(
                 BookingModel.environment_id == environment_id,
@@ -517,23 +706,106 @@ class EnvironmentRepository:
         )
         return [_booking_to_entity(m) for m in result.scalars().all()]
 
+    # ── Lease extension: the whole stack moves to one new deadline (#532) ────────────────
+    async def extend_lease(
+        self,
+        session: AsyncSession,
+        environment_id: UUID,
+        extend_minutes: int,
+        actor_id: str,
+    ) -> None:
+        """Extend the environment's shared lease and every child's to one new deadline, atomically.
+
+        Locks the environment row, then its children (the lock order every env-and-children path
+        follows), and rechecks eligibility against what it re-read under those locks — a
+        concurrent release, TTL sweep or extension is therefore either seen here or waits for this
+        commit. Raises ``EnvironmentNotFoundError`` / ``EnvironmentError`` (incl.
+        ``InvalidExtensionError``) after rolling back; nothing is written then.
+        """
+        try:
+            env = await session.get(
+                EnvironmentModel,
+                environment_id,
+                with_for_update=True,
+                populate_existing=True,
+            )
+            if env is None:
+                raise EnvironmentNotFoundError(
+                    f"Environment {environment_id} not found"
+                )
+            lease = Lease(env.ttl_minutes, env.expires_at)
+            # Only an eligible stack (every child READY) has its children locked: queue promotion
+            # takes QUEUED rows FOR UPDATE SKIP LOCKED, so locking an ineligible stack's QUEUED
+            # child would make a concurrent promotion skip it and break FIFO order.
+            children = (
+                (await session.execute(_children_stmt(environment_id))).scalars().all()
+            )
+            _raise_if_not_extendable(lease, children)
+            children = (
+                (
+                    await session.execute(
+                        _children_stmt(environment_id)
+                        .order_by(BookingModel.id)
+                        .with_for_update()
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            _raise_if_not_extendable(lease, children)
+            extended = lease.extended_within_term_by(extend_minutes)
+            for target in (env, *children):
+                target.ttl_minutes = extended.ttl_minutes
+                target.expires_at = extended.expires_at
+            for c in children:
+                session.add(
+                    BookingAuditModel(
+                        booking_id=c.id,
+                        actor_id=actor_id,
+                        action="EXTENDED",
+                        extra={
+                            "extend_minutes": extend_minutes,
+                            "environment_id": str(environment_id),
+                        },
+                    )
+                )
+            published = [
+                (c.id, Routing(owner_id=c.user_id, created_by=c.created_by))
+                for c in children
+            ]
+            env_routing = Routing(owner_id=env.user_id, created_by=env.created_by)
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
+        await apublish_children_lifecycle(published, environment_id, env_routing)
+
     # ── Lease start: whole-stack TTL begins once every child has settled (#223, #434) ────
     # Every path locks the environment row first (SELECT … FOR UPDATE) and only then reads the
     # children and the expiry, so concurrent settling events start the lease exactly once. Each path
     # commits, which releases the lock, even when it stamps nothing.
-    async def start_lease_if_ready(self, session: AsyncSession, environment_id: UUID) -> bool:
+    async def start_lease_if_ready(
+        self, session: AsyncSession, environment_id: UUID
+    ) -> bool:
         """Async path (ordering, promotion): start the lease if the children have settled."""
         env = await session.get(
-            EnvironmentModel, environment_id, with_for_update=True, populate_existing=True,
+            EnvironmentModel,
+            environment_id,
+            with_for_update=True,
+            populate_existing=True,
         )
         if env is None:
             return False
-        children = (await session.execute(_children_stmt(environment_id))).scalars().all()
+        children = (
+            (await session.execute(_children_stmt(environment_id))).scalars().all()
+        )
         stamped = _stamp_lease(env, children)
         await session.commit()
         return stamped
 
-    async def start_lease_if_ready_for_booking(self, session: AsyncSession, booking_id: UUID) -> bool:
+    async def start_lease_if_ready_for_booking(
+        self, session: AsyncSession, booking_id: UUID
+    ) -> bool:
         """Async twin of sync_start_lease_if_ready_for_booking. No-op for a standalone booking."""
         booking = await session.get(BookingModel, booking_id)
         if booking is None or booking.environment_id is None:
@@ -542,7 +814,12 @@ class EnvironmentRepository:
 
     def sync_start_lease_if_ready(self, session: Session, environment_id: UUID) -> bool:
         """Sync path (Celery): start the lease if the children have settled."""
-        env = session.get(EnvironmentModel, environment_id, with_for_update=True, populate_existing=True)
+        env = session.get(
+            EnvironmentModel,
+            environment_id,
+            with_for_update=True,
+            populate_existing=True,
+        )
         if env is None:
             return False
         children = session.execute(_children_stmt(environment_id)).scalars().all()
@@ -550,7 +827,9 @@ class EnvironmentRepository:
         session.commit()
         return stamped
 
-    def sync_start_lease_if_ready_for_booking(self, session: Session, booking_id: UUID) -> bool:
+    def sync_start_lease_if_ready_for_booking(
+        self, session: Session, booking_id: UUID
+    ) -> bool:
         """Sync path (provision task, reaper, promotion): if this booking belongs to an environment
         whose children have now settled, start the whole stack's lease. No-op for a standalone booking."""
         booking = session.get(BookingModel, booking_id)

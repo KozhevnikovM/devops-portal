@@ -7,11 +7,13 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse
+from markupsafe import escape
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.use_cases._permissions import can_manage
 from app.config import settings
 from app.domain.entities import User
+from app.domain.enums import BookingStatus
 from app.domain.exceptions import (
     BlueprintNotFoundError,
     BookingPermissionError,
@@ -23,6 +25,7 @@ from app.domain.exceptions import (
     QuotaExceededError,
     StaticVMUnavailableError,
 )
+from app.domain.lease import Lease, environment_extend_blocker
 from app.infrastructure.auth import require_user
 from app.infrastructure.database.session import get_async_session
 from app.presentation.forms import OptionalFormUUID
@@ -44,6 +47,7 @@ from app.presentation.routes.api_environments import (
     _blueprint_repo,
     _derived_status,
     _env_repo,
+    _extend_use_case,
     _namespace_repo,
     _order_use_case,
     _release_use_case,
@@ -56,8 +60,16 @@ logger = logging.getLogger(__name__)
 
 
 def _annotate(env):
-    """Attach the derived aggregate status so templates can read env.derived_status."""
+    """Attach the derived aggregate status, and whether the stack's lease may be extended (#532),
+    so templates can read env.derived_status / env.can_extend."""
     env.derived_status = _derived_status(env)
+    env.can_extend = (
+        environment_extend_blocker(
+            BookingStatus(env.derived_status),
+            Lease(env.ttl_minutes, env.expires_at),
+        )
+        is None
+    )
     return env
 
 
@@ -435,6 +447,49 @@ async def update_environment_name(
         raise HTTPException(status_code=403, detail=str(exc))
     except EnvironmentError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+    return templates.TemplateResponse(
+        request,
+        "partials/environment_row.html",
+        {"environment": _annotate(env), "current_user": current_user},
+    )
+
+
+def _extend_error(environment_id: UUID, message: str) -> HTMLResponse:
+    """Show an Extend failure inside the row's menu, leaving the row (and its expiry) untouched.
+    200 + HX-Retarget because htmx 1.x doesn't swap error responses."""
+    return HTMLResponse(
+        content=f'<span class="text-red-400 text-xs">{escape(message)}</span>',
+        headers={
+            "HX-Retarget": f"#environment-{environment_id}-extend-error",
+            "HX-Reswap": "innerHTML",
+        },
+    )
+
+
+@router.put(
+    "/environments/{environment_id}/extend",
+    response_class=HTMLResponse,
+    include_in_schema=False,
+)
+async def extend_environment(
+    environment_id: UUID,
+    request: Request,
+    extend_minutes: str = Form(""),
+    session: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(require_user),
+):
+    try:
+        minutes = int(extend_minutes)
+    except ValueError:
+        return _extend_error(environment_id, "Choose how long to extend by.")
+    try:
+        env = await _extend_use_case.execute(
+            session, environment_id, minutes, current_user
+        )
+    except EnvironmentNotFoundError:
+        return _extend_error(environment_id, "Environment not found.")
+    except (BookingPermissionError, EnvironmentError) as exc:
+        return _extend_error(environment_id, f"Extend failed: {exc}.")
     return templates.TemplateResponse(
         request,
         "partials/environment_row.html",

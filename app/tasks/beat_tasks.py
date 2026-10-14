@@ -42,7 +42,9 @@ def enforce_ttl() -> None:
             teardown_vm_task.delay(str(booking.id))
             logger.info("enforce_ttl: queued teardown for booking %s", booking.id)
         except Exception:
-            logger.exception("enforce_ttl: failed to queue teardown for booking %s", booking.id)
+            logger.exception(
+                "enforce_ttl: failed to queue teardown for booking %s", booking.id
+            )
 
 
 @celery_app.task
@@ -63,7 +65,9 @@ def reap_stale_provisioning() -> None:
                 env_repo.sync_start_lease_if_ready_for_booking(session, booking.id)
             logger.warning(
                 "reap_stale_provisioning: marked booking %s FAILED (stuck in %s > %d min)",
-                booking.id, booking.status.value, threshold,
+                booking.id,
+                booking.status.value,
+                threshold,
             )
         except Exception:
             logger.exception(
@@ -79,17 +83,33 @@ def enforce_environment_ttl() -> None:
     with SyncSessionLocal() as session:
         expired = env_repo.sync_list_expired(session)
 
-    logger.info("enforce_environment_ttl: found %d expired environment(s)", len(expired))
+    logger.info(
+        "enforce_environment_ttl: found %d expired environment(s)", len(expired)
+    )
 
     for env in expired:
         try:
             with SyncSessionLocal() as session:
-                children = env_repo.sync_live_children(session, env.id)
+                # Rechecked under the environment row lock: an extension (#532) may have committed
+                # since the preselection above, and must stop the teardown.
+                children = env_repo.sync_live_children_if_expired(session, env.id)
                 for child in children:
                     _release_child_sync(session, child, teardown_vm_task.delay)
-            logger.info("enforce_environment_ttl: released environment %s (%d children)", env.id, len(children))
+            if not children:
+                logger.info(
+                    "enforce_environment_ttl: environment %s has nothing to release (extended or already released)",
+                    env.id,
+                )
+                continue
+            logger.info(
+                "enforce_environment_ttl: released environment %s (%d children)",
+                env.id,
+                len(children),
+            )
         except Exception:
-            logger.exception("enforce_environment_ttl: failed to release environment %s", env.id)
+            logger.exception(
+                "enforce_environment_ttl: failed to release environment %s", env.id
+            )
 
 
 @celery_app.task
@@ -103,12 +123,21 @@ def reconcile_environment_leases() -> None:
     with SyncSessionLocal() as session:
         pending = env_repo.sync_list_lease_pending(session)
 
-    logger.info("reconcile_environment_leases: found %d environment(s) awaiting a lease", len(pending))
+    logger.info(
+        "reconcile_environment_leases: found %d environment(s) awaiting a lease",
+        len(pending),
+    )
 
     for environment_id in pending:
         try:
             with SyncSessionLocal() as session:
                 if env_repo.sync_start_lease_if_ready(session, environment_id):
-                    logger.info("reconcile_environment_leases: started lease for environment %s", environment_id)
+                    logger.info(
+                        "reconcile_environment_leases: started lease for environment %s",
+                        environment_id,
+                    )
         except Exception:
-            logger.exception("reconcile_environment_leases: failed for environment %s", environment_id)
+            logger.exception(
+                "reconcile_environment_leases: failed for environment %s",
+                environment_id,
+            )

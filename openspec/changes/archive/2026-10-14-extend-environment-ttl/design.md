@@ -36,7 +36,7 @@ The increment check sits next to it as `Lease.extended_by_positive(minutes)`, or
 
 The method runs in one transaction:
 1. `session.get(EnvironmentModel, id, with_for_update=True, populate_existing=True)`. Missing → `EnvironmentNotFoundError`.
-2. Lock and re-read the children: `_children_stmt(id).with_for_update()`, ordered by `id`.
+2. Read the children without a lock and check eligibility. If the stack isn't eligible, roll back and raise. Only if it is eligible, lock and re-read them with `_children_stmt(id).with_for_update()`, ordered by `id` (see the task 2.4 finding under Decision 3).
 3. Recheck eligibility with the domain function, using the fresh statuses and the fresh `Lease(env.ttl_minutes, env.expires_at)`. If it is blocked, roll back and raise `EnvironmentError`.
 4. Compute `new = Lease(env.ttl_minutes, env.expires_at).extended_by(n)` once, after the validation in Decision 1. Write `new.ttl_minutes` and `new.expires_at` to the env and to **every** child. When eligible, every child is READY because the derived status is READY, so "relevant children" means all of them. This matches `_stamp_lease`, which also writes the deadline to every child.
 5. Add one `BookingAuditModel(action="EXTENDED", actor_id, extra={"extend_minutes": n, "environment_id": str(id)})` per child.
@@ -55,13 +55,23 @@ Every path that locks both the environment row and child rows SHALL take the env
 
 Implementation check (task 2.4): confirm that no release path holds a child row lock while it waits for the environment row lock in the same transaction. That would be the only way to deadlock against `extend_lease`.
 
+**Finding (task 2.4).** No such path exists:
+- Release and the TTL sweep update each child with `update_status`/`sync_update_status`. Each update is its own commit, and neither takes the environment lock.
+- The provision task, the stale reaper and lease reconciliation start the lease in their own short `_run` transaction, after the child's status commit.
+- `promote_next_queued`/`sync_promote_next_queued` commit the promotion *before* calling `start_lease_if_ready` ("lock order, #434 D3").
+- `set_environment` (adoption) and `BookingRepository.extend` lock only a booking row and never ask for the environment row.
+
+So the only path that locks both is env → children, as used by `_stamp_lease`, `extend_lease` and `sync_live_children_if_expired`.
+
+The audit did surface one interaction. Promotion selects the oldest QUEUED booking with `FOR UPDATE SKIP LOCKED`. If `extend_lease` locked the children of an *ineligible* stack, for example one with a still-QUEUED namespace child, a promotion running at that moment would skip that child and promote a younger booking, breaking FIFO order. `extend_lease` therefore checks eligibility on an unlocked read first and locks the children only when the stack looks eligible. An eligible stack has every child READY, so it has no QUEUED rows for promotion to skip. It then rechecks under the locks.
+
 ### 4. Sweep recheck: `sync_live_children_if_expired(session, environment_id)`
 
 This replaces `sync_live_children` in `enforce_environment_ttl`. It locks the environment row (`FOR UPDATE`, `populate_existing`), returns `[]` if `expires_at >= now`, and otherwise returns the live children. `_release_child_sync` keeps working inside that same session. The lock is held until the first child's status commit. After that, any extension sees a RELEASING/RELEASED child and is rejected, so the sweep can't be overtaken half-way. The preselection query `sync_list_expired` is unchanged and stays an optimization only.
 
 ### 5. API surface
 
-- `ExtendEnvironmentRequest(BaseModel)`: `extend_minutes: int = Field(gt=0)`. FastAPI rejects non-positive values and non-integers with `422` before the use case runs. The use case still validates as a second line of defence, and its `InvalidExtensionError` (e.g. the sentinel overflow) maps to `422`.
+- `ExtendEnvironmentRequest(BaseModel)`: `extend_minutes: int = Field(strict=True, gt=0)`. FastAPI rejects non-positive values and non-integers with `422` before the use case runs. The field is strict (PR #534 review) because lax Pydantic would coerce JSON `1.0`, `"1"` or `true` to `1` and extend the whole stack. The use case still validates as a second line of defence, and its `InvalidExtensionError` (e.g. the sentinel overflow) maps to `422`.
 - Error mapping matches booking extend: `EnvironmentNotFoundError → 404`, `BookingPermissionError → 403`, `InvalidExtensionError → 422`, other `EnvironmentError → 409`.
 - The response is `{"id", "status", "ttl_minutes", "expires_at"}`, where `status` is the derived status. The route lives on the shared `api_environments` router, so it appears under `/api/v1` (in OpenAPI) and under the hidden legacy `/api` mount.
 

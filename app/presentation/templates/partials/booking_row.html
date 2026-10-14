@@ -7,7 +7,7 @@
     class="block px-3 py-2 text-xs text-gray-500 hover:bg-gray-800 transition-colors"
     data-environment-managed
 >
-    Managed by environment — release it there
+    Managed by environment — extend or release it there
 </a>
 {%- endmacro %}
 {#- Every row but a RELEASED one is live (#497): it takes live updates and page reconciliation
@@ -150,7 +150,7 @@
                             </button>
                         </form>
                         <div class="border-t border-gray-800"></div>
-                        {% if can_manage and booking.ttl_minutes != 0 and booking.status.value == 'READY' %}
+                        {% if can_manage and booking.ttl_minutes != 0 and booking.status.value == 'READY' and not booking.environment_id %}
                         <form
                             hx-put="/bookings/{{ booking.id }}/extend"
                             hx-target="closest tr"

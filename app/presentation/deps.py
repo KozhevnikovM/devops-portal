@@ -11,20 +11,26 @@ safe. Route modules bind their existing module-level names to these singletons, 
 ``_repo = deps.booking_repo`` — keeping those names means tests that patch them by module path keep
 working.
 """
-from app.config import settings
+
 from app.application.use_cases.book_namespace import BookNamespaceUseCase
 from app.application.use_cases.create_booking import CreateBookingUseCase
 from app.application.use_cases.extend_booking import ExtendBookingUseCase
+from app.application.use_cases.extend_environment import ExtendEnvironmentUseCase
 from app.application.use_cases.force_release_booking import ForceReleaseBookingUseCase
 from app.application.use_cases.order_environment import OrderEnvironmentUseCase
 from app.application.use_cases.release_booking import ReleaseBookingUseCase
 from app.application.use_cases.release_environment import ReleaseEnvironmentUseCase
 from app.application.use_cases.reserve_static_vm import ReserveStaticVMUseCase
 from app.application.use_cases.update_booking_label import UpdateBookingLabelUseCase
-from app.application.use_cases.update_environment_name import UpdateEnvironmentNameUseCase
+from app.application.use_cases.update_environment_name import (
+    UpdateEnvironmentNameUseCase,
+)
+from app.config import settings
 from app.infrastructure.celery_dispatcher import CeleryTaskDispatcher
 from app.infrastructure.repositories.booking_repo import BookingRepository
-from app.infrastructure.repositories.environment_blueprint_repo import EnvironmentBlueprintRepository
+from app.infrastructure.repositories.environment_blueprint_repo import (
+    EnvironmentBlueprintRepository,
+)
 from app.infrastructure.repositories.environment_repo import EnvironmentRepository
 from app.infrastructure.repositories.hw_config_repo import HWConfigRepository
 from app.infrastructure.repositories.image_repo import ImageRepository
@@ -51,15 +57,28 @@ dispatcher = CeleryTaskDispatcher()
 
 # ── Use cases ────────────────────────────────────────────────────────────────────
 create_booking_uc = CreateBookingUseCase(
-    booking_repo, image_repo, hw_config_repo, quota_repo=quota_repo, dispatcher=dispatcher,
+    booking_repo,
+    image_repo,
+    hw_config_repo,
+    quota_repo=quota_repo,
+    dispatcher=dispatcher,
 )
 extend_booking_uc = ExtendBookingUseCase(booking_repo)
 release_booking_uc = ReleaseBookingUseCase(booking_repo, dispatcher)
 book_namespace_uc = BookNamespaceUseCase(booking_repo, namespace_repo)
 reserve_static_vm_uc = ReserveStaticVMUseCase(booking_repo, static_vm_repo)
 order_environment_uc = OrderEnvironmentUseCase(
-    env_repo, blueprint_repo, booking_repo, create_booking_uc, reserve_static_vm_uc,
-    book_namespace_uc, image_repo, hw_config_repo, role_repo, static_vm_repo, dispatcher,
+    env_repo,
+    blueprint_repo,
+    booking_repo,
+    create_booking_uc,
+    reserve_static_vm_uc,
+    book_namespace_uc,
+    image_repo,
+    hw_config_repo,
+    role_repo,
+    static_vm_repo,
+    dispatcher,
     namespace_repo,
     secret_vars_enabled=settings.SECRET_VARS_ENABLED,
     max_children=settings.ENVIRONMENT_MAX_CHILDREN,
@@ -68,3 +87,4 @@ release_environment_uc = ReleaseEnvironmentUseCase(env_repo, release_booking_uc)
 force_release_booking_uc = ForceReleaseBookingUseCase(booking_repo, dispatcher)
 update_booking_label_uc = UpdateBookingLabelUseCase(booking_repo)
 update_environment_name_uc = UpdateEnvironmentNameUseCase(env_repo)
+extend_environment_uc = ExtendEnvironmentUseCase(env_repo)

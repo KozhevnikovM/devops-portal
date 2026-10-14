@@ -262,6 +262,13 @@ class EnvironmentRepositoryPort(Protocol):
     async def update_name(
         self, session: AsyncSession, environment_id: UUID, name: str
     ) -> None: ...
+    async def extend_lease(
+        self,
+        session: AsyncSession,
+        environment_id: UUID,
+        extend_minutes: int,
+        actor_id: str,
+    ) -> None: ...
     async def list_items_by_ids(
         self,
         session: AsyncSession,
