@@ -1,12 +1,27 @@
 import logging
-from datetime import datetime, timedelta, timezone
 from collections.abc import Sequence
+from datetime import UTC, datetime, timedelta
 from typing import cast as type_cast
 from uuid import UUID
 
 from sqlalchemy import (
-    CursorResult, case, cast, column, Connection, Engine, false, func, literal, or_, select, String, Text, true,
-    tuple_, union_all, update,
+    Connection,
+    CursorResult,
+    Engine,
+    String,
+    Text,
+    case,
+    cast,
+    column,
+    false,
+    func,
+    literal,
+    or_,
+    select,
+    true,
+    tuple_,
+    union_all,
+    update,
 )
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, AsyncSession
@@ -21,11 +36,22 @@ from app.domain.exceptions import BookingNotFoundError, IllegalStatusTransitionE
 from app.domain.lease import Lease
 from app.domain.pagination import KeysetCursor, KeysetPage
 from app.domain.resource_details import (
-    NamespaceDetails, ResourceFootprint, StaticVMDetails, VMDetails,
+    NamespaceDetails,
+    ResourceFootprint,
+    StaticVMDetails,
+    VMDetails,
 )
 from app.infrastructure.database.models import (
-    BOOKING_HAS_CREATOR, BOOKING_NOT_RELEASED, BOOKING_QUEUED, BookingAuditModel, BookingModel,
-    EnvironmentModel, NamespaceModel, StaticVMModel, UserModel, booking_page_key,
+    BOOKING_HAS_CREATOR,
+    BOOKING_NOT_RELEASED,
+    BOOKING_QUEUED,
+    BookingAuditModel,
+    BookingModel,
+    EnvironmentModel,
+    NamespaceModel,
+    StaticVMModel,
+    UserModel,
+    booking_page_key,
     booking_page_key_value,
 )
 from app.infrastructure.events import (
@@ -43,7 +69,6 @@ _CreatorUser = aliased(UserModel)
 
 
 logger = logging.getLogger(__name__)
-
 
 
 def _check_transition(old_value: str, new: BookingStatus, booking_id: UUID) -> None:
@@ -72,7 +97,8 @@ def _environment_routing_stmt(environment_id: UUID):
 
 
 async def environment_routing(
-    bind: AsyncEngine | AsyncConnection, environment_id: UUID,
+    bind: AsyncEngine | AsyncConnection,
+    environment_id: UUID,
 ) -> Routing | None:
     """The environment's own owner/creator (#442), or None if it no longer exists.
 
@@ -85,15 +111,27 @@ async def environment_routing(
     waits on Redis. The session is closed — connection back in the pool — before this returns.
     """
     async with AsyncSession(bind) as session:
-        row = (await session.execute(_environment_routing_stmt(environment_id))).one_or_none()
-    return Routing(owner_id=row.user_id, created_by=row.created_by) if row is not None else None
+        row = (
+            await session.execute(_environment_routing_stmt(environment_id))
+        ).one_or_none()
+    return (
+        Routing(owner_id=row.user_id, created_by=row.created_by)
+        if row is not None
+        else None
+    )
 
 
-def sync_environment_routing(bind: Engine | Connection, environment_id: UUID) -> Routing | None:
+def sync_environment_routing(
+    bind: Engine | Connection, environment_id: UUID
+) -> Routing | None:
     """Sync twin of ``environment_routing`` — Celery worker path."""
     with Session(bind) as session:
         row = session.execute(_environment_routing_stmt(environment_id)).one_or_none()
-    return Routing(owner_id=row.user_id, created_by=row.created_by) if row is not None else None
+    return (
+        Routing(owner_id=row.user_id, created_by=row.created_by)
+        if row is not None
+        else None
+    )
 
 
 async def _apublish_lifecycle(session: AsyncSession, model: BookingModel) -> None:
@@ -111,12 +149,18 @@ async def _apublish_lifecycle(session: AsyncSession, model: BookingModel) -> Non
     environment_routing_ = None
     if environment_id is not None:
         try:
-            environment_routing_ = await environment_routing(session.bind, environment_id)
+            environment_routing_ = await environment_routing(
+                session.bind, environment_id
+            )
         except Exception:
-            logger.exception("Failed to read routing for environment %s", environment_id)
+            logger.exception(
+                "Failed to read routing for environment %s", environment_id
+            )
     await apublish_row_changed(
-        booking_id=booking_id, booking_routing=booking_routing,
-        environment_id=environment_id, environment_routing=environment_routing_,
+        booking_id=booking_id,
+        booking_routing=booking_routing,
+        environment_id=environment_id,
+        environment_routing=environment_routing_,
     )
 
 
@@ -127,12 +171,18 @@ def _publish_lifecycle(session: Session, model: BookingModel) -> None:
     environment_routing_ = None
     if environment_id is not None:
         try:
-            environment_routing_ = sync_environment_routing(session.get_bind(), environment_id)
+            environment_routing_ = sync_environment_routing(
+                session.get_bind(), environment_id
+            )
         except Exception:
-            logger.exception("Failed to read routing for environment %s", environment_id)
+            logger.exception(
+                "Failed to read routing for environment %s", environment_id
+            )
     publish_row_changed(
-        booking_id=booking_id, booking_routing=booking_routing,
-        environment_id=environment_id, environment_routing=environment_routing_,
+        booking_id=booking_id,
+        booking_routing=booking_routing,
+        environment_id=environment_id,
+        environment_routing=environment_routing_,
     )
 
 
@@ -159,7 +209,9 @@ def _to_entity(
     try:
         _status = BookingStatus(m.status)
     except ValueError:
-        raise ValueError(f"Booking {m.id} has unrecognised status {m.status!r} in the database")
+        raise ValueError(
+            f"Booking {m.id} has unrecognised status {m.status!r} in the database"
+        )
     _resource_type = ResourceType(m.resource_type)
 
     if _resource_type == ResourceType.VM:
@@ -249,9 +301,14 @@ def _to_entity(
 def _role_names_expr():
     """Configured role names in array order, as text[] — the roles' vars/secret_vars stay in the
     database. ``ARRAY(SELECT ...)`` yields ``{}`` for an empty role list, never NULL."""
-    role = func.jsonb_array_elements(BookingModel.config_roles).table_valued(
-        column("value", JSONB), with_ordinality="ord",
-    ).render_derived(name="cfg_role")
+    role = (
+        func.jsonb_array_elements(BookingModel.config_roles)
+        .table_valued(
+            column("value", JSONB),
+            with_ordinality="ord",
+        )
+        .render_derived(name="cfg_role")
+    )
     names = select(role.c.value["name"].astext).order_by(role.c.ord).scalar_subquery()
     return func.array(names, type_=ARRAY(Text))
 
@@ -324,7 +381,10 @@ def _list_item_stmt():
 
 
 def _list_items_by_ids_stmt(
-    ids: Sequence[UUID], *, user_id: str | None = None, resource_types: Sequence[str] | None = None,
+    ids: Sequence[UUID],
+    *,
+    user_id: str | None = None,
+    resource_types: Sequence[str] | None = None,
 ):
     """The list projection of the given bookings, in page order — the hydration phase of a page
     (#479) and the batch read of page reconciliation (#497).
@@ -378,7 +438,7 @@ def _apply_label_filter(stmt, label: str | None):
 
 
 def _owner_filter(user_id: str):
-    """"Visible to user" for the Mine list: bookings they own, plus any they dispatched on someone's
+    """ "Visible to user" for the Mine list: bookings they own, plus any they dispatched on someone's
     behalf (created_by). created_by is only ever a dispatcher/admin id, so for an ordinary user
     this is just their own bookings."""
     return or_(BookingModel.user_id == user_id, BookingModel.created_by == user_id)
@@ -390,7 +450,11 @@ def _apply_released_filter(stmt, include_released: bool):
 
 
 def _page_window_stmt(
-    user_id: str | None, *, resource_types: list[str], include_released: bool, size: int,
+    user_id: str | None,
+    *,
+    resource_types: list[str],
+    include_released: bool,
+    size: int,
     after: KeysetCursor | None,
 ):
     """The (created_at, id) keys of the first `size` bookings after `after`, in page order, of the
@@ -414,7 +478,9 @@ def _page_window_stmt(
                 == booking_page_key_value(scope, unreleased, resource_type, user_id)
             )
             if scope == "creator":
-                branch = branch.where(BOOKING_HAS_CREATOR)   # implies the creator index predicate
+                branch = branch.where(
+                    BOOKING_HAS_CREATOR
+                )  # implies the creator index predicate
             branch = _apply_released_filter(branch, include_released)
             if after is not None:
                 # A row comparison is an index condition on (created_at, id) after the page key,
@@ -427,7 +493,9 @@ def _page_window_stmt(
                     )
                 )
             branches.append(
-                branch.order_by(BookingModel.created_at.desc(), BookingModel.id.desc()).limit(size)
+                branch.order_by(
+                    BookingModel.created_at.desc(), BookingModel.id.desc()
+                ).limit(size)
             )
     keys = union_all(*branches).subquery("page_keys")
     return (
@@ -439,20 +507,33 @@ def _page_window_stmt(
 
 
 def _page_keys_stmt(
-    user_id: str | None, *, resource_types: list[str], include_released: bool, limit: int,
+    user_id: str | None,
+    *,
+    resource_types: list[str],
+    include_released: bool,
+    limit: int,
     after: KeysetCursor | None,
 ):
     """Phase 1 of an unlabelled bookings page (#479): the keys of up to `limit + 1` bookings —
     every one a match, the extra one only telling whether another page exists."""
     return _page_window_stmt(
-        user_id, resource_types=resource_types, include_released=include_released,
-        size=limit + 1, after=after,
+        user_id,
+        resource_types=resource_types,
+        include_released=include_released,
+        size=limit + 1,
+        after=after,
     )
 
 
 def _label_page_keys_stmt(
-    user_id: str | None, *, resource_types: list[str], label: str, include_released: bool,
-    limit: int, scan_size: int, after: KeysetCursor | None,
+    user_id: str | None,
+    *,
+    resource_types: list[str],
+    label: str,
+    include_released: bool,
+    limit: int,
+    scan_size: int,
+    after: KeysetCursor | None,
 ):
     """Phase 1 of a label-filtered bookings page (#485, design.md Decision 2).
 
@@ -467,10 +548,17 @@ def _label_page_keys_stmt(
     window CTEs are MATERIALIZED so the label test can't be pushed down into the walks, which
     would turn them back into filtered walks.
     """
-    window = _page_window_stmt(
-        user_id, resource_types=resource_types, include_released=include_released,
-        size=scan_size + 1, after=after,
-    ).cte("page_window").prefix_with("MATERIALIZED")
+    window = (
+        _page_window_stmt(
+            user_id,
+            resource_types=resource_types,
+            include_released=include_released,
+            size=scan_size + 1,
+            after=after,
+        )
+        .cte("page_window")
+        .prefix_with("MATERIALIZED")
+    )
     examined = (
         select(window.c.created_at, window.c.id)
         .order_by(window.c.created_at.desc(), window.c.id.desc())
@@ -480,8 +568,9 @@ def _label_page_keys_stmt(
     )
     matches = (
         _apply_label_filter(
-            select(examined.c.created_at, examined.c.id, false().label("is_window_end"))
-            .join(BookingModel, BookingModel.id == examined.c.id),
+            select(
+                examined.c.created_at, examined.c.id, false().label("is_window_end")
+            ).join(BookingModel, BookingModel.id == examined.c.id),
             label,
         )
         .order_by(examined.c.created_at.desc(), examined.c.id.desc())
@@ -494,14 +583,17 @@ def _label_page_keys_stmt(
         .limit(1)
         .subquery("page_oldest")
     )
-    window_end = select(oldest.c.created_at, oldest.c.id, true().label("is_window_end")).where(
-        select(func.count()).select_from(window).scalar_subquery() > scan_size
-    )
+    window_end = select(
+        oldest.c.created_at, oldest.c.id, true().label("is_window_end")
+    ).where(select(func.count()).select_from(window).scalar_subquery() > scan_size)
     rows = union_all(
-        select(matches.c.created_at, matches.c.id, matches.c.is_window_end), window_end,
+        select(matches.c.created_at, matches.c.id, matches.c.is_window_end),
+        window_end,
     ).subquery("page_rows")
     return select(rows.c.created_at, rows.c.id, rows.c.is_window_end).order_by(
-        rows.c.is_window_end, rows.c.created_at.desc(), rows.c.id.desc(),
+        rows.c.is_window_end,
+        rows.c.created_at.desc(),
+        rows.c.id.desc(),
     )
 
 
@@ -517,7 +609,9 @@ _POOLED_RESOURCE = {
 def _free_resource_stmt(resource_type: str):
     """Next free resource of a pooled type, lockable (FOR UPDATE SKIP LOCKED)."""
     model, fk = _POOLED_RESOURCE[resource_type]
-    held = select(fk).where(fk.is_not(None), BookingModel.status.in_(_POOLED_LIVE_STATUSES))
+    held = select(fk).where(
+        fk.is_not(None), BookingModel.status.in_(_POOLED_LIVE_STATUSES)
+    )
     return (
         select(model)
         .where(model.is_active.is_(True), model.id.not_in(held))
@@ -565,7 +659,9 @@ def _queue_rank_stmt(newest_by_type: dict[str, datetime], booking_ids: list[UUID
     return select(ranked.c.id, ranked.c.position).where(ranked.c.id.in_(booking_ids))
 
 
-def _assign_resource_and_ready(session, booking_model, resource_type: str, resource) -> None:
+def _assign_resource_and_ready(
+    session, booking_model, resource_type: str, resource
+) -> None:
     """Attach a freed resource to a QUEUED booking, flip it READY, start its TTL, audit."""
     _, fk = _POOLED_RESOURCE[resource_type]
     setattr(booking_model, fk.key, resource.id)
@@ -573,19 +669,22 @@ def _assign_resource_and_ready(session, booking_model, resource_type: str, resou
     _check_transition(old_status, BookingStatus.READY, booking_model.id)
     booking_model.status = BookingStatus.READY.value
     booking_model.expires_at = Lease.starting_now(booking_model.ttl_minutes).expires_at
-    session.add(BookingAuditModel(
-        booking_id=booking_model.id,
-        actor_id="system",
-        action="STATUS_CHANGED",
-        old_status=old_status,
-        new_status=BookingStatus.READY.value,
-    ))
+    session.add(
+        BookingAuditModel(
+            booking_id=booking_model.id,
+            actor_id="system",
+            action="STATUS_CHANGED",
+            old_status=old_status,
+            new_status=BookingStatus.READY.value,
+        )
+    )
 
 
 def _environment_repo():
     """A promoted environment child may be the last to settle, so promotion also checks the
     environment's lease. Imported lazily: environment_repo imports this module."""
     from app.infrastructure.repositories.environment_repo import EnvironmentRepository
+
     return EnvironmentRepository()
 
 
@@ -619,18 +718,26 @@ class BookingRepository:
         )
         session.add(model)
         await session.flush()  # INSERT booking before audit to satisfy FK constraint
-        session.add(BookingAuditModel(
-            booking_id=booking.id,
-            actor_id=booking.user_id,
-            action="CREATED",
-        ))
+        session.add(
+            BookingAuditModel(
+                booking_id=booking.id,
+                actor_id=booking.user_id,
+                action="CREATED",
+            )
+        )
         await session.commit()
         await session.refresh(model)
         return _to_entity(model)
 
     async def get(self, session: AsyncSession, booking_id: UUID) -> Booking:
         result = await session.execute(
-            select(BookingModel, UserModel.username, NamespaceModel, StaticVMModel, _CreatorUser.username)
+            select(
+                BookingModel,
+                UserModel.username,
+                NamespaceModel,
+                StaticVMModel,
+                _CreatorUser.username,
+            )
             .join(UserModel, user_by_ref(UserModel, BookingModel.user_id), isouter=True)
             .outerjoin(NamespaceModel, NamespaceModel.id == BookingModel.namespace_id)
             .outerjoin(StaticVMModel, StaticVMModel.id == BookingModel.static_vm_id)
@@ -641,8 +748,13 @@ class BookingRepository:
         if row is None:
             raise BookingNotFoundError(booking_id)
         model, owner, namespace, static_vm, creator = row
-        return _to_entity(model, owner_username=owner, namespace=namespace, static_vm=static_vm,
-                          created_by_username=creator)
+        return _to_entity(
+            model,
+            owner_username=owner,
+            namespace=namespace,
+            static_vm=static_vm,
+            created_by_username=creator,
+        )
 
     async def update_status(
         self,
@@ -653,7 +765,9 @@ class BookingRepository:
         vm_password: str | None = None,
         actor_id: str = "system",
     ) -> None:
-        result = await session.execute(select(BookingModel).where(BookingModel.id == booking_id))
+        result = await session.execute(
+            select(BookingModel).where(BookingModel.id == booking_id)
+        )
         model = result.scalar_one_or_none()
         if model is None:
             raise BookingNotFoundError(booking_id)
@@ -664,14 +778,16 @@ class BookingRepository:
             model.vm_ip = vm_ip
         if vm_password is not None:
             model.vm_password = vm_password
-        session.add(BookingAuditModel(
-            booking_id=booking_id,
-            actor_id=actor_id,
-            action="STATUS_CHANGED",
-            old_status=old_status,
-            new_status=status.value,
-            extra={"vm_ip": vm_ip} if vm_ip is not None else None,
-        ))
+        session.add(
+            BookingAuditModel(
+                booking_id=booking_id,
+                actor_id=actor_id,
+                action="STATUS_CHANGED",
+                old_status=old_status,
+                new_status=status.value,
+                extra={"vm_ip": vm_ip} if vm_ip is not None else None,
+            )
+        )
         await session.commit()
         await _apublish_lifecycle(session, model)
 
@@ -696,7 +812,9 @@ class BookingRepository:
         resource_type: str | list[str] | None = None,
         label: str | None = None,
     ) -> list[BookingListItem]:
-        stmt = _apply_released_filter(_list_item_stmt().where(_owner_filter(user_id)), include_released)
+        stmt = _apply_released_filter(
+            _list_item_stmt().where(_owner_filter(user_id)), include_released
+        )
         stmt = _apply_resource_type_filter(stmt, resource_type)
         stmt = _apply_label_filter(stmt, label)
         result = await session.execute(stmt)
@@ -727,16 +845,31 @@ class BookingRepository:
         label = _label_filter_text(label)
         async with _OrderedWalk(session):
             if label is not None:
-                rows = (await session.execute(_label_page_keys_stmt(
-                    user_id, resource_types=resource_types, label=label,
-                    include_released=include_released, limit=limit, scan_size=scan_size,
-                    after=after,
-                ))).all()
+                rows = (
+                    await session.execute(
+                        _label_page_keys_stmt(
+                            user_id,
+                            resource_types=resource_types,
+                            label=label,
+                            include_released=include_released,
+                            limit=limit,
+                            scan_size=scan_size,
+                            after=after,
+                        )
+                    )
+                ).all()
             else:
-                rows = (await session.execute(_page_keys_stmt(
-                    user_id, resource_types=resource_types,
-                    include_released=include_released, limit=limit, after=after,
-                ))).all()
+                rows = (
+                    await session.execute(
+                        _page_keys_stmt(
+                            user_id,
+                            resource_types=resource_types,
+                            include_released=include_released,
+                            limit=limit,
+                            after=after,
+                        )
+                    )
+                ).all()
         # Matches and the window-end sentinel are told apart by the flag alone — never by
         # position or key: the sentinel's key is also a match's when the oldest examined matched.
         keys = [r for r in rows if not getattr(r, "is_window_end", False)]
@@ -745,18 +878,26 @@ class BookingRepository:
         keys = keys[:limit]
         items: list[BookingListItem] = []
         if keys:
-            result = await session.execute(_list_items_by_ids_stmt([k.id for k in keys]))
+            result = await session.execute(
+                _list_items_by_ids_stmt([k.id for k in keys])
+            )
             items = [_to_list_item(row) for row in result.all()]
         next_cursor = None
-        if has_more:                   # a full page: continue after its last booking
+        if has_more:  # a full page: continue after its last booking
             last = keys[-1]
             next_cursor = KeysetCursor(created_at=last.created_at, id=last.id)
-        elif window_end is not None:   # the label scan ran out, and older bookings exist
-            next_cursor = KeysetCursor(created_at=window_end.created_at, id=window_end.id)
+        elif window_end is not None:  # the label scan ran out, and older bookings exist
+            next_cursor = KeysetCursor(
+                created_at=window_end.created_at, id=window_end.id
+            )
         return KeysetPage(items=items, next_cursor=next_cursor)
 
     async def list_items_by_ids(
-        self, session: AsyncSession, ids: Sequence[UUID], *, user_id: str | None,
+        self,
+        session: AsyncSession,
+        ids: Sequence[UUID],
+        *,
+        user_id: str | None,
         resource_types: Sequence[str],
     ) -> list[BookingListItem]:
         """The list projection of those of `ids` visible on a page, in one statement (#497).
@@ -772,8 +913,14 @@ class BookingRepository:
         return [_to_list_item(row) for row in result.all()]
 
     async def newest_key(
-        self, session: AsyncSession, *, user_id: str | None, resource_types: list[str],
-        label: str | None, include_released: bool, scan_size: int,
+        self,
+        session: AsyncSession,
+        *,
+        user_id: str | None,
+        resource_types: list[str],
+        label: str | None,
+        include_released: bool,
+        scan_size: int,
     ) -> KeysetCursor | None:
         """The key of a page's newest matching booking, or None (#497 D8).
 
@@ -785,19 +932,33 @@ class BookingRepository:
         async with _OrderedWalk(session):
             if label is not None:
                 stmt = _label_page_keys_stmt(
-                    user_id, resource_types=resource_types, label=label,
-                    include_released=include_released, limit=0, scan_size=scan_size, after=None,
+                    user_id,
+                    resource_types=resource_types,
+                    label=label,
+                    include_released=include_released,
+                    limit=0,
+                    scan_size=scan_size,
+                    after=None,
                 )
             else:
                 stmt = _page_keys_stmt(
-                    user_id, resource_types=resource_types, include_released=include_released,
-                    limit=0, after=None,
+                    user_id,
+                    resource_types=resource_types,
+                    include_released=include_released,
+                    limit=0,
+                    after=None,
                 )
             rows = (await session.execute(stmt)).all()
         match = next((r for r in rows if not getattr(r, "is_window_end", False)), None)
-        return None if match is None else KeysetCursor(created_at=match.created_at, id=match.id)
+        return (
+            None
+            if match is None
+            else KeysetCursor(created_at=match.created_at, id=match.id)
+        )
 
-    async def list_audit(self, session: AsyncSession, booking_id: UUID) -> list[BookingAuditEntry]:
+    async def list_audit(
+        self, session: AsyncSession, booking_id: UUID
+    ) -> list[BookingAuditEntry]:
         result = await session.execute(
             select(BookingAuditModel)
             .where(BookingAuditModel.booking_id == booking_id)
@@ -812,37 +973,51 @@ class BookingRepository:
         extend_minutes: int,
         actor_id: str,
     ) -> None:
-        result = await session.execute(select(BookingModel).where(BookingModel.id == booking_id))
+        result = await session.execute(
+            select(BookingModel).where(BookingModel.id == booking_id)
+        )
         model = result.scalar_one_or_none()
         if model is None:
             raise BookingNotFoundError(booking_id)
-        extended = Lease(model.ttl_minutes, model.expires_at).extended_by(extend_minutes)
+        extended = Lease(model.ttl_minutes, model.expires_at).extended_by(
+            extend_minutes
+        )
         model.ttl_minutes = extended.ttl_minutes
         model.expires_at = extended.expires_at
-        session.add(BookingAuditModel(
-            booking_id=booking_id,
-            actor_id=actor_id,
-            action="EXTENDED",
-            extra={"extend_minutes": extend_minutes},
-        ))
+        session.add(
+            BookingAuditModel(
+                booking_id=booking_id,
+                actor_id=actor_id,
+                action="EXTENDED",
+                extra={"extend_minutes": extend_minutes},
+            )
+        )
         await session.commit()
         await _apublish_lifecycle(session, model)
 
     async def update_label(
-        self, session: AsyncSession, booking_id: UUID, label: str | None, actor_id: str,
+        self,
+        session: AsyncSession,
+        booking_id: UUID,
+        label: str | None,
+        actor_id: str,
     ) -> None:
-        result = await session.execute(select(BookingModel).where(BookingModel.id == booking_id))
+        result = await session.execute(
+            select(BookingModel).where(BookingModel.id == booking_id)
+        )
         model = result.scalar_one_or_none()
         if model is None:
             raise BookingNotFoundError(booking_id)
         old_label = model.label
         model.label = label
-        session.add(BookingAuditModel(
-            booking_id=booking_id,
-            actor_id=actor_id,
-            action="LABEL_CHANGED",
-            extra={"old_label": old_label, "new_label": label},
-        ))
+        session.add(
+            BookingAuditModel(
+                booking_id=booking_id,
+                actor_id=actor_id,
+                action="LABEL_CHANGED",
+                extra={"old_label": old_label, "new_label": label},
+            )
+        )
         await session.commit()
         await _apublish_lifecycle(session, model)
 
@@ -852,8 +1027,7 @@ class BookingRepository:
         """Return the live, standalone booking (environment_id IS NULL) holding namespace_id for
         user_id, or None if no such booking exists."""
         result = await session.execute(
-            select(BookingModel)
-            .where(
+            select(BookingModel).where(
                 BookingModel.namespace_id == namespace_id,
                 cast(BookingModel.user_id, String) == user_id,
                 BookingModel.status.in_(_POOLED_LIVE_STATUSES),
@@ -877,7 +1051,9 @@ class BookingRepository:
         Called with a live env_id to adopt a standalone booking into an environment, or with
         environment_id=None and original ttl/expires_at to detach it on rollback.
         """
-        result = await session.execute(select(BookingModel).where(BookingModel.id == booking_id))
+        result = await session.execute(
+            select(BookingModel).where(BookingModel.id == booking_id)
+        )
         model = result.scalar_one_or_none()
         if model is None:
             raise BookingNotFoundError(booking_id)
@@ -886,19 +1062,27 @@ class BookingRepository:
         model.ttl_minutes = ttl_minutes
         model.expires_at = expires_at
         action = "ADOPTED" if environment_id is not None else "DETACHED"
-        session.add(BookingAuditModel(
-            booking_id=booking_id,
-            actor_id="system",
-            action=action,
-        ))
+        session.add(
+            BookingAuditModel(
+                booking_id=booking_id,
+                actor_id="system",
+                action=action,
+            )
+        )
         await session.commit()
 
-    async def promote_next_queued(self, session: AsyncSession, resource_type: str) -> Booking | None:
+    async def promote_next_queued(
+        self, session: AsyncSession, resource_type: str
+    ) -> Booking | None:
         """Assign the next free resource to the oldest QUEUED booking of this type → READY."""
-        booking = (await session.execute(_oldest_queued_stmt(resource_type))).scalar_one_or_none()
+        booking = (
+            await session.execute(_oldest_queued_stmt(resource_type))
+        ).scalar_one_or_none()
         if booking is None:
             return None
-        resource = (await session.execute(_free_resource_stmt(resource_type))).scalar_one_or_none()
+        resource = (
+            await session.execute(_free_resource_stmt(resource_type))
+        ).scalar_one_or_none()
         if resource is None:
             return None  # nothing free yet — stays queued
         _assign_resource_and_ready(session, booking, resource_type, resource)
@@ -907,11 +1091,15 @@ class BookingRepository:
         await _apublish_lifecycle(session, booking)
         if booking.environment_id is not None:
             # Only after the promotion commits, in its own transaction (lock order, #434 D3).
-            await _environment_repo().start_lease_if_ready(session, booking.environment_id)
+            await _environment_repo().start_lease_if_ready(
+                session, booking.environment_id
+            )
         return _to_entity(booking)
 
     async def queue_positions(
-        self, session: AsyncSession, bookings: Sequence[Booking | BookingListItem],
+        self,
+        session: AsyncSession,
+        bookings: Sequence[Booking | BookingListItem],
     ) -> dict[UUID, int]:
         """FIFO positions of the given (expected QUEUED) bookings, by id, in one statement.
 
@@ -924,7 +1112,9 @@ class BookingRepository:
         newest_by_type: dict[str, datetime] = {}
         for b in bookings:
             key = b.resource_type.value
-            newest_by_type[key] = max(b.created_at, newest_by_type.get(key, b.created_at))
+            newest_by_type[key] = max(
+                b.created_at, newest_by_type.get(key, b.created_at)
+            )
         async with _OrderedWalk(session):
             result = await session.execute(
                 _queue_rank_stmt(newest_by_type, [b.id for b in bookings])
@@ -965,14 +1155,16 @@ class BookingRepository:
             # The lease grants usable time: start the TTL clock now that the VM is ready (#223),
             # rather than at creation when provisioning/configuration time would be deducted.
             model.expires_at = Lease.starting_now(model.ttl_minutes).expires_at
-        session.add(BookingAuditModel(
-            booking_id=booking_id,
-            actor_id=actor_id,
-            action="STATUS_CHANGED",
-            old_status=old_status,
-            new_status=status.value,
-            extra={"vm_ip": vm_ip} if vm_ip is not None else None,
-        ))
+        session.add(
+            BookingAuditModel(
+                booking_id=booking_id,
+                actor_id=actor_id,
+                action="STATUS_CHANGED",
+                old_status=old_status,
+                new_status=status.value,
+                extra={"vm_ip": vm_ip} if vm_ip is not None else None,
+            )
+        )
         session.commit()
         _publish_lifecycle(session, model)
 
@@ -998,16 +1190,24 @@ class BookingRepository:
             _publish_lifecycle(session, model)
             return True
         # An UPDATE returns a CursorResult (with rowcount), though typed as the generic Result.
-        result = type_cast(CursorResult, session.execute(
-            update(BookingModel)
-            .where(BookingModel.id == booking_id, BookingModel.status.in_([s.value for s in if_status_in]))
-            .values(status_message=message)
-            .execution_options(synchronize_session=False)
-        ))
+        result = type_cast(
+            CursorResult,
+            session.execute(
+                update(BookingModel)
+                .where(
+                    BookingModel.id == booking_id,
+                    BookingModel.status.in_([s.value for s in if_status_in]),
+                )
+                .values(status_message=message)
+                .execution_options(synchronize_session=False)
+            ),
+        )
         if result.rowcount == 0:
             if session.get(BookingModel, booking_id) is None:
                 raise BookingNotFoundError(booking_id)
-            return False  # status no longer owned by the caller — leave the message alone
+            return (
+                False  # status no longer owned by the caller — leave the message alone
+            )
         session.commit()
         model = session.get(BookingModel, booking_id)
         if model is not None:  # deleted in between: nothing left to announce
@@ -1037,14 +1237,22 @@ class BookingRepository:
             .where(BookingModel.id == booking_id)
             .values(
                 provisioning_log=func.right(
-                    func.coalesce(BookingModel.provisioning_log, "") + chunk, PROVISIONING_LOG_MAX_CHARS,
+                    func.coalesce(BookingModel.provisioning_log, "") + chunk,
+                    PROVISIONING_LOG_MAX_CHARS,
                 ),
                 status_message=case(
-                    (BookingModel.status.in_([s.value for s in accepting]), last_message),
+                    (
+                        BookingModel.status.in_([s.value for s in accepting]),
+                        last_message,
+                    ),
                     else_=BookingModel.status_message,
                 ),
             )
-            .returning(BookingModel.user_id, BookingModel.created_by, BookingModel.environment_id)
+            .returning(
+                BookingModel.user_id,
+                BookingModel.created_by,
+                BookingModel.environment_id,
+            )
             .execution_options(synchronize_session=False)
         )
         row = session.execute(stmt).one_or_none()
@@ -1067,7 +1275,7 @@ class BookingRepository:
         result = session.execute(
             select(BookingModel).where(
                 BookingModel.status == BookingStatus.READY.value,
-                BookingModel.expires_at < datetime.now(timezone.utc),
+                BookingModel.expires_at < datetime.now(UTC),
                 BookingModel.environment_id.is_(None),
             )
         )
@@ -1083,7 +1291,7 @@ class BookingRepository:
             BookingStatus.CONFIGURING.value,
             BookingStatus.RETRY.value,
         ]
-        cutoff = datetime.now(timezone.utc) - timedelta(minutes=threshold_minutes)
+        cutoff = datetime.now(UTC) - timedelta(minutes=threshold_minutes)
         result = session.execute(
             select(BookingModel).where(
                 BookingModel.status.in_(stale_statuses),
@@ -1109,16 +1317,24 @@ class BookingRepository:
         """Return all RELEASING bookings regardless of age (#374 — a killed teardown task
         never re-dispatches on its own; startup recovery re-attempts it)."""
         result = session.execute(
-            select(BookingModel).where(BookingModel.status == BookingStatus.RELEASING.value)
+            select(BookingModel).where(
+                BookingModel.status == BookingStatus.RELEASING.value
+            )
         )
         return [_to_entity(m) for m in result.scalars().all()]
 
-    def sync_promote_next_queued(self, session: Session, resource_type: str) -> Booking | None:
+    def sync_promote_next_queued(
+        self, session: Session, resource_type: str
+    ) -> Booking | None:
         """Sync twin of promote_next_queued — called from the Celery teardown/TTL path."""
-        booking = session.execute(_oldest_queued_stmt(resource_type)).scalar_one_or_none()
+        booking = session.execute(
+            _oldest_queued_stmt(resource_type)
+        ).scalar_one_or_none()
         if booking is None:
             return None
-        resource = session.execute(_free_resource_stmt(resource_type)).scalar_one_or_none()
+        resource = session.execute(
+            _free_resource_stmt(resource_type)
+        ).scalar_one_or_none()
         if resource is None:
             return None
         _assign_resource_and_ready(session, booking, resource_type, resource)
@@ -1126,5 +1342,7 @@ class BookingRepository:
         _publish_lifecycle(session, booking)
         if booking.environment_id is not None:
             # Only after the promotion commits, in its own transaction (lock order, #434 D3).
-            _environment_repo().sync_start_lease_if_ready(session, booking.environment_id)
+            _environment_repo().sync_start_lease_if_ready(
+                session, booking.environment_id
+            )
         return _to_entity(booking)
