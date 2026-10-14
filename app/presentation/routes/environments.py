@@ -154,7 +154,7 @@ def new_rows_context(*, filter, show_released, label, show: bool = False) -> dic
     return {
         "new_rows_id": "environments-new-rows",
         "section_id": "environments-section",
-        "colspan": 6,
+        "colspan": 7,
         "noun": "environments",
         "show_new_rows": show,
         "new_rows_url": f"/environments/list?{urlencode(filter_params(filter, show_released, label))}",

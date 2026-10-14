@@ -22,6 +22,9 @@ from app.application.use_cases.release_booking import ReleaseBookingUseCase
 from app.application.use_cases.release_environment import ReleaseEnvironmentUseCase
 from app.application.use_cases.reserve_static_vm import ReserveStaticVMUseCase
 from app.application.use_cases.update_booking_label import UpdateBookingLabelUseCase
+from app.application.use_cases.update_environment_deployment import (
+    UpdateEnvironmentDeploymentUseCase,
+)
 from app.application.use_cases.update_environment_name import (
     UpdateEnvironmentNameUseCase,
 )
@@ -87,4 +90,5 @@ release_environment_uc = ReleaseEnvironmentUseCase(env_repo, release_booking_uc)
 force_release_booking_uc = ForceReleaseBookingUseCase(booking_repo, dispatcher)
 update_booking_label_uc = UpdateBookingLabelUseCase(booking_repo)
 update_environment_name_uc = UpdateEnvironmentNameUseCase(env_repo)
+update_environment_deployment_uc = UpdateEnvironmentDeploymentUseCase(env_repo)
 extend_environment_uc = ExtendEnvironmentUseCase(env_repo)

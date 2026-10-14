@@ -133,6 +133,8 @@ COPY --from=frontend /build/dist/js/htmx-sse.js  app/static/js/htmx-sse.js
 COPY --from=frontend /build/dist/js/ansible_vars_editor.js app/static/js/ansible_vars_editor.js
 COPY --from=frontend /build/dist/js/row_reconcile.js app/static/js/row_reconcile.js
 
+COPY --from=frontend /build/dist/js/environment_deployment.js app/static/js/environment_deployment.js
+
 ENV TF_CLI_CONFIG_FILE=/app/terraform/terraformrc
 
 # UID/GID of the unprivileged runtime user. Build args so the container user can match the host

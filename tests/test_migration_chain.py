@@ -4,6 +4,7 @@ If a schema change is added by mutating an existing revision instead of adding a
 one, environments already stamped at that revision never receive it. These tests assert
 the Alembic history is a single linear chain so such mistakes surface in CI.
 """
+
 from alembic.config import Config
 from alembic.script import ScriptDirectory
 
@@ -13,7 +14,7 @@ def _script() -> ScriptDirectory:
 
 
 def test_single_head():
-    assert _script().get_heads() == ["0036"]
+    assert _script().get_heads() == ["0037"]
 
 
 def test_startup_script_chain_is_linear():
@@ -55,3 +56,8 @@ def test_environment_owner_page_indexes_chain_is_linear():
     # The Mine page indexes (#496) arrive in their own revision on top of the bookings page indexes.
     down = {r.revision: r.down_revision for r in _script().walk_revisions()}
     assert down["0036"] == "0035"
+
+
+def test_environment_deployment_report_chain_is_linear():
+    down = {r.revision: r.down_revision for r in _script().walk_revisions()}
+    assert down["0037"] == "0036"

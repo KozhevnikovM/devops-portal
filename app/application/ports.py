@@ -25,6 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
 from app.domain.booking_list import BookingListItem
+from app.domain.deployment import DeploymentReport
 from app.domain.entities import (
     Booking,
     Environment,
@@ -238,6 +239,13 @@ class StaticVMRepositoryPort(PooledResourceRepositoryPort, Protocol):
 
 @runtime_checkable
 class EnvironmentRepositoryPort(Protocol):
+    async def get_for_update(
+        self, session: AsyncSession, environment_id: UUID
+    ) -> Environment: ...
+    async def update_deployment(
+        self, session: AsyncSession, environment_id: UUID, report: DeploymentReport
+    ) -> Environment: ...
+
     async def create(
         self,
         session: AsyncSession,

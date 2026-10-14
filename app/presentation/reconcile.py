@@ -5,6 +5,7 @@ holds for each; the server re-renders only rows whose version differs. A version
 the list-safe values a row displays, so every render path (list, Load more, single row, live
 update, action responses) emits the same version for the same state.
 """
+
 import hashlib
 import json
 import re
@@ -33,11 +34,35 @@ VERSION_LENGTH = 16  # hex characters (64 bits of SHA-256)
 # names (the derived ones as properties) — so hashing all of them covers every displayed value,
 # for either type, with nothing to forget when the row gains a field.
 _BOOKING_FIELDS = tuple(f.name for f in fields(BookingListItem))
-_ENVIRONMENT_FIELDS = ("name", "blueprint_name", "owner_username", "created_by",
-                       "created_by_username", "ttl_minutes", "expires_at", "derived_status")
+_ENVIRONMENT_FIELDS = (
+    "name",
+    "blueprint_name",
+    "owner_username",
+    "created_by",
+    "created_by_username",
+    "ttl_minutes",
+    "expires_at",
+    "derived_status",
+    "deployment_ref",
+    "deployment_commit",
+    "deployment_status",
+    "deployment_frontend_url",
+    "deployment_admin_url",
+    "deployment_updated_at",
+)
 # What environment_row.html shows of each child — never its log or credentials.
-_CHILD_FIELDS = ("id", "status", "environment_label", "resource_type", "namespace_name",
-                 "static_vm_name", "static_vm_host", "image_name", "vm_ip", "config_failed")
+_CHILD_FIELDS = (
+    "id",
+    "status",
+    "environment_label",
+    "resource_type",
+    "namespace_name",
+    "static_vm_name",
+    "static_vm_host",
+    "image_name",
+    "vm_ip",
+    "config_failed",
+)
 
 # Settled rows can still change (e.g. READY → RELEASING) but much more rarely than in-flight ones;
 # the client reconciles in-flight rows first (spec: "Reconciliation states its worst-case
@@ -67,10 +92,15 @@ def row_version(booking) -> str:
 
 def environment_row_version(environment) -> str:
     """The version of an environment row; `derived_status` must already be attached."""
-    return _digest([
-        [getattr(environment, name, None) for name in _ENVIRONMENT_FIELDS],
-        [[getattr(child, name) for name in _CHILD_FIELDS] for child in environment.bookings],
-    ])
+    return _digest(
+        [
+            [getattr(environment, name, None) for name in _ENVIRONMENT_FIELDS],
+            [
+                [getattr(child, name) for name in _CHILD_FIELDS]
+                for child in environment.bookings
+            ],
+        ]
+    )
 
 
 def list_key(row) -> str:
@@ -97,11 +127,14 @@ class InvalidReconcileRequestError(ValueError):
 class ReconcileRequest:
     """A parsed reconciliation request: the displayed rows' versions, in request order, and the
     newest displayed row's key (None when the section shows no row)."""
+
     versions: dict[UUID, str]
     newest: KeysetCursor | None
 
 
-def parse_reconcile_request(rows: list[str], newest: str | None, *, max_ids: int) -> ReconcileRequest:
+def parse_reconcile_request(
+    rows: list[str], newest: str | None, *, max_ids: int
+) -> ReconcileRequest:
     """Validate a reconciliation request before anything is read (#497 D2).
 
     `rows` are `<uuid>.<version>` tokens. Over `max_ids` of them, a repeated id, a malformed id,
@@ -131,7 +164,9 @@ def parse_reconcile_request(rows: list[str], newest: str | None, *, max_ids: int
     return ReconcileRequest(versions=versions, newest=key)
 
 
-def has_newer(probe: KeysetCursor | None, newest_displayed: KeysetCursor | None) -> bool:
+def has_newer(
+    probe: KeysetCursor | None, newest_displayed: KeysetCursor | None
+) -> bool:
     """Whether the page's newest matching row is newer than the newest one displayed (#497 D8).
 
     Keys compare in list order, (created_at, id) — the same order the list and its cursor use.
@@ -140,10 +175,15 @@ def has_newer(probe: KeysetCursor | None, newest_displayed: KeysetCursor | None)
         return False
     if newest_displayed is None:
         return True
-    return (probe.created_at, probe.id) > (newest_displayed.created_at, newest_displayed.id)
+    return (probe.created_at, probe.id) > (
+        newest_displayed.created_at,
+        newest_displayed.id,
+    )
 
 
-def reconcile_poller_context(url: str, filter: str, show_released: bool, label: str | None) -> dict:
+def reconcile_poller_context(
+    url: str, filter: str, show_released: bool, label: str | None
+) -> dict:
     """Template context of a list section's reconciliation poller: its URL carries the filters in
     effect, and its batch limits are the server's own (which the server still enforces)."""
     return {

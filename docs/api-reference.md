@@ -1409,6 +1409,8 @@ namespace).
   "id": "uuid", "name": "dev-stack", "blueprint_name": "dev-stack",
   "status": "PROVISIONING", "ttl_minutes": 240,
   "expires_at": "…", "created_at": "…",
+  "deployment_ref": null, "deployment_commit": null, "deployment_status": null,
+  "deployment_frontend_url": null, "deployment_admin_url": null, "deployment_updated_at": null,
   "bookings": [
     { "id": "uuid", "label": "ns", "resource_type": "NAMESPACE", "status": "READY", "namespace": "team-a-dev", "roles": [] },
     { "id": "uuid", "label": "web", "resource_type": "VM", "status": "PROVISIONING", "image_name": "Ubuntu 22.04",
@@ -1501,6 +1503,76 @@ Also available as an HTMX form fragment at `PATCH /environments/{id}/name` (the 
 action on the Environments page).
 
 ---
+
+### `PATCH /api/v1/environments/{id}/deployment-info`
+
+Replace the last application deployment report (#535). Also supported at the legacy
+`PATCH /api/environments/{id}/deployment-info`; only the versioned route appears in OpenAPI.
+This records Jenkins' report; it does not run a deployment. Infrastructure `status`, name,
+ownership, resources, TTL, expiry and list ordering are unchanged. For example, deployment
+`FAILED` can coexist with infrastructure `READY`.
+
+**Auth:** API keys inherit the owning identity's existing permissions. The environment owner,
+the dispatcher who created it on the owner's behalf, or an admin may report. Use a dedicated
+least-privileged CI identity authorized for the target environments. Lookup access and knowledge
+of a UUID do not grant writes; these are not deployment-only tokens or new per-environment key
+scopes. Missing/invalid authentication follows the existing JSON API behavior; an invalid bearer
+token cannot fall back to a browser session.
+
+Every request must contain **all five fields**, as non-null strings. Extra fields (including
+`deployment_updated_at`, name or TTL) are rejected. There is no partial update or clear operation.
+
+| Field | Validation |
+|-------|------------|
+| `deployment_ref` | 1–512 characters, at least one non-whitespace character, no control characters; display text, not a Git expression |
+| `deployment_commit` | Full hexadecimal Git SHA-1 (40 characters) or SHA-256 (64); no abbreviated hashes |
+| `deployment_status` | Exactly `DEPLOYING`, `SUCCESS` or `FAILED`, case-sensitive |
+| `deployment_frontend_url` | Absolute HTTP(S) URL with a host, at most 2048 characters; no embedded username/password, whitespace or controls |
+| `deployment_admin_url` | Same URL rules as frontend; supply the actual admin URL, not an invented suffix |
+
+Malformed ports and unsafe literal URL characters (`\`, `<`, `>` and `"`) are rejected.
+Values are not silently trimmed, truncated or normalized. Paths, query strings and fragments
+in accepted URLs are preserved exactly. The portal does not fetch URLs or resolve Git metadata.
+Do not put credentials, access tokens or other secrets in any report field, including URL queries.
+
+```bash
+curl --fail-with-body -X PATCH \
+  'https://portal.example.com/api/v1/environments/<environment-id>/deployment-info' \
+  -H 'Authorization: Bearer dp_<api_key>' \
+  -H 'Content-Type: application/json' \
+  -d '{"deployment_ref":"feature/search","deployment_commit":"0123456789abcdef0123456789abcdef01234567","deployment_status":"DEPLOYING","deployment_frontend_url":"https://dev.example.com/app?theme=dark#home","deployment_admin_url":"https://admin.example.com/console"}'
+```
+
+| Status | Meaning |
+|--------|---------|
+| `200` | Existing environment JSON shape plus the complete accepted report and server-generated aware UTC `deployment_updated_at` |
+| `403` | Authenticated caller cannot manage this environment; checked before lifecycle conflict |
+| `404` | Environment does not exist |
+| `409` | Environment is fully `RELEASED`; its last report remains available |
+| `422` | Missing/null/non-string/unknown field or invalid value; previous report and timestamp remain unchanged |
+
+All six report fields appear in existing environment list, get, namespace-lookup and creation
+JSON responses on **both** mounts, retaining existing fields and read permissions. They are all
+`null` for existing and newly ordered environments until Jenkins publishes the first report:
+
+```json
+{
+  "deployment_ref": null,
+  "deployment_commit": null,
+  "deployment_status": null,
+  "deployment_frontend_url": null,
+  "deployment_admin_url": null,
+  "deployment_updated_at": null
+}
+```
+
+An accepted request atomically replaces all five values and the acceptance timestamp; concurrent
+requests never mix reports. Reporting remains allowed before release completion, but a report
+serialized after final release receives `409`. The final released environment retains the last
+accepted report. Jenkins must serialize the entire deployment/report sequence per environment
+and suppress obsolete callbacks: the portal uses last accepted report order, not commit hashes,
+build numbers or timestamps to infer which Jenkins build is newer. See the
+[Jenkins reporting example](admin-guide.md#jenkins-reporting-example).
 
 ### `PUT /api/environments/{id}/extend`
 

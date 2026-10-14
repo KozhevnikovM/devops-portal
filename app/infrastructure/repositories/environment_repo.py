@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session, aliased
 from app.domain.booking_list import EnvironmentChildItem
 from app.domain.booking_status import CAN_BECOME_READY, LIVE_CHILD_STATUSES
 from app.domain.constants import PERMANENT_EXPIRES_AT
+from app.domain.deployment import DeploymentReport, DeploymentStatus
 from app.domain.entities import Environment
 from app.domain.enums import BookingStatus, ResourceType
 from app.domain.environment_status import derive_environment_status
@@ -23,7 +24,7 @@ from app.infrastructure.database.models import (
     StaticVMModel,
     UserModel,
 )
-from app.infrastructure.events import Routing
+from app.infrastructure.events import Routing, apublish_environment_changed
 from app.infrastructure.repositories._ordered_walk import _OrderedWalk
 from app.infrastructure.repositories._user_ref import user_by_ref
 from app.infrastructure.repositories.booking_repo import (
@@ -288,10 +289,76 @@ def _to_entity(
         owner_username=owner_username,
         created_by=m.created_by,
         created_by_username=created_by_username,
+        deployment_ref=m.deployment_ref,
+        deployment_commit=m.deployment_commit,
+        deployment_status=DeploymentStatus(m.deployment_status)
+        if m.deployment_status
+        else None,
+        deployment_frontend_url=m.deployment_frontend_url,
+        deployment_admin_url=m.deployment_admin_url,
+        deployment_updated_at=m.deployment_updated_at,
     )
 
 
 class EnvironmentRepository:
+    async def get_for_update(
+        self, session: AsyncSession, environment_id: UUID
+    ) -> Environment:
+        """Acquire only the parent lock, never a queued child needed by FIFO promotion."""
+        model = await session.get(
+            EnvironmentModel,
+            environment_id,
+            with_for_update=True,
+            populate_existing=True,
+        )
+        if model is None:
+            raise EnvironmentNotFoundError(f"Environment {environment_id} not found")
+        return _to_entity(model)
+
+    async def update_deployment(
+        self, session: AsyncSession, environment_id: UUID, report: DeploymentReport
+    ) -> Environment:
+        """Caller owns the parent lock and has authorized the current owner/creator.
+
+        Release completion shares this lock. Read children in a fresh statement after acquiring
+        it, and capture our own response before commit releases it to another report writer.
+        """
+        try:
+            # Reacquiring a held parent lock is harmless and makes this operation safe for direct
+            # repository callers too. No child row is locked at any point.
+            await self.get_for_update(session, environment_id)
+            env = await self.get(session, environment_id)
+            if (
+                derive_environment_status(b.status for b in env.bookings)
+                == BookingStatus.RELEASED
+            ):
+                raise EnvironmentError(
+                    "cannot report deployment for a released environment"
+                )
+            model = await session.get(EnvironmentModel, environment_id)
+            assert model is not None
+            for name in (
+                "deployment_ref",
+                "deployment_commit",
+                "deployment_status",
+                "deployment_frontend_url",
+                "deployment_admin_url",
+            ):
+                value = getattr(report, name)
+                setattr(model, name, value)
+                setattr(env, name, value)
+            model.deployment_updated_at = datetime.now(UTC)
+            env.deployment_updated_at = model.deployment_updated_at
+            routing = Routing(owner_id=env.user_id, created_by=env.created_by)
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
+        await apublish_environment_changed(
+            environment_id=environment_id, routing=routing
+        )
+        return env
+
     async def create(
         self,
         session: AsyncSession,
@@ -349,6 +416,7 @@ class EnvironmentRepository:
             .outerjoin(StaticVMModel, StaticVMModel.id == BookingModel.static_vm_id)
             .where(BookingModel.environment_id == environment_id)
             .order_by(BookingModel.created_at)
+            .execution_options(populate_existing=True)
         )
         return [
             _booking_to_entity(b, owner_username=u, namespace=ns, static_vm=svm)

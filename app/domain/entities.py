@@ -3,10 +3,14 @@ from datetime import datetime
 from uuid import UUID
 
 from app.domain.booking_status import can_transition
+from app.domain.deployment import DeploymentStatus
 from app.domain.enums import BookingStatus, DriveType, ResourceType
 from app.domain.exceptions import IllegalStatusTransitionError
-from app.domain.resource_details import (  # noqa: F401 – re-exported for convenience
-    NamespaceDetails, ResourceFootprint, StaticVMDetails, VMDetails,
+from app.domain.resource_details import (
+    NamespaceDetails,
+    ResourceFootprint,
+    StaticVMDetails,
+    VMDetails,
 )
 
 
@@ -68,14 +72,17 @@ class Namespace:
 @dataclass
 class Role:
     """An Ansible role offered in the catalog, applied to a VM during configuration."""
+
     id: UUID
     name: str
     description: str | None
-    ansible_role: str          # the role directory name under ansible/roles/
-    default_vars: dict         # admin-set Ansible variables for this role
+    ansible_role: str  # the role directory name under ansible/roles/
+    default_vars: dict  # admin-set Ansible variables for this role
     is_active: bool
     created_at: datetime
-    secret_vars: dict = field(default_factory=dict)  # per-key Fernet-encrypted blob; never log values
+    secret_vars: dict = field(
+        default_factory=dict
+    )  # per-key Fernet-encrypted blob; never log values
 
     def __repr__(self) -> str:
         keys = sorted(self.secret_vars.keys()) if self.secret_vars else []
@@ -88,16 +95,18 @@ class Role:
 @dataclass
 class EnvironmentBlueprintItem:
     """One resource in a blueprint. `spec` carries per-type fields (catalog entries by name)."""
+
     id: UUID
-    resource_type: str         # ResourceType value: VM | STATIC_VM | NAMESPACE
+    resource_type: str  # ResourceType value: VM | STATIC_VM | NAMESPACE
     position: int
     label: str | None
-    spec: dict                 # VM: {image_name, hw_config_name, roles[], startup_script}; etc.
+    spec: dict  # VM: {image_name, hw_config_name, roles[], startup_script}; etc.
 
 
 @dataclass
 class EnvironmentBlueprint:
     """An admin-defined template bundling several resources into one orderable stack."""
+
     id: UUID
     name: str
     description: str | None
@@ -112,6 +121,7 @@ class Environment:
 
     `status` is not stored — it's derived from the child bookings' statuses.
     """
+
     id: UUID
     name: str
     blueprint_name: str | None
@@ -121,8 +131,18 @@ class Environment:
     created_at: datetime
     bookings: list = field(default_factory=list)  # list[Booking] — the children
     owner_username: str | None = None
-    created_by: str | None = None  # acting dispatcher's id when ordered on behalf of the owner
-    created_by_username: str | None = None  # resolved username of created_by (display only)
+    created_by: str | None = (
+        None  # acting dispatcher's id when ordered on behalf of the owner
+    )
+    created_by_username: str | None = (
+        None  # resolved username of created_by (display only)
+    )
+    deployment_ref: str | None = None
+    deployment_commit: str | None = None
+    deployment_status: DeploymentStatus | None = None
+    deployment_frontend_url: str | None = None
+    deployment_admin_url: str | None = None
+    deployment_updated_at: datetime | None = None
 
 
 @dataclass
@@ -148,38 +168,54 @@ class Booking:
     expires_at: datetime
     created_at: datetime
     resource_type: ResourceType = ResourceType.VM
-    image_id: UUID | None = None          # deprecated: use self.details.image_id (VMDetails)
-    image_name: str | None = None         # deprecated: use self.details.image_name
-    hw_config_id: UUID | None = None      # deprecated: use self.details.hw_config_id
-    hw_config_name: str | None = None     # deprecated: use self.details.hw_config_name
-    vm_ip: str | None = None              # deprecated: use self.details.vm_ip
-    vm_password: str | None = None        # deprecated: use self.details.vm_password
+    image_id: UUID | None = None  # deprecated: use self.details.image_id (VMDetails)
+    image_name: str | None = None  # deprecated: use self.details.image_name
+    hw_config_id: UUID | None = None  # deprecated: use self.details.hw_config_id
+    hw_config_name: str | None = None  # deprecated: use self.details.hw_config_name
+    vm_ip: str | None = None  # deprecated: use self.details.vm_ip
+    vm_password: str | None = None  # deprecated: use self.details.vm_password
     owner_username: str | None = None
-    cpus: int = 0                         # deprecated: use self.footprint.cpus
-    memory_mb: int = 0                    # deprecated: use self.footprint.memory_mb
-    disk_mb: int = 0                      # deprecated: use self.footprint.disk_mb
-    drive_type: str = DriveType.HDD.value # deprecated: use self.footprint.drive_type
+    cpus: int = 0  # deprecated: use self.footprint.cpus
+    memory_mb: int = 0  # deprecated: use self.footprint.memory_mb
+    disk_mb: int = 0  # deprecated: use self.footprint.disk_mb
+    drive_type: str = DriveType.HDD.value  # deprecated: use self.footprint.drive_type
     status_message: str | None = None
     provisioning_log: str | None = None
-    startup_script: str | None = None     # deprecated: use self.details.startup_script (VMDetails)
-    config_roles: list = field(default_factory=list)  # deprecated: use self.details.config_roles
-    extra_vars: dict = field(default_factory=dict)    # deprecated: use self.details.extra_vars
-    config_failed: bool = False           # deprecated: use self.details.config_failed
+    startup_script: str | None = (
+        None  # deprecated: use self.details.startup_script (VMDetails)
+    )
+    config_roles: list = field(
+        default_factory=list
+    )  # deprecated: use self.details.config_roles
+    extra_vars: dict = field(
+        default_factory=dict
+    )  # deprecated: use self.details.extra_vars
+    config_failed: bool = False  # deprecated: use self.details.config_failed
     environment_id: UUID | None = None
     environment_label: str | None = None
     label: str | None = None
     created_by: str | None = None
     created_by_username: str | None = None
-    namespace_id: UUID | None = None      # deprecated: use self.details.namespace_id (NamespaceDetails)
-    namespace_name: str | None = None     # deprecated: use self.details.namespace_name
-    cluster_name: str | None = None       # deprecated: use self.details.cluster_name
-    api_url: str | None = None            # deprecated: use self.details.api_url
-    static_vm_id: UUID | None = None      # deprecated: use self.details.static_vm_id (StaticVMDetails)
-    static_vm_name: str | None = None     # deprecated: use self.details.static_vm_name
-    static_vm_host: str | None = None     # deprecated: use self.details.static_vm_host
-    static_vm_username: str | None = None # deprecated: use self.details.static_vm_username
-    static_vm_password: str | None = None # deprecated: use self.details.static_vm_password
-    static_vm_ssh_key: str | None = None  # deprecated: use self.details.static_vm_ssh_key
+    namespace_id: UUID | None = (
+        None  # deprecated: use self.details.namespace_id (NamespaceDetails)
+    )
+    namespace_name: str | None = None  # deprecated: use self.details.namespace_name
+    cluster_name: str | None = None  # deprecated: use self.details.cluster_name
+    api_url: str | None = None  # deprecated: use self.details.api_url
+    static_vm_id: UUID | None = (
+        None  # deprecated: use self.details.static_vm_id (StaticVMDetails)
+    )
+    static_vm_name: str | None = None  # deprecated: use self.details.static_vm_name
+    static_vm_host: str | None = None  # deprecated: use self.details.static_vm_host
+    static_vm_username: str | None = (
+        None  # deprecated: use self.details.static_vm_username
+    )
+    static_vm_password: str | None = (
+        None  # deprecated: use self.details.static_vm_password
+    )
+    static_vm_ssh_key: str | None = (
+        None  # deprecated: use self.details.static_vm_ssh_key
+    )
     queue_position: int | None = None
     details: VMDetails | NamespaceDetails | StaticVMDetails | None = field(default=None)
     footprint: ResourceFootprint | None = field(default=None)
@@ -202,8 +238,10 @@ class Booking:
         password, and a namespace has neither. Same contract as BookingListItem.
         """
         return bool(
-            self.vm_password or self.static_vm_username
-            or self.static_vm_password or self.static_vm_ssh_key
+            self.vm_password
+            or self.static_vm_username
+            or self.static_vm_password
+            or self.static_vm_ssh_key
         )
 
     def transition_to(self, new: BookingStatus) -> None:

@@ -710,6 +710,83 @@ def _environment_repo():
     return EnvironmentRepository()
 
 
+async def _async_release_target(
+    session: AsyncSession, booking_id: UUID, target_environment_id: UUID | None = None
+):
+    """Serialize terminal child writes with deployment reports without locking queue candidates.
+
+    Only the booking being released is locked, after its parent. Membership can change during
+    order-time adoption, so retry a changed membership after dropping locks, never by acquiring
+    a new parent while holding the old child. No caller mutation may autoflush before the guard.
+    """
+    if isinstance(session, AsyncSession) and (
+        session.new or session.dirty or session.deleted
+    ):
+        raise BookingError(
+            "Release status writes require a session without pending mutations"
+        )
+    while True:
+        with session.no_autoflush:
+            result = await session.execute(
+                select(BookingModel)
+                .where(BookingModel.id == booking_id)
+                .execution_options(populate_existing=True)
+            )
+            model = result.scalar_one_or_none()
+            if model is None:
+                raise BookingNotFoundError(booking_id)
+            environment_id = model.environment_id
+            parent_ids = {environment_id, target_environment_id} - {None}
+            for parent_id in sorted(parent_ids, key=str):
+                await session.execute(
+                    select(EnvironmentModel.id)
+                    .where(EnvironmentModel.id == parent_id)
+                    .with_for_update()
+                )
+            result = await session.execute(
+                select(BookingModel)
+                .where(BookingModel.id == booking_id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
+            model = result.scalar_one_or_none()
+            if model is None:
+                raise BookingNotFoundError(booking_id)
+            if model.environment_id == environment_id:
+                return model
+        await session.rollback()
+
+
+def _sync_release_target(session: Session, booking_id: UUID):
+    """Sync twin of _async_release_target, used by TTL, teardown and recovery."""
+    if isinstance(session, Session) and (
+        session.new or session.dirty or session.deleted
+    ):
+        raise BookingError(
+            "Release status writes require a session without pending mutations"
+        )
+    while True:
+        with session.no_autoflush:
+            model = session.get(BookingModel, booking_id, populate_existing=True)
+            if model is None:
+                raise BookingNotFoundError(booking_id)
+            environment_id = model.environment_id
+            if environment_id is not None:
+                session.execute(
+                    select(EnvironmentModel.id)
+                    .where(EnvironmentModel.id == environment_id)
+                    .with_for_update()
+                )
+            model = session.get(
+                BookingModel, booking_id, populate_existing=True, with_for_update=True
+            )
+            if model is None:
+                raise BookingNotFoundError(booking_id)
+            if model.environment_id == environment_id:
+                return model
+        session.rollback()
+
+
 class BookingRepository:
     async def create(self, session: AsyncSession, booking: Booking) -> Booking:
         model = BookingModel(
@@ -787,12 +864,18 @@ class BookingRepository:
         vm_password: str | None = None,
         actor_id: str = "system",
     ) -> None:
-        result = await session.execute(
-            select(BookingModel).where(BookingModel.id == booking_id)
-        )
-        model = result.scalar_one_or_none()
-        if model is None:
-            raise BookingNotFoundError(booking_id)
+        if status == BookingStatus.RELEASED:
+            model = await _async_release_target(session, booking_id)
+        else:
+            result = await session.execute(
+                select(BookingModel)
+                .where(BookingModel.id == booking_id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
+            model = result.scalar_one_or_none()
+            if model is None:
+                raise BookingNotFoundError(booking_id)
         old_status = model.status
         _check_transition(old_status, status, booking_id)
         model.status = status.value
@@ -1093,18 +1176,12 @@ class BookingRepository:
 
         Called with a live env_id to adopt a standalone booking into an environment, or with
         environment_id=None and original ttl/expires_at to detach it on rollback.
-        Locks the row (#532) so adoption serializes with a concurrent standalone extension of the
-        same booking: whichever commits second sees the other's result.
+        Locks affected parents before the row (#535), so detach serializes with reporting and
+        adoption still serializes with a standalone extension (#532).
         """
-        result = await session.execute(
-            select(BookingModel)
-            .where(BookingModel.id == booking_id)
-            .with_for_update()
-            .execution_options(populate_existing=True)
-        )
-        model = result.scalar_one_or_none()
-        if model is None:
-            raise BookingNotFoundError(booking_id)
+        # Detaching an adopted child can itself make the old environment fully RELEASED.
+        # Guard both affected parents before the child, just like terminal status changes.
+        model = await _async_release_target(session, booking_id, environment_id)
         model.environment_id = environment_id
         model.environment_label = environment_label
         model.ttl_minutes = ttl_minutes
@@ -1187,9 +1264,14 @@ class BookingRepository:
         start_lease: bool = False,
         actor_id: str = "system",
     ) -> None:
-        model = session.get(BookingModel, booking_id)
-        if model is None:
-            raise BookingNotFoundError(booking_id)
+        if status == BookingStatus.RELEASED:
+            model = _sync_release_target(session, booking_id)
+        else:
+            model = session.get(
+                BookingModel, booking_id, populate_existing=True, with_for_update=True
+            )
+            if model is None:
+                raise BookingNotFoundError(booking_id)
         old_status = model.status
         _check_transition(old_status, status, booking_id)
         model.status = status.value
