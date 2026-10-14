@@ -6,10 +6,13 @@
 
 ## 2. Authorized atomic reporting API
 
-- [ ] 2.1 Add the repository port/method and update use case with existing management authorization, parent-first/current-child locking, authoritative RELEASED check and report-only atomic commit; verify unit tests for owner/creating-dispatcher/admin acceptance, unrelated user denial, 404/409 and unchanged name, ownership, TTL, expiry and child state.
+- [ ] 2.1 Add the repository port/method and update use case with existing management authorization, parent-only report locking with fresh child-status reads, authoritative RELEASED check and report-only atomic commit; verify unit tests for owner/creating-dispatcher/admin acceptance, unrelated user denial, 404/409 and unchanged name, ownership, TTL, expiry and child state.
 - [ ] 2.2 Add a strict complete-report request and PATCH endpoint on both versioned and legacy mounts; verify 200 serializer parity, required non-null strings, extra-field/timestamp rejection, 422 rollback, missing/invalid authentication and no session fallback for an invalid bearer token under existing authentication rules.
 - [ ] 2.3 Add all six nullable fields to existing environment list/get/by-namespace/create JSON serialization and OpenAPI report schema; verify existing response fields/read permissions and namespace-plus-cluster resolution remain compatible on both mounts.
-- [ ] 2.4 Add PostgreSQL transaction tests for overlapping full reports, failed-write rollback, report versus final-child release (manual and TTL paths), concurrent lease extension and queued promotion; verify each response reflects its own accepted snapshot, complete stored reports, no acceptance after observed RELEASED, no deadlock/stranded queue item and unchanged lease/resource behavior.
+- [ ] 2.4 Add the shared Environment parent-lock protocol to async/sync child RELEASED writes and audit manual/force/TTL/queued cancellation/teardown/recovery and allowed child-removal paths; verify all completion writes retain the parent lock through commit, refresh/revalidate after waiting, avoid child-before-parent acquisition/autoflush and leave standalone bookings unchanged.
+- [ ] 2.5 Add PostgreSQL transaction tests for overlapping full reports, failed-write rollback, report versus final-child release (manual and TTL paths), concurrent lease extension and queued promotion; verify each response reflects its own accepted snapshot, complete stored reports, no acceptance after observed RELEASED, no deadlock and unchanged lease/resource behavior.
+- [ ] 2.6 Add two deterministic PostgreSQL interleaving tests: pause reporting while it holds the parent lock, then release a matching pooled resource with respectively (a) this environment owning the oldest of multiple QUEUED bookings and (b) its child being the sole QUEUED booking; verify reporting holds no child lock, promotion chooses the oldest/sole candidate exactly once, no newer candidate jumps ahead and no free resource/queued booking remains stranded after both transactions, without retries or another release.
+- [ ] 2.7 Add a lock-order regression test for promotion racing reporting/release completion and lease start/extension; verify no path holds a candidate child lock while waiting for its parent and notification/rendering of final RELEASED includes the last accepted report.
 
 ## 3. Notifications and reconciliation
 
@@ -26,7 +29,7 @@
 
 ## 5. Documentation and verification
 
-- [ ] 5.1 Update docs/api-reference.md, docs/admin-guide.md and relevant user documentation with validation bounds/hash formats, identity-based permission limits, empty/released states, rollout/rollback and namespace+cluster discovery; verify examples match both supported mounts and OpenAPI.
+- [ ] 5.1 Update docs/api-reference.md, docs/admin-guide.md and relevant user documentation with validation bounds/hash formats, identity-based permission limits, empty/released states, rollout/rollback (including old-app/worker drain before reporting activation) and namespace+cluster discovery; verify examples match both supported mounts and OpenAPI.
 - [ ] 5.2 Provide a Jenkins example with bound credentials, complete DEPLOYING then SUCCESS/FAILED payloads, exact service URLs and per-environment serialization/obsolete-callback suppression; verify every shown report includes all five fields and no secret is logged or stored in metadata. Actual Jenkins job/plugin implementation remains outside this change.
 - [ ] 5.3 Run the non-integration suite, focused PostgreSQL concurrency/migration/reconciliation tests, browser disclosure scenarios, Tailwind rebuild and required py-review/CI checks; record results and any environment limitations in the implementation PR.
 - [ ] 5.4 After implementation approval, sync delta specs and archive the completed change on the code PR branch; verify strict OpenSpec validation and archived tasks before merging the implementation PR.

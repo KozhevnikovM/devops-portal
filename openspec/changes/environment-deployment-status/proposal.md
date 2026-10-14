@@ -9,6 +9,7 @@ Production users cannot see which application revision Jenkins deployed to an En
 - Reuse API-key authentication and existing owner/creating-dispatcher/admin management authorization. Jenkins uses a dedicated identity authorized for its environments; namespace-plus-cluster lookup resolves the UUID. No new role or key-scope administration system.
 - Add all six fields to existing authenticated environment JSON responses, with null values before the first report. Keep lifecycle, TTL, names, resources and existing read permissions unchanged.
 - Add the approved compact Deployment column between Resources and Owner: ref, separate seven-character commit, deployment status/time and Frontend/Admin links; a keyboard-accessible overlay shows the complete read-only report.
+- Serialize reporting and all environment-child release-completion writes on the parent Environment row, without locking queued candidates or changing FIFO promotion.
 - Carry reports through bounded projections, row versions, post-commit notifications and reconciliation without changing pagination or query/child bounds.
 - Provide a production-safe additive migration, API/OpenAPI and user/admin documentation, and Jenkins reporting examples including stale-build responsibility.
 
@@ -24,4 +25,4 @@ Production users cannot see which application revision Jenkins deployed to an En
 
 ## Impact
 
-Domain Environment/report types; application update use case and repository port; SQLAlchemy mapping, additive Alembic migration and environment projections; API router/composition root; environment templates and a disclosure controller; row-version hashing and event publication. Tests cover API/permissions, atomic persistence and release races on PostgreSQL, safe links, browser keyboard/disclosure behavior and bounded reconciliation. No new runtime dependency is required. Jenkinsfile/plugin implementation, manual notes/editing, Git lookup, deployment history and server-side build arbitration are out of scope.
+Domain Environment/report types; application update use case and repository port; SQLAlchemy mapping, additive Alembic migration and environment projections; async/sync booking release-completion persistence and lock-order audit; API router/composition root; environment templates and a disclosure controller; row-version hashing and event publication. Tests cover API/permissions, atomic persistence and release races on PostgreSQL, safe links, browser keyboard/disclosure behavior and bounded reconciliation. No new runtime dependency is required. Jenkinsfile/plugin implementation, manual notes/editing, Git lookup, deployment history and server-side build arbitration are out of scope.

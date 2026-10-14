@@ -62,11 +62,23 @@ Jenkins documentation SHALL resolve UUID with `GET /api/environments/by-namespac
 
 #### Scenario: Release completion races the write
 - **WHEN** the last child becomes RELEASED before the report's authoritative lifecycle check
-- **THEN** the report returns 409; a report accepted before release completion remains as the last report after release
+- **THEN** the report returns 409; a report serialized before release completion commits first and remains as the last report in the final released state
 
 #### Scenario: Deployment report does not alter the stack
 - **WHEN** an authorized report changes ref, commit, deployment status and URLs on a non-RELEASED environment
 - **THEN** its name, lifecycle, child resources, TTL, expiry and list position remain unchanged
+
+### Requirement: Reporting preserves pooled-resource queue progress
+
+A deployment report SHALL NOT cause a QUEUED booking to be skipped during pooled-resource promotion. Reporting SHALL preserve FIFO selection and SHALL NOT leave a free matching resource with an unpromoted eligible booking because its write overlaps resource release. These guarantees SHALL hold while the report transaction is open, not only after a retry or another resource release.
+
+#### Scenario: Oldest queued child during reporting
+- **WHEN** reporting for an environment is paused in its write transaction, its child is the oldest of multiple eligible QUEUED bookings and a matching pooled resource is released
+- **THEN** promotion selects that oldest child instead of a newer booking, exactly once, and reporting does not prevent its eventual assignment
+
+#### Scenario: Sole queued child during reporting
+- **WHEN** reporting for an environment is paused in its write transaction, its child is the only eligible QUEUED booking and a matching pooled resource is released
+- **THEN** the child is promoted exactly once and no free-resource/queued-booking pair is stranded after the overlapping operations, without another release or promotion retry
 
 ### Requirement: Deployment is a compact read-only column in the existing table
 
