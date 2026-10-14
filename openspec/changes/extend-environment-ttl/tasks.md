@@ -36,8 +36,15 @@
 - [ ] 6.4 Integration test: a forced failure mid-`extend_lease` (e.g. an audit insert error) rolls back, so the env, the children and the audit trail are unchanged
 - [ ] 6.5 Run `TEST_POSTGRES_URL=... pytest -m integration` for the new tests and verify they pass
 
-## 7. Docs and quality gates
+## 7. Booking extend rejects environment children (PR #533 review)
 
-- [ ] 7.1 Document `PUT /api/v1/environments/{id}/extend` (body, response, status codes, permanent/FAILED rules) in `docs/api-reference.md`, and the Extend action and its eligibility in `docs/admin-guide.md`/user docs; verify by review
-- [ ] 7.2 Run `pytest tests/ -m "not integration"` and verify it is green
-- [ ] 7.3 Run the `py-review` gate (`ruff check`/`ruff format --check --target-version py311`, mypy, bandit) on changed files and verify they are clean
+- [ ] 7.1 Add `EnvironmentChildExtendError(BookingError)` to `app/domain/exceptions.py`, and in `ExtendBookingUseCase` raise it after `can_manage` and before the READY/permanent checks when `booking.environment_id` is set ("Booking belongs to environment <id>; extend the environment instead."); verify with unit tests: owner, dispatcher and admin get the error for a READY child (including `extend_minutes` 0); an unrelated user still gets `BookingPermissionError`; a standalone booking still extends (timed and "Forever"); the repository `extend` is never called for a child
+- [ ] 7.2 API regression tests: `PUT /api/v1/bookings/{child_id}/extend` and the legacy `PUT /api/bookings/{child_id}/extend` return `409` with the environment id in `detail`, and afterwards the child, its siblings and the environment have unchanged `ttl_minutes`/`expires_at` and no new `EXTENDED` audit entry; a standalone booking's extend response is unchanged
+- [ ] 7.3 HTMX regression test: `PUT /bookings/{child_id}/extend` returns `409` and leaves the child unchanged
+- [ ] 7.4 In `partials/booking_row.html`, hide the Extend form when `booking.environment_id` is set and change the `environment_managed_hint` text to "extend or release it there"; verify with a template test that a READY timed child's row has no `hx-put=".../extend"` and shows the hint, while a READY timed standalone booking still shows Extend with "Forever"
+
+## 8. Docs and quality gates
+
+- [ ] 8.1 Document `PUT /api/v1/environments/{id}/extend` (body, response, status codes, permanent/FAILED rules) in `docs/api-reference.md`, note under booking extend that environment children return `409` (extend the environment instead), and document the Extend action and its eligibility in `docs/admin-guide.md`/user docs; verify by review
+- [ ] 8.2 Run `pytest tests/ -m "not integration"` and verify it is green
+- [ ] 8.3 Run the `py-review` gate (`ruff check`/`ruff format --check --target-version py311`, mypy, bandit) on changed files and verify they are clean

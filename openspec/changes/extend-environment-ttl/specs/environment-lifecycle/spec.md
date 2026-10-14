@@ -27,6 +27,35 @@ The system SHALL let a caller extend an existing environment's shared lease with
 - **WHEN** a standalone booking is extended through the booking extend endpoint, including with its permanent "Forever" option
 - **THEN** it behaves exactly as before this change
 
+### Requirement: Environment children cannot be extended independently
+
+A booking that belongs to an environment SHALL NOT be extended on its own through the ordinary booking extend operation. Only the environment extension may change a child's lease. This SHALL apply to namespace, static-VM and provisioned-VM children in every status and with every increment, including the permanent "Forever" option. The rule SHALL be enforced for every caller of the booking extend operation: the browser (HTMX) endpoint, the versioned JSON API and the legacy unversioned JSON API. Authorization SHALL still be checked first: a caller who may not manage the booking SHALL get `403`, and a nonexistent booking SHALL get `404`. Otherwise the rejection SHALL be reported as `409 Conflict`, with a message that names the parent environment and tells the caller to extend the environment instead, for example `Booking belongs to environment <id>; extend the environment instead.` The rejection SHALL change no state: the child's `ttl_minutes` and expiry stay as they are, and no audit entry is recorded. The rule SHALL apply to admins and dispatchers as well as to owners. In the booking list, an environment child's row SHALL NOT offer the booking Extend action; it SHALL point the user to its environment instead. Standalone bookings, which have no environment, SHALL keep their existing extend behaviour unchanged, including the "Forever" option.
+
+#### Scenario: Owner tries to extend a child through the booking API
+- **WHEN** the owner of a READY environment calls `PUT /api/v1/bookings/{child_id}/extend` with `extend_minutes` 720 for one of its children
+- **THEN** the response is `409` with a message naming the environment and telling the caller to extend the environment instead
+- **AND** the child, its siblings and the environment keep their previous `ttl_minutes` and expiry
+
+#### Scenario: Admin tries to make a child permanent
+- **WHEN** an admin extends an environment child through the booking extend operation with `extend_minutes` 0 ("Forever")
+- **THEN** the response is `409` and the child stays timed with its expiry unchanged
+
+#### Scenario: Legacy and browser endpoints are covered too
+- **WHEN** an environment child is extended through the legacy `PUT /api/bookings/{child_id}/extend` or through the browser `PUT /bookings/{child_id}/extend`
+- **THEN** the extension is rejected and the child's lease is unchanged
+
+#### Scenario: Unauthorized caller still gets 403
+- **WHEN** a user who may not manage an environment child tries to extend it through the booking extend operation
+- **THEN** the response is `403`, so nothing about its environment membership is revealed
+
+#### Scenario: Booking row hides Extend for a child
+- **WHEN** the owner views a READY timed environment child in the booking list
+- **THEN** its action menu offers no Extend action and points to the environment instead
+
+#### Scenario: Standalone booking still extends
+- **WHEN** the owner extends a READY timed standalone booking by 720 minutes, or with "Forever"
+- **THEN** it is extended exactly as before this change
+
 ### Requirement: Environment extension enforces authorization, eligibility and input rules
 
 Environment extension SHALL be authorized like booking management: the environment's owner, the dispatcher who ordered it on the owner's behalf, and admins may extend it. Any other user or dispatcher SHALL receive `403`. The authorization check SHALL run before any eligibility check, so an unauthorized caller learns nothing about the environment's status or TTL. A nonexistent environment SHALL receive `404`. `extend_minutes` SHALL be a positive integer. Zero, a negative value or a non-integer SHALL be rejected with `422`, and so SHALL any value that would put the new expiry at or past the far-future permanent sentinel. Extension SHALL NEVER turn a timed environment into a permanent one. Only an eligible environment may be extended. Eligible means its derived status is READY, its TTL is not zero, and its lease has already started, so its expiry is no longer the pre-lease placeholder. All other environments SHALL be rejected with `409` and a message that states the reason. This includes a permanent environment (TTL zero), a stack that is still provisioning or whose lease hasn't started, a FAILED or partly released stack, and a RELEASED stack. Every rejection SHALL change no state and SHALL never be reported as a `5xx`.

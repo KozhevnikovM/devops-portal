@@ -3,6 +3,7 @@
 See proposal.md (Why) and `specs/environment-lifecycle/spec.md` for the behaviour contract. The current state that shapes this design:
 
 - **Booking extend**: `ExtendBookingUseCase` checks `can_manage`, then READY, then `ttl_minutes != 0`, and calls `BookingRepository.extend`. `extend` applies `Lease(...).extended_by(n)` to one row, writes an `EXTENDED` `BookingAuditModel` row, commits and publishes. It takes no row lock. Also, `extended_by(0)` makes the lease permanent, which is what the UI's "Forever" option relies on.
+- **Booking extend bypasses the environment (PR #533 review)**: neither `ExtendBookingUseCase` nor `BookingRepository.extend` checks `environment_id`. `booking_row.html` also shows Extend for READY children, because its condition is `can_manage and ttl != 0 and READY`. As a result, `PUT /api/v1/bookings/{child_id}/extend` can move a single child's deadline, even to "Forever", while the parent and its siblings keep the old one. `enforce_environment_ttl` then tears the stack down at the parent's deadline, so the child's extension is silently lost. Release already guards against the equivalent case with `EnvironmentChildReleaseError` (#434).
 - **Environment lease**: `Environment.ttl_minutes`/`expires_at` plus each child's own `ttl_minutes`/`expires_at`. `_stamp_lease` starts the lease by locking the environment row (`SELECT … FOR UPDATE`, `populate_existing`), re-reading the children and writing one deadline to the parent and to every child. Before the lease starts, `expires_at == PERMANENT_EXPIRES_AT`, the placeholder from `Lease.pending`.
 - **TTL enforcement**: `enforce_environment_ttl` preselects with `sync_list_expired`, which returns environments past `expires_at` that still have a live child. For each one it opens a new session and releases `sync_live_children` without rechecking the deadline. An extension that commits between those two steps would be ignored, and the stack would be torn down at the old deadline. The standalone `enforce_ttl` already excludes environment children (`environment_id IS NULL`), so children are only ever expired through the environment.
 - **Release**: `ReleaseEnvironmentUseCase` force-releases each non-terminal child through `ReleaseBookingUseCase`. Each child status update is its own commit, and the environment row is not locked.
@@ -16,7 +17,7 @@ See proposal.md (Why) and `specs/environment-lifecycle/spec.md` for the behaviou
 - Closing the time-of-check-to-time-of-use (TOCTOU) gap in `enforce_environment_ttl`, which this feature would otherwise make reachable.
 
 **Non-Goals:**
-- Changing standalone booking extension. This includes its "Forever" option, its lack of a positive-increment check, and its invisible 409 in the HTMX row. These are existing behaviour, left as is.
+- Changing how **standalone** bookings are extended. This includes their "Forever" option, the lack of a positive-increment check, and the 409 that the HTMX row never shows. These are existing behaviour and stay as they are. The only change on the booking extend path is the guard for environment children (Decision 7).
 - Extending a FAILED or partly released stack. It is rejected with `409`, matching the booking rule that only READY can be extended. The user can release it and order again.
 - A per-environment audit table. The child booking audit trail already exists.
 - An upper policy cap on total lifetime, beyond the sentinel guard.
@@ -73,12 +74,23 @@ This replaces `sync_live_children` in `enforce_environment_ttl`. It locks the en
 
 The row version (`environment_row_version`) already includes `ttl_minutes`/`expires_at`, so SSE and the reconcile poll pick up an extension made in another tab without any change.
 
+### 7. Booking extend rejects environment children
+
+This mirrors the release guard. Add `EnvironmentChildExtendError(BookingError)` to `app/domain/exceptions.py`. In `ExtendBookingUseCase.execute`, the order is: `repo.get` (404) → `can_manage` (403) → **`if booking.environment_id is not None: raise EnvironmentChildExtendError("Booking belongs to environment <id>; extend the environment instead.")`** → the existing READY and permanent checks. Because the new error is a `BookingError`, the three existing booking-extend routes (HTMX `/bookings/{id}/extend`, `/api/v1/bookings/{id}/extend` and the legacy `/api/bookings/{id}/extend`) already map it to `409`, so none of them need to change. The child guard comes before the status checks, so a child is rejected for the same reason in every status. Authorization still comes first, so an unauthorized caller learns nothing about environment membership.
+
+The guard sits in the use case, not in `BookingRepository.extend`. That keeps the repository a plain writer, and the environment's own `extend_lease` doesn't go through the booking repository anyway.
+
+In `booking_row.html`, the Extend form condition gains `and not booking.environment_id`. The existing `environment_managed_hint` link already appears in that menu for children. Its text changes from "release it there" to "extend or release it there".
+
+*Alternative considered*: when a child is extended, redirect the request to the environment's extension. Rejected because it would act on the parent and siblings without the caller asking for it, and it would hide the 409 that the release rule has already established as the convention for children.
+
 ## Risks / Trade-offs
 
 - [Holding row locks on N children for the length of one short transaction] → Children are bounded (`Environments have a bounded number of children`). The transaction does no I/O beyond the update itself, and the publish happens after the commit.
 - [Deadlock if some release path takes child-then-env locks] → Decision 3 lock order plus a verification task. Postgres would abort one side, and the extend route maps an unexpected DB error to a 5xx. The integration race test is there to catch this.
 - [An extension can commit just before a user's release, so the release "wins" anyway] → This is acceptable and in the spec. It never causes inconsistency.
 - [An expired-but-not-yet-swept READY environment can still be extended, from its old deadline, which may still be in the past] → This is consistent with booking extend and with "don't reset to now". The user sees the resulting expiry. If it is still in the past, the sweep releases the stack on its next run.
+- [An API client that today extends a child through the booking endpoint will start getting `409`] → This is intended. Those extensions were already ineffective, because the stack was torn down at the parent's deadline. The 409 message names the environment, so the client can switch to `PUT /api/v1/environments/{id}/extend`. This is noted in `docs/api-reference.md`.
 - [A FAILED (partly failed) stack can't be extended] → A deliberate non-goal. It is documented in the user docs.
 
 ## Migration Plan
