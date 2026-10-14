@@ -1,0 +1,86 @@
+## Context
+
+See proposal.md (Why) and `specs/environment-lifecycle/spec.md` for the behaviour contract. The current state that shapes this design:
+
+- **Booking extend**: `ExtendBookingUseCase` checks `can_manage`, then READY, then `ttl_minutes != 0`, and calls `BookingRepository.extend`. `extend` applies `Lease(...).extended_by(n)` to one row, writes an `EXTENDED` `BookingAuditModel` row, commits and publishes. It takes no row lock. Also, `extended_by(0)` makes the lease permanent, which is what the UI's "Forever" option relies on.
+- **Environment lease**: `Environment.ttl_minutes`/`expires_at` plus each child's own `ttl_minutes`/`expires_at`. `_stamp_lease` starts the lease by locking the environment row (`SELECT … FOR UPDATE`, `populate_existing`), re-reading the children and writing one deadline to the parent and to every child. Before the lease starts, `expires_at == PERMANENT_EXPIRES_AT`, the placeholder from `Lease.pending`.
+- **TTL enforcement**: `enforce_environment_ttl` preselects with `sync_list_expired`, which returns environments past `expires_at` that still have a live child. For each one it opens a new session and releases `sync_live_children` without rechecking the deadline. An extension that commits between those two steps would be ignored, and the stack would be torn down at the old deadline. The standalone `enforce_ttl` already excludes environment children (`environment_id IS NULL`), so children are only ever expired through the environment.
+- **Release**: `ReleaseEnvironmentUseCase` force-releases each non-terminal child through `ReleaseBookingUseCase`. Each child status update is its own commit, and the environment row is not locked.
+- **HTMX error display**: htmx 1.x does not swap non-2xx responses. The project shows inline errors by returning `200` with `HX-Retarget`/`HX-Reswap` headers (`auth.py` user-create error, the environment order form).
+
+## Goals / Non-Goals
+
+**Goals:**
+- One rule for eligibility, used by the API, the use case and the template.
+- One locked transaction that moves the parent and every child to the same deadline.
+- Closing the time-of-check-to-time-of-use (TOCTOU) gap in `enforce_environment_ttl`, which this feature would otherwise make reachable.
+
+**Non-Goals:**
+- Changing standalone booking extension. This includes its "Forever" option, its lack of a positive-increment check, and its invisible 409 in the HTMX row. These are existing behaviour, left as is.
+- Extending a FAILED or partly released stack. It is rejected with `409`, matching the booking rule that only READY can be extended. The user can release it and order again.
+- A per-environment audit table. The child booking audit trail already exists.
+- An upper policy cap on total lifetime, beyond the sentinel guard.
+
+## Decisions
+
+### 1. Eligibility lives in the domain (`app/domain/lease.py`)
+
+A pure function, e.g. `environment_extend_blocker(status: BookingStatus, lease: Lease) -> str | None`, returns `None` when the environment may be extended, or a human-readable reason otherwise: "permanent", "lease not started yet", "only READY environments can be extended". The use case raises `EnvironmentError(reason)` when it returns a reason. The row template uses the same function through `_annotate` (`env.can_extend`). The button and the API therefore can't disagree.
+
+The increment check sits next to it as `Lease.extended_by_positive(minutes)`, or as a guard inside a new environment-specific method. It raises a domain `ValueError`-style error (`InvalidExtensionError`, a subclass of `EnvironmentError`) when `minutes <= 0` or when the result would be `>= PERMANENT_EXPIRES_AT`. `Lease.extended_by` itself is **not** changed, because the booking "Forever" option relies on its `0 → permanent` behaviour.
+
+*Alternative considered*: reuse `extended_by` as it is and reject `0` only in the route. Rejected because the "never become permanent" invariant should be enforced by the model, not left to each caller.
+
+### 2. Repository: `EnvironmentRepository.extend_lease(session, environment_id, extend_minutes, actor_id) -> None`
+
+The method runs in one transaction:
+1. `session.get(EnvironmentModel, id, with_for_update=True, populate_existing=True)`. Missing → `EnvironmentNotFoundError`.
+2. Lock and re-read the children: `_children_stmt(id).with_for_update()`, ordered by `id`.
+3. Recheck eligibility with the domain function, using the fresh statuses and the fresh `Lease(env.ttl_minutes, env.expires_at)`. If it is blocked, roll back and raise `EnvironmentError`.
+4. Compute `new = Lease(env.ttl_minutes, env.expires_at).extended_by(n)` once, after the validation in Decision 1. Write `new.ttl_minutes` and `new.expires_at` to the env and to **every** child. When eligible, every child is READY because the derived status is READY, so "relevant children" means all of them. This matches `_stamp_lease`, which also writes the deadline to every child.
+5. Add one `BookingAuditModel(action="EXTENDED", actor_id, extra={"extend_minutes": n, "environment_id": str(id)})` per child.
+6. Commit once. On any exception, roll back, so nothing partial is persisted.
+7. After the commit, call `_apublish_lifecycle` for each child (best-effort). This makes subscribers re-render the child rows and, through `environment_id` routing, the environment row.
+
+The use case does the authorization check (`can_manage`) and a fast pre-check of eligibility using `env_repo.get`, so errors come back early and authorization comes first. The **authoritative** check is the one under the lock in step 3. The use case then returns `env_repo.get(...)` after the commit.
+
+*Why the repository rechecks instead of the use case taking locks*: use cases depend on the repository Protocols and don't issue `FOR UPDATE` themselves. The existing lease-start path already puts its lock and recheck in the repository (`start_lease_if_ready`). The eligibility rule itself still comes from the domain, so the repository only applies it.
+
+*Alternative considered*: extend each child through `BookingRepository.extend`. Rejected because it commits once per child, which breaks atomicity and leaves children temporarily out of sync.
+
+### 3. Lock ordering: environment row → child rows (by id)
+
+Every path that locks both the environment row and child rows SHALL take the environment row first. `_stamp_lease` already does this, and `extend_lease` and the new sweep recheck follow the same order. Release updates child rows without holding the environment lock, so its row-level `UPDATE` waits for an in-flight extension and then proceeds. This is the "extension then release" outcome in the spec. Once a child has been committed as RELEASING/RELEASED, an extension sees a non-READY derived status and returns `409`.
+
+Implementation check (task 2.4): confirm that no release path holds a child row lock while it waits for the environment row lock in the same transaction. That would be the only way to deadlock against `extend_lease`.
+
+### 4. Sweep recheck: `sync_live_children_if_expired(session, environment_id)`
+
+This replaces `sync_live_children` in `enforce_environment_ttl`. It locks the environment row (`FOR UPDATE`, `populate_existing`), returns `[]` if `expires_at >= now`, and otherwise returns the live children. `_release_child_sync` keeps working inside that same session. The lock is held until the first child's status commit. After that, any extension sees a RELEASING/RELEASED child and is rejected, so the sweep can't be overtaken half-way. The preselection query `sync_list_expired` is unchanged and stays an optimization only.
+
+### 5. API surface
+
+- `ExtendEnvironmentRequest(BaseModel)`: `extend_minutes: int = Field(gt=0)`. FastAPI rejects non-positive values and non-integers with `422` before the use case runs. The use case still validates as a second line of defence, and its `InvalidExtensionError` (e.g. the sentinel overflow) maps to `422`.
+- Error mapping matches booking extend: `EnvironmentNotFoundError → 404`, `BookingPermissionError → 403`, `InvalidExtensionError → 422`, other `EnvironmentError → 409`.
+- The response is `{"id", "status", "ttl_minutes", "expires_at"}`, where `status` is the derived status. The route lives on the shared `api_environments` router, so it appears under `/api/v1` (in OpenAPI) and under the hidden legacy `/api` mount.
+
+### 6. HTMX route and row UI
+
+`PUT /environments/{id}/extend` (form field `extend_minutes`, `include_in_schema=False`):
+- Success: `partials/environment_row.html` (targets `closest tr`, `outerHTML`), the same as rename.
+- Any rejection (403/404/409/422-equivalent): a `200` response containing an escaped error `<span>`, with `HX-Retarget: #environment-{id}-extend-error` and `HX-Reswap: innerHTML`. The row and its displayed expiry are left untouched. A non-integer form value is caught by parsing `extend_minutes` as `str` and converting it, so it also takes the error path instead of an unswapped FastAPI `422`.
+- Template: inside the existing `⋮` menu, between rename and release, show the form only when `can_manage and environment.can_extend`. It contains a `<select>` with +12 h / +24 h / +2 days / +4 days / +7 days / +14 days, the Extend button, and an empty `<div id="environment-{id}-extend-error">`. The expiry cell stays as it is.
+
+The row version (`environment_row_version`) already includes `ttl_minutes`/`expires_at`, so SSE and the reconcile poll pick up an extension made in another tab without any change.
+
+## Risks / Trade-offs
+
+- [Holding row locks on N children for the length of one short transaction] → Children are bounded (`Environments have a bounded number of children`). The transaction does no I/O beyond the update itself, and the publish happens after the commit.
+- [Deadlock if some release path takes child-then-env locks] → Decision 3 lock order plus a verification task. Postgres would abort one side, and the extend route maps an unexpected DB error to a 5xx. The integration race test is there to catch this.
+- [An extension can commit just before a user's release, so the release "wins" anyway] → This is acceptable and in the spec. It never causes inconsistency.
+- [An expired-but-not-yet-swept READY environment can still be extended, from its old deadline, which may still be in the past] → This is consistent with booking extend and with "don't reset to now". The user sees the resulting expiry. If it is still in the past, the sweep releases the stack on its next run.
+- [A FAILED (partly failed) stack can't be extended] → A deliberate non-goal. It is documented in the user docs.
+
+## Migration Plan
+
+No schema change or migration. This is an additive API and UI change. To roll back, revert the code. The sweep recheck is backward compatible.
