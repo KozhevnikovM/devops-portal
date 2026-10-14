@@ -29,7 +29,7 @@ The system SHALL let a caller extend an existing environment's shared lease with
 
 ### Requirement: Environment children cannot be extended independently
 
-A booking that belongs to an environment SHALL NOT be extended on its own through the ordinary booking extend operation. Only the environment extension may change a child's lease. This SHALL apply to namespace, static-VM and provisioned-VM children in every status and with every increment, including the permanent "Forever" option. The rule SHALL be enforced for every caller of the booking extend operation: the browser (HTMX) endpoint, the versioned JSON API and the legacy unversioned JSON API. Authorization SHALL still be checked first: a caller who may not manage the booking SHALL get `403`, and a nonexistent booking SHALL get `404`. Otherwise the rejection SHALL be reported as `409 Conflict`, with a message that names the parent environment and tells the caller to extend the environment instead, for example `Booking belongs to environment <id>; extend the environment instead.` The rejection SHALL change no state: the child's `ttl_minutes` and expiry stay as they are, and no audit entry is recorded. The rule SHALL apply to admins and dispatchers as well as to owners. In the booking list, an environment child's row SHALL NOT offer the booking Extend action; it SHALL point the user to its environment instead. Standalone bookings, which have no environment, SHALL keep their existing extend behaviour unchanged, including the "Forever" option.
+A booking that belongs to an environment SHALL NOT be extended on its own through the ordinary booking extend operation. Only the environment extension may change a child's lease. This SHALL apply to namespace, static-VM and provisioned-VM children in every status and with every increment, including the permanent "Forever" option. The rule SHALL be enforced for every caller of the booking extend operation: the browser (HTMX) endpoint, the versioned JSON API and the legacy unversioned JSON API. Authorization SHALL still be checked first: a caller who may not manage the booking SHALL get `403`, and a nonexistent booking SHALL get `404`. Otherwise the rejection SHALL be reported as `409 Conflict`, with a message that names the parent environment and tells the caller to extend the environment instead, for example `Booking belongs to environment <id>; extend the environment instead.` The rejection SHALL change no state: the child's `ttl_minutes` and expiry stay as they are, and no audit entry is recorded. The rule SHALL apply to admins and dispatchers as well as to owners. Whether the booking belongs to an environment SHALL be decided atomically with the extension write, not only by an earlier read. This applies in particular when an environment order adopts the caller's standalone namespace booking concurrently. If the adoption commits first, the extension SHALL be rejected with `409` and SHALL change nothing. If the standalone extension commits first, the booking SHALL then be adopted as usual and take the environment's lease. A booking SHALL never end up as an environment child carrying a child-only extension. In the booking list, an environment child's row SHALL NOT offer the booking Extend action; it SHALL point the user to its environment instead. Standalone bookings, which have no environment, SHALL keep their existing extend behaviour unchanged, including the "Forever" option.
 
 #### Scenario: Owner tries to extend a child through the booking API
 - **WHEN** the owner of a READY environment calls `PUT /api/v1/bookings/{child_id}/extend` with `extend_minutes` 720 for one of its children
@@ -47,6 +47,16 @@ A booking that belongs to an environment SHALL NOT be extended on its own throug
 #### Scenario: Unauthorized caller still gets 403
 - **WHEN** a user who may not manage an environment child tries to extend it through the booking extend operation
 - **THEN** the response is `403`, so nothing about its environment membership is revealed
+
+#### Scenario: Adoption commits before a concurrent standalone extension
+- **WHEN** a user extends their standalone READY namespace booking while an environment order adopts that same booking, and the adoption commits first
+- **THEN** the extension is rejected with `409`
+- **AND** the booking keeps exactly the environment's lease and has no `EXTENDED` audit entry
+
+#### Scenario: Standalone extension commits before a concurrent adoption
+- **WHEN** a user extends their standalone READY namespace booking while an environment order adopts it, and the extension commits first
+- **THEN** the extension succeeds as a standalone extension
+- **AND** the adoption then completes and the booking carries the environment's lease, the same as every sibling
 
 #### Scenario: Booking row hides Extend for a child
 - **WHEN** the owner views a READY timed environment child in the booking list

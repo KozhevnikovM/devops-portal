@@ -78,7 +78,28 @@ The row version (`environment_row_version`) already includes `ttl_minutes`/`expi
 
 This mirrors the release guard. Add `EnvironmentChildExtendError(BookingError)` to `app/domain/exceptions.py`. In `ExtendBookingUseCase.execute`, the order is: `repo.get` (404) → `can_manage` (403) → **`if booking.environment_id is not None: raise EnvironmentChildExtendError("Booking belongs to environment <id>; extend the environment instead.")`** → the existing READY and permanent checks. Because the new error is a `BookingError`, the three existing booking-extend routes (HTMX `/bookings/{id}/extend`, `/api/v1/bookings/{id}/extend` and the legacy `/api/bookings/{id}/extend`) already map it to `409`, so none of them need to change. The child guard comes before the status checks, so a child is rejected for the same reason in every status. Authorization still comes first, so an unauthorized caller learns nothing about environment membership.
 
-The guard sits in the use case, not in `BookingRepository.extend`. That keeps the repository a plain writer, and the environment's own `extend_lease` doesn't go through the booking repository anyway.
+**The use-case check isn't enough on its own (PR #533 re-review).** `OrderEnvironmentUseCase` can adopt the ordering user's live standalone namespace booking through `BookingRepository.set_environment`, which commits `environment_id` and the environment's lease. `ExtendBookingUseCase` reads `environment_id` before `BookingRepository.extend` re-reads the row and writes it. So this interleaving extends a child on its own anyway:
+
+1. Extend passes the use-case check while the booking is still standalone.
+2. Adoption commits.
+3. `extend` writes a child-only lease.
+
+The guard therefore lives in two places:
+
+- **Use case (early check)**: unchanged. It keeps the order 404 → 403 → 409, so an unauthorized caller never learns about membership, and it rejects the common case without taking a lock.
+- **Write boundary (authoritative check)**: `BookingRepository.extend` locks the row with `select(BookingModel).where(id).with_for_update().execution_options(populate_existing=True)` and rechecks everything the use case checked, against the fresh row:
+  - `environment_id IS NULL`, otherwise `EnvironmentChildExtendError`;
+  - `status == READY`, otherwise `BookingError`;
+  - `ttl_minutes != 0`, otherwise `BookingError`.
+
+  Only then does it apply `extended_by`, add the audit entry and commit. If the recheck fails, it rolls back and raises, so nothing is written and no audit entry is added. Rechecking all three conditions under the lock costs nothing extra and closes the same time-of-check/time-of-use (TOCTOU) gap for a concurrent release or TTL expiry. It is one general path instead of a special case for membership.
+- **Adoption**: `set_environment` also reads its row with `FOR UPDATE` and `populate_existing`, so adoption and standalone extension both take the same booking row lock and are explicitly serialized:
+  - If adoption wins, the extension's locked re-read sees `environment_id` set and returns 409.
+  - If the extension wins, adoption's locked read waits for the extension to commit, then overwrites `ttl_minutes`/`expires_at` with the environment's lease. That is exactly the adoption semantics we already have.
+
+  These are the two orders the spec allows.
+
+`BookingRepository.extend` locks only the booking row and never asks for the environment row. It also never writes a child, because the recheck rejects children. So it can't deadlock against `EnvironmentRepository.extend_lease`, which locks the environment row first and then the children (Decision 3). The environment's own `extend_lease` writes its children directly and doesn't go through `BookingRepository.extend`, so it never hits this guard.
 
 In `booking_row.html`, the Extend form condition gains `and not booking.environment_id`. The existing `environment_managed_hint` link already appears in that menu for children. Its text changes from "release it there" to "extend or release it there".
 
@@ -91,6 +112,7 @@ In `booking_row.html`, the Extend form condition gains `and not booking.environm
 - [An extension can commit just before a user's release, so the release "wins" anyway] → This is acceptable and in the spec. It never causes inconsistency.
 - [An expired-but-not-yet-swept READY environment can still be extended, from its old deadline, which may still be in the past] → This is consistent with booking extend and with "don't reset to now". The user sees the resulting expiry. If it is still in the past, the sweep releases the stack on its next run.
 - [An API client that today extends a child through the booking endpoint will start getting `409`] → This is intended. Those extensions were already ineffective, because the stack was torn down at the parent's deadline. The 409 message names the environment, so the client can switch to `PUT /api/v1/environments/{id}/extend`. This is noted in `docs/api-reference.md`.
+- [Adoption rollback restores a lease captured before a concurrent standalone extension] → This is an existing edge case, and this change neither causes nor fixes it. The order use case reads `existing.ttl_minutes`/`expires_at` for its detach-on-rollback path before calling `set_environment`. If a standalone extension commits in between and the order then rolls back, the booking is detached with its pre-extension lease. The booking stays standalone and live, so no lease is torn down early, but the extension is lost. It is noted here so it is visible. Fixing it, by having `set_environment` return the prior lease it read under the lock, belongs in a separate change.
 - [A FAILED (partly failed) stack can't be extended] → A deliberate non-goal. It is documented in the user docs.
 
 ## Migration Plan
