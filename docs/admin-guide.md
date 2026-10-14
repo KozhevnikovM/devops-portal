@@ -1743,6 +1743,31 @@ curl -s -X PUT http://localhost:8000/api/bookings/<booking-id>/extend \
 The response is `200 OK` with updated `ttl_minutes` and `expires_at`. The `EXTENDED` action
 is recorded in the booking's audit trail.
 
+A booking that belongs to an environment can't be extended on its own: its row offers no
+**Extend** (the menu points to the environment instead) and the API answers `409` naming the
+environment. Extend the environment — see below.
+
+### Extending Environments
+
+An environment has one lease shared by the whole stack, and it is extended as a whole (#532): the
+environment and every child move to the same new expiry — the current expiry plus the chosen
+duration — without reprovisioning anything. The owner, the dispatcher who ordered it, and admins may
+extend it.
+
+**Via the UI:** on the **Environments** page, open the row's **⋮** menu, choose a duration
+(+12 h … +14 days) and click **Extend**. The row updates in place with the new expiry. If the
+extension is refused (for example the stack started releasing in the meantime) the reason is shown
+in the menu and the displayed expiry is left unchanged. The action is only offered for an
+environment that can be extended: `READY`, timed, and whose lease has already started. There is no
+"Forever" option — a timed environment never becomes permanent by extension.
+
+**Via the API:** `PUT /api/v1/environments/<environment-id>/extend` with
+`{"extend_minutes": 1440}` — see the API reference for the response and status codes.
+
+Not extendable (`409`): permanent environments, stacks still provisioning (their lease hasn't
+started — it starts once every child has settled), `FAILED` or partly released stacks, and
+released ones. Release and re-order a `FAILED` stack instead.
+
 ---
 
 ## Releasing Bookings
@@ -1847,7 +1872,9 @@ until it's promoted.
 Finds environments whose `expires_at` is in the past and that still have a live child, and releases
 all their live children together (provisioned VMs → `RELEASING` + teardown, pooled → back to the
 pool, queued → cancelled). `enforce_ttl` skips environment children, so a stack is only ever torn
-down as a unit.
+down as a unit. Before releasing anything it rechecks the expiry under the environment's row lock
+(#532), so an environment extended after the sweep picked it up is skipped, not torn down at its old
+deadline.
 
 ### `reconcile_environment_leases` — every `ENFORCE_TTL_INTERVAL_SECONDS` (default 60s)
 

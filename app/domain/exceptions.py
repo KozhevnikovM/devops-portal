@@ -30,6 +30,11 @@ class EnvironmentError(Exception):
     pass
 
 
+class InvalidExtensionError(EnvironmentError):
+    """An environment extension increment that is not a positive number of minutes, or that would
+    push the lease to the permanent sentinel or past the largest storable TTL (#532)."""
+
+
 class BlueprintNotFoundError(NotFoundError, EnvironmentError):
     pass
 
@@ -84,3 +89,7 @@ class VmConfigurationError(BookingError):
 
 class EnvironmentChildReleaseError(BookingError):
     """A booking owned by an environment was released on its own (#434) — release the environment."""
+
+
+class EnvironmentChildExtendError(BookingError):
+    """A booking owned by an environment was extended on its own (#532) — extend the environment."""

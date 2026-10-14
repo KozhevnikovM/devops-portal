@@ -156,7 +156,7 @@ def test_enforce_environment_ttl_releases_children():
     mock_repo = MagicMock()
     mock_env_repo = MagicMock()
     mock_env_repo.sync_list_expired = MagicMock(return_value=[env])
-    mock_env_repo.sync_live_children = MagicMock(return_value=children)
+    mock_env_repo.sync_live_children_if_expired = MagicMock(return_value=children)
     teardown = MagicMock()
     with (
         patch("app.tasks.beat_tasks.SyncSessionLocal") as sf,
@@ -174,6 +174,31 @@ def test_enforce_environment_ttl_releases_children():
     assert BookingStatus.RELEASING in statuses  # VM
     mock_repo.sync_promote_next_queued.assert_called()  # pooled promote
     teardown.delay.assert_called_once()  # VM teardown
+
+
+def test_enforce_environment_ttl_skips_environment_extended_after_preselection():
+    """#532: the preselection saw it expired, but the locked recheck finds it extended since."""
+    from app.tasks import beat_tasks
+
+    env = _env([_booking(ResourceType.VM, BookingStatus.READY)])
+    mock_repo = MagicMock()
+    mock_env_repo = MagicMock()
+    mock_env_repo.sync_list_expired = MagicMock(return_value=[env])
+    mock_env_repo.sync_live_children_if_expired = MagicMock(return_value=[])
+    teardown = MagicMock()
+    with (
+        patch("app.tasks.beat_tasks.SyncSessionLocal") as sf,
+        patch("app.tasks.beat_tasks.repo", mock_repo),
+        patch("app.tasks.beat_tasks.env_repo", mock_env_repo),
+        patch("app.tasks.teardown.teardown_vm_task", teardown),
+    ):
+        sf.return_value.__enter__ = MagicMock(return_value=MagicMock())
+        sf.return_value.__exit__ = MagicMock(return_value=False)
+        beat_tasks.enforce_environment_ttl()
+
+    mock_env_repo.sync_live_children_if_expired.assert_called_once()
+    mock_repo.sync_update_status.assert_not_called()
+    teardown.delay.assert_not_called()
 
 
 # ── API: DELETE /api/environments/{id} ──────────────────────────────────────────

@@ -15,6 +15,7 @@ working.
 from app.application.use_cases.book_namespace import BookNamespaceUseCase
 from app.application.use_cases.create_booking import CreateBookingUseCase
 from app.application.use_cases.extend_booking import ExtendBookingUseCase
+from app.application.use_cases.extend_environment import ExtendEnvironmentUseCase
 from app.application.use_cases.force_release_booking import ForceReleaseBookingUseCase
 from app.application.use_cases.order_environment import OrderEnvironmentUseCase
 from app.application.use_cases.release_booking import ReleaseBookingUseCase
@@ -86,3 +87,4 @@ release_environment_uc = ReleaseEnvironmentUseCase(env_repo, release_booking_uc)
 force_release_booking_uc = ForceReleaseBookingUseCase(booking_repo, dispatcher)
 update_booking_label_uc = UpdateBookingLabelUseCase(booking_repo)
 update_environment_name_uc = UpdateEnvironmentNameUseCase(env_repo)
+extend_environment_uc = ExtendEnvironmentUseCase(env_repo)

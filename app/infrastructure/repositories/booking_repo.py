@@ -32,7 +32,12 @@ from app.domain.booking_status import LIVE_STATUSES, can_transition
 from app.domain.constants import PROVISIONING_LOG_MAX_CHARS
 from app.domain.entities import Booking, BookingAuditEntry
 from app.domain.enums import BookingStatus, ResourceType
-from app.domain.exceptions import BookingNotFoundError, IllegalStatusTransitionError
+from app.domain.exceptions import (
+    BookingError,
+    BookingNotFoundError,
+    EnvironmentChildExtendError,
+    IllegalStatusTransitionError,
+)
 from app.domain.lease import Lease
 from app.domain.pagination import KeysetCursor, KeysetPage
 from app.domain.resource_details import (
@@ -132,6 +137,23 @@ def sync_environment_routing(
         if row is not None
         else None
     )
+
+
+async def apublish_children_lifecycle(
+    children: list[tuple[UUID, Routing]],
+    environment_id: UUID,
+    environment_routing_: Routing,
+) -> None:
+    """Publish a lifecycle row-changed notification per child after one commit that changed a whole
+    environment (#532). The caller captures ids and routing — the environment's included — before
+    committing, so no lookup is needed here. Best-effort, like every publish."""
+    for booking_id, booking_routing in children:
+        await apublish_row_changed(
+            booking_id=booking_id,
+            booking_routing=booking_routing,
+            environment_id=environment_id,
+            environment_routing=environment_routing_,
+        )
 
 
 async def _apublish_lifecycle(session: AsyncSession, model: BookingModel) -> None:
@@ -973,12 +995,33 @@ class BookingRepository:
         extend_minutes: int,
         actor_id: str,
     ) -> None:
+        """Extend a standalone booking's lease — the authoritative check (#532).
+
+        Locks the row and rechecks, against what it re-reads, everything ExtendBookingUseCase
+        checked earlier: standalone (an environment order may have adopted it since), READY and
+        timed. On a failed recheck it rolls back and raises; nothing is written, no audit entry.
+        """
         result = await session.execute(
-            select(BookingModel).where(BookingModel.id == booking_id)
+            select(BookingModel)
+            .where(BookingModel.id == booking_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
         )
         model = result.scalar_one_or_none()
-        if model is None:
-            raise BookingNotFoundError(booking_id)
+        try:
+            if model is None:
+                raise BookingNotFoundError(booking_id)
+            if model.environment_id is not None:
+                raise EnvironmentChildExtendError(
+                    f"Booking belongs to environment {model.environment_id}; extend the environment instead."
+                )
+            if model.status != BookingStatus.READY.value:
+                raise BookingError("can only extend READY bookings")
+            if model.ttl_minutes == 0:
+                raise BookingError("cannot extend a permanent booking")
+        except Exception:
+            await session.rollback()  # release the row lock
+            raise
         extended = Lease(model.ttl_minutes, model.expires_at).extended_by(
             extend_minutes
         )
@@ -1050,9 +1093,14 @@ class BookingRepository:
 
         Called with a live env_id to adopt a standalone booking into an environment, or with
         environment_id=None and original ttl/expires_at to detach it on rollback.
+        Locks the row (#532) so adoption serializes with a concurrent standalone extension of the
+        same booking: whichever commits second sees the other's result.
         """
         result = await session.execute(
-            select(BookingModel).where(BookingModel.id == booking_id)
+            select(BookingModel)
+            .where(BookingModel.id == booking_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
         )
         model = result.scalar_one_or_none()
         if model is None:

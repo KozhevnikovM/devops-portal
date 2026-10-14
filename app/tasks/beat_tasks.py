@@ -90,9 +90,17 @@ def enforce_environment_ttl() -> None:
     for env in expired:
         try:
             with SyncSessionLocal() as session:
-                children = env_repo.sync_live_children(session, env.id)
+                # Rechecked under the environment row lock: an extension (#532) may have committed
+                # since the preselection above, and must stop the teardown.
+                children = env_repo.sync_live_children_if_expired(session, env.id)
                 for child in children:
                     _release_child_sync(session, child, teardown_vm_task.delay)
+            if not children:
+                logger.info(
+                    "enforce_environment_ttl: environment %s has nothing to release (extended or already released)",
+                    env.id,
+                )
+                continue
             logger.info(
                 "enforce_environment_ttl: released environment %s (%d children)",
                 env.id,

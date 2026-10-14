@@ -9,6 +9,7 @@ from app.domain.enums import BookingStatus
 from app.domain.exceptions import (
     BookingError,
     BookingPermissionError,
+    EnvironmentChildExtendError,
 )
 
 
@@ -31,6 +32,13 @@ class ExtendBookingUseCase:
             owner_id=booking.user_id, created_by=booking.created_by, user=current_user
         ):
             raise BookingPermissionError("not allowed to extend this booking")
+        # An environment child shares its environment's lease (#532): extending it alone would be
+        # lost when the stack is torn down at the environment's deadline. Checked in every status;
+        # BookingRepository.extend rechecks under the row lock (adoption may race this read).
+        if booking.environment_id is not None:
+            raise EnvironmentChildExtendError(
+                f"Booking belongs to environment {booking.environment_id}; extend the environment instead."
+            )
         if booking.status != BookingStatus.READY:
             raise BookingError("can only extend READY bookings")
         if booking.ttl_minutes == 0:

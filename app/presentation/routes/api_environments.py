@@ -3,7 +3,7 @@
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.entities import Environment, User
@@ -15,6 +15,7 @@ from app.domain.exceptions import (
     EnvironmentError,
     EnvironmentItemError,
     EnvironmentNotFoundError,
+    InvalidExtensionError,
     NamespaceUnavailableError,
     NotFoundError,
     QuotaExceededError,
@@ -44,10 +45,17 @@ _book_namespace_use_case = deps.book_namespace_uc
 _order_use_case = deps.order_environment_uc
 _release_use_case = deps.release_environment_uc
 _update_name_use_case = deps.update_environment_name_uc
+_extend_use_case = deps.extend_environment_uc
 
 
 class UpdateEnvironmentRequest(BaseModel):
     name: str
+
+
+class ExtendEnvironmentRequest(BaseModel):
+    # Minutes to add to the whole stack's lease. Positive only: unlike a booking, an environment
+    # extension never makes the lease permanent (#532).
+    extend_minutes: int = Field(gt=0)
 
 
 class OrderEnvironmentRequest(BaseModel):
@@ -278,6 +286,36 @@ async def update_environment_name(
     except EnvironmentError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     return {"id": str(env.id), "name": env.name}
+
+
+@router.put("/{environment_id}/extend")
+async def extend_environment(
+    environment_id: UUID,
+    body: ExtendEnvironmentRequest,
+    session: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(require_user),
+):
+    """Extend the environment's shared lease — the environment and every child move to the same
+    new deadline (current expiry + extend_minutes). Only READY, timed environments whose lease has
+    started can be extended."""
+    try:
+        env = await _extend_use_case.execute(
+            session, environment_id, body.extend_minutes, current_user
+        )
+    except EnvironmentNotFoundError:
+        raise HTTPException(status_code=404, detail="Environment not found")
+    except BookingPermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+    except InvalidExtensionError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    except EnvironmentError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    return {
+        "id": str(env.id),
+        "status": _derived_status(env),
+        "ttl_minutes": env.ttl_minutes,
+        "expires_at": env.expires_at.isoformat(),
+    }
 
 
 @router.delete("/{environment_id}", status_code=202)

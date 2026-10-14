@@ -10,22 +10,26 @@ from app.domain.booking_status import CAN_BECOME_READY, LIVE_CHILD_STATUSES
 from app.domain.constants import PERMANENT_EXPIRES_AT
 from app.domain.entities import Environment
 from app.domain.enums import BookingStatus, ResourceType
-from app.domain.exceptions import EnvironmentNotFoundError
-from app.domain.lease import Lease, lease_can_start
+from app.domain.environment_status import derive_environment_status
+from app.domain.exceptions import EnvironmentError, EnvironmentNotFoundError
+from app.domain.lease import Lease, environment_extend_blocker, lease_can_start
 from app.domain.pagination import EnvironmentPage, KeysetCursor
 from app.infrastructure.database.models import (
     BOOKING_NOT_RELEASED,
+    BookingAuditModel,
     BookingModel,
     EnvironmentModel,
     NamespaceModel,
     StaticVMModel,
     UserModel,
 )
+from app.infrastructure.events import Routing
 from app.infrastructure.repositories._ordered_walk import _OrderedWalk
 from app.infrastructure.repositories._user_ref import user_by_ref
 from app.infrastructure.repositories.booking_repo import (
     _to_entity as _booking_to_entity,
 )
+from app.infrastructure.repositories.booking_repo import apublish_children_lifecycle
 
 # Second alias of users to resolve created_by (the dispatcher) → username, distinct from the owner.
 _CreatorUser = aliased(UserModel)
@@ -56,6 +60,14 @@ def _stamp_lease(env: EnvironmentModel, children) -> bool:
     for c in children:
         c.expires_at = deadline
     return True
+
+
+def _raise_if_not_extendable(lease: Lease, children) -> None:
+    """``EnvironmentError`` with the reason if the stack's lease can't be extended (#532)."""
+    status = derive_environment_status(BookingStatus(c.status) for c in children)
+    blocker = environment_extend_blocker(status, lease)
+    if blocker is not None:
+        raise EnvironmentError(blocker)
 
 
 def _children_stmt(environment_id: UUID):
@@ -668,8 +680,24 @@ class EnvironmentRepository:
         )
         return [_to_entity(m) for m in result.scalars().all()]
 
-    def sync_live_children(self, session: Session, environment_id: UUID):
-        """Return the still-live child bookings of an environment (for grouped teardown)."""
+    def sync_live_children_if_expired(self, session: Session, environment_id: UUID):
+        """The still-live children of an environment to tear down for TTL — or ``[]`` if it is no
+        longer expired (#532).
+
+        ``sync_list_expired`` is only a preselection: an extension may commit between it and this
+        call. So the environment row is locked (the same lock ``extend_lease`` takes) and its
+        deadline rechecked here; the lock is held until the caller's first child release commits,
+        after which an extension sees a released child and is rejected.
+        """
+        env = session.get(
+            EnvironmentModel,
+            environment_id,
+            with_for_update=True,
+            populate_existing=True,
+        )
+        if env is None or env.expires_at >= datetime.now(UTC):
+            session.rollback()  # release the row lock
+            return []
         result = session.execute(
             select(BookingModel).where(
                 BookingModel.environment_id == environment_id,
@@ -677,6 +705,80 @@ class EnvironmentRepository:
             )
         )
         return [_booking_to_entity(m) for m in result.scalars().all()]
+
+    # ── Lease extension: the whole stack moves to one new deadline (#532) ────────────────
+    async def extend_lease(
+        self,
+        session: AsyncSession,
+        environment_id: UUID,
+        extend_minutes: int,
+        actor_id: str,
+    ) -> None:
+        """Extend the environment's shared lease and every child's to one new deadline, atomically.
+
+        Locks the environment row, then its children (the lock order every env-and-children path
+        follows), and rechecks eligibility against what it re-read under those locks — a
+        concurrent release, TTL sweep or extension is therefore either seen here or waits for this
+        commit. Raises ``EnvironmentNotFoundError`` / ``EnvironmentError`` (incl.
+        ``InvalidExtensionError``) after rolling back; nothing is written then.
+        """
+        try:
+            env = await session.get(
+                EnvironmentModel,
+                environment_id,
+                with_for_update=True,
+                populate_existing=True,
+            )
+            if env is None:
+                raise EnvironmentNotFoundError(
+                    f"Environment {environment_id} not found"
+                )
+            lease = Lease(env.ttl_minutes, env.expires_at)
+            # Only an eligible stack (every child READY) has its children locked: queue promotion
+            # takes QUEUED rows FOR UPDATE SKIP LOCKED, so locking an ineligible stack's QUEUED
+            # child would make a concurrent promotion skip it and break FIFO order.
+            children = (
+                (await session.execute(_children_stmt(environment_id))).scalars().all()
+            )
+            _raise_if_not_extendable(lease, children)
+            children = (
+                (
+                    await session.execute(
+                        _children_stmt(environment_id)
+                        .order_by(BookingModel.id)
+                        .with_for_update()
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            _raise_if_not_extendable(lease, children)
+            extended = lease.extended_within_term_by(extend_minutes)
+            for target in (env, *children):
+                target.ttl_minutes = extended.ttl_minutes
+                target.expires_at = extended.expires_at
+            for c in children:
+                session.add(
+                    BookingAuditModel(
+                        booking_id=c.id,
+                        actor_id=actor_id,
+                        action="EXTENDED",
+                        extra={
+                            "extend_minutes": extend_minutes,
+                            "environment_id": str(environment_id),
+                        },
+                    )
+                )
+            published = [
+                (c.id, Routing(owner_id=c.user_id, created_by=c.created_by))
+                for c in children
+            ]
+            env_routing = Routing(owner_id=env.user_id, created_by=env.created_by)
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
+        await apublish_children_lifecycle(published, environment_id, env_routing)
 
     # ── Lease start: whole-stack TTL begins once every child has settled (#223, #434) ────
     # Every path locks the environment row first (SELECT … FOR UPDATE) and only then reads the

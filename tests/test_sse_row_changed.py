@@ -402,15 +402,18 @@ async def test_extend_publishes(mock_row_changed_publish, env_lookup):
     from app.infrastructure.repositories.booking_repo import BookingRepository
 
     _, async_mock = mock_row_changed_publish
-    env_id = uuid4()
-    model = _model(environment_id=env_id, ttl_minutes=60, expires_at=datetime.now(UTC))
+    # Only a standalone READY booking can be extended on its own (#532) — an environment child's
+    # lease moves with its environment's, which publishes per child (test_extend_environment_*).
+    model = _model(
+        status=BookingStatus.READY.value, ttl_minutes=60, expires_at=datetime.now(UTC)
+    )
     session = AsyncMock()
     session.add = MagicMock()
     session.execute = AsyncMock(return_value=_scalar_result(model))
 
     await BookingRepository().extend(session, model.id, 30, actor_id="u1")
 
-    async_mock.assert_awaited_once_with(**_lifecycle(model.id, env_id, ENV_ROUTING))
+    async_mock.assert_awaited_once_with(**_lifecycle(model.id))
 
 
 @pytest.mark.asyncio

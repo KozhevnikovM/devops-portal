@@ -8,3 +8,7 @@ PERMANENT_EXPIRES_AT = datetime(9999, 12, 31, 23, 59, 59, tzinfo=UTC)
 # batching (#444) reuses it as the hard bound on buffered log text and on the status message a
 # progress line sets.
 PROVISIONING_LOG_MAX_CHARS = 50_000
+
+# Largest lease TTL the database can hold: ttl_minutes is a 32-bit INTEGER column. An extension
+# that would exceed it is rejected as invalid input rather than failing on write (#532).
+MAX_TTL_MINUTES = 2**31 - 1

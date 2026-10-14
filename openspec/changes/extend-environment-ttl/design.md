@@ -36,7 +36,7 @@ The increment check sits next to it as `Lease.extended_by_positive(minutes)`, or
 
 The method runs in one transaction:
 1. `session.get(EnvironmentModel, id, with_for_update=True, populate_existing=True)`. Missing → `EnvironmentNotFoundError`.
-2. Lock and re-read the children: `_children_stmt(id).with_for_update()`, ordered by `id`.
+2. Read the children without a lock and check eligibility. If the stack isn't eligible, roll back and raise. Only if it is eligible, lock and re-read them with `_children_stmt(id).with_for_update()`, ordered by `id` (see the task 2.4 finding under Decision 3).
 3. Recheck eligibility with the domain function, using the fresh statuses and the fresh `Lease(env.ttl_minutes, env.expires_at)`. If it is blocked, roll back and raise `EnvironmentError`.
 4. Compute `new = Lease(env.ttl_minutes, env.expires_at).extended_by(n)` once, after the validation in Decision 1. Write `new.ttl_minutes` and `new.expires_at` to the env and to **every** child. When eligible, every child is READY because the derived status is READY, so "relevant children" means all of them. This matches `_stamp_lease`, which also writes the deadline to every child.
 5. Add one `BookingAuditModel(action="EXTENDED", actor_id, extra={"extend_minutes": n, "environment_id": str(id)})` per child.
@@ -54,6 +54,16 @@ The use case does the authorization check (`can_manage`) and a fast pre-check of
 Every path that locks both the environment row and child rows SHALL take the environment row first. `_stamp_lease` already does this, and `extend_lease` and the new sweep recheck follow the same order. Release updates child rows without holding the environment lock, so its row-level `UPDATE` waits for an in-flight extension and then proceeds. This is the "extension then release" outcome in the spec. Once a child has been committed as RELEASING/RELEASED, an extension sees a non-READY derived status and returns `409`.
 
 Implementation check (task 2.4): confirm that no release path holds a child row lock while it waits for the environment row lock in the same transaction. That would be the only way to deadlock against `extend_lease`.
+
+**Finding (task 2.4).** No such path exists:
+- Release and the TTL sweep update each child with `update_status`/`sync_update_status`. Each update is its own commit, and neither takes the environment lock.
+- The provision task, the stale reaper and lease reconciliation start the lease in their own short `_run` transaction, after the child's status commit.
+- `promote_next_queued`/`sync_promote_next_queued` commit the promotion *before* calling `start_lease_if_ready` ("lock order, #434 D3").
+- `set_environment` (adoption) and `BookingRepository.extend` lock only a booking row and never ask for the environment row.
+
+So the only path that locks both is env → children, as used by `_stamp_lease`, `extend_lease` and `sync_live_children_if_expired`.
+
+The audit did surface one interaction. Promotion selects the oldest QUEUED booking with `FOR UPDATE SKIP LOCKED`. If `extend_lease` locked the children of an *ineligible* stack, for example one with a still-QUEUED namespace child, a promotion running at that moment would skip that child and promote a younger booking, breaking FIFO order. `extend_lease` therefore checks eligibility on an unlocked read first and locks the children only when the stack looks eligible. An eligible stack has every child READY, so it has no QUEUED rows for promotion to skip. It then rechecks under the locks.
 
 ### 4. Sweep recheck: `sync_live_children_if_expired(session, environment_id)`
 

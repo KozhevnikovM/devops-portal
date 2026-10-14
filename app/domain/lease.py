@@ -3,8 +3,9 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 from app.domain.booking_status import CAN_BECOME_READY
-from app.domain.constants import PERMANENT_EXPIRES_AT
+from app.domain.constants import MAX_TTL_MINUTES, PERMANENT_EXPIRES_AT
 from app.domain.enums import BookingStatus
+from app.domain.exceptions import InvalidExtensionError
 
 
 @dataclass(frozen=True)
@@ -48,6 +49,28 @@ class Lease:
             self.ttl_minutes + minutes, self.expires_at + timedelta(minutes=minutes)
         )
 
+    def extended_within_term_by(self, minutes: int) -> "Lease":
+        """A timed lease pushed out by a positive ``minutes`` — never made permanent (#532).
+
+        Unlike ``extended_by`` (whose ``0 → permanent`` is the standalone booking "Forever"
+        option), this rejects a nonpositive increment, and any result whose expiry would reach the
+        permanent sentinel or whose TTL would not fit the database, with ``InvalidExtensionError``.
+        """
+        if minutes <= 0:
+            raise InvalidExtensionError(
+                "extend_minutes must be a positive number of minutes"
+            )
+        try:
+            expires_at = self.expires_at + timedelta(minutes=minutes)
+        except OverflowError:  # past datetime.max
+            expires_at = PERMANENT_EXPIRES_AT
+        if (
+            expires_at >= PERMANENT_EXPIRES_AT
+            or self.ttl_minutes + minutes > MAX_TTL_MINUTES
+        ):
+            raise InvalidExtensionError("extend_minutes is too large")
+        return Lease(self.ttl_minutes + minutes, expires_at)
+
 
 def lease_can_start(statuses: Iterable[BookingStatus]) -> bool:
     """Whether an environment's shared lease may start, given its children's statuses (#434).
@@ -60,3 +83,19 @@ def lease_can_start(statuses: Iterable[BookingStatus]) -> bool:
     return not any(s in CAN_BECOME_READY for s in statuses) and any(
         s == BookingStatus.READY for s in statuses
     )
+
+
+def environment_extend_blocker(status: BookingStatus, lease: Lease) -> str | None:
+    """Why an environment can't have its shared lease extended, or ``None`` if it can (#532).
+
+    ``status`` is the environment's derived status. Only a READY, timed stack whose lease has
+    already started may be extended — a still-pending lease has no deadline to push out yet, and a
+    FAILED / partly released / RELEASED stack is not extended (matching the READY-only booking rule).
+    """
+    if lease.is_permanent:
+        return "cannot extend a permanent environment"
+    if status != BookingStatus.READY:
+        return "can only extend READY environments"
+    if lease.expires_at == PERMANENT_EXPIRES_AT:
+        return "the environment's lease has not started yet"
+    return None

@@ -85,6 +85,30 @@
                     </button>
                 </form>
                 <div class="border-t border-gray-800"></div>
+                {# Extends the whole stack's shared lease (#532). No "Forever": an environment
+                   extension never makes the lease permanent. #}
+                {% if environment.can_extend %}
+                <form
+                    hx-put="/environments/{{ environment.id }}/extend"
+                    hx-target="closest tr"
+                    hx-swap="outerHTML"
+                    class="flex items-center gap-1 px-3 py-2"
+                >
+                    <select name="extend_minutes" class="flex-1 text-xs px-1 py-1 rounded bg-gray-700 text-gray-300 border border-gray-600">
+                        <option value="720">+12 h</option>
+                        <option value="1440">+24 h</option>
+                        <option value="2880">+2 days</option>
+                        <option value="5760">+4 days</option>
+                        <option value="10080">+7 days</option>
+                        <option value="20160">+14 days</option>
+                    </select>
+                    <button type="submit" class="text-xs px-2 py-1 rounded bg-blue-900 text-blue-300 border border-blue-700 hover:bg-blue-800 transition-colors">
+                        Extend
+                    </button>
+                </form>
+                <div id="environment-{{ environment.id }}-extend-error" class="px-3"></div>
+                <div class="border-t border-gray-800"></div>
+                {% endif %}
                 <button
                     class="w-full text-left px-3 py-2 text-sm text-red-400 hover:bg-gray-800 transition-colors"
                     hx-delete="/environments/{{ environment.id }}"

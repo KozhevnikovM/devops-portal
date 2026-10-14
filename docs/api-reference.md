@@ -726,7 +726,11 @@ Permanent bookings (`ttl_minutes == 0`) cannot be extended.
 - `200 OK` — TTL extended. Returns the updated booking JSON.
 - `403 Forbidden` — caller is not the booking owner.
 - `404 Not Found` — booking does not exist.
-- `409 Conflict` — booking is not `READY`, or booking is permanent (`ttl_minutes == 0`).
+- `409 Conflict` — booking is not `READY`, or booking is permanent (`ttl_minutes == 0`), or the
+  booking belongs to an environment (#532). An environment child shares its environment's lease, so
+  it can't be extended on its own — in any status, including with `extend_minutes: 0` ("Forever").
+  The `detail` names the environment (`Booking belongs to environment <id>; extend the environment
+  instead.`); use [`PUT /api/environments/{id}/extend`](#put-apienvironmentsidextend) instead.
 
 **JSON response body (200):**
 ```json
@@ -1498,6 +1502,44 @@ action on the Environments page).
 
 ---
 
+### `PUT /api/environments/{id}/extend`
+
+Extend an environment's shared lease without reprovisioning anything (#532). The environment **and
+every child booking** move to the same new deadline in one transaction: the *current* expiry plus
+`extend_minutes` (never reset to now + TTL), and `ttl_minutes` grows by the same amount. Each child
+gets an `EXTENDED` entry in its audit trail (actor, `extend_minutes`, `environment_id`).
+
+**Auth:** owner, the creating dispatcher, or admin — same rule as release. Authorization is checked
+first, so a caller without access always gets `403`, whatever the environment's state.
+
+**JSON body:** `{"extend_minutes": <positive integer>}`.
+
+**Responses:**
+
+| Status | When |
+|---|---|
+| `200` | Extended. Body: `{"id", "status", "ttl_minutes", "expires_at"}` (`status` is the derived status) |
+| `403` | Caller may not manage the environment |
+| `404` | Environment does not exist |
+| `422` | `extend_minutes` missing, not an integer, zero or negative, or so large the lease would reach the permanent sentinel / overflow the stored TTL. An environment extension never makes the lease permanent — there is no "Forever" |
+| `409` | Not eligible: the environment is permanent (`ttl_minutes == 0`), still provisioning or its lease hasn't started yet, `FAILED` / partly released, or `RELEASED` |
+
+```bash
+curl -s -X PUT http://localhost:8000/api/v1/environments/<environment-id>/extend \
+     -H "Content-Type: application/json" \
+     -H "Authorization: Bearer dp_<api_key>" \
+     -d '{"extend_minutes": 1440}' | python3 -m json.tool
+# { "id": "…", "status": "READY", "ttl_minutes": 1680, "expires_at": "2026-10-16T15:06:42+00:00" }
+```
+
+Concurrent extensions add up (the second extends from the deadline the first produced). An extension
+that commits before TTL enforcement reaches the environment stops the teardown; once enforcement or a
+release has started tearing the stack down, an extension gets `409`. Also available as an HTMX
+fragment at `PUT /environments/{id}/extend` (the **⋮ → Extend** action on the Environments page),
+which shows a rejection inline in the row instead of returning an error status.
+
+---
+
 ### `DELETE /api/environments/{id}`
 
 Release a whole environment — tears down **all** its child resources together (provisioned VMs →
@@ -1521,7 +1563,7 @@ DELETE /api/environments/{id}?on_behalf_of=alice
 | Dispatcher, wrong owner username | `403` |
 
 > **Browser UI:** the **Environments** page (`GET /environments`, in the top nav) lets users order a
-> blueprint, watch the stack come up (live row updates), and release it — the same operations as the JSON
+> blueprint, watch the stack come up (live row updates), extend and release it — the same operations as the JSON
 > API above. It accepts the same `filter`/`show_released`/`label` query params as the bookings page
 > (see `GET /` above). Without `show_released`, an environment is hidden only when it is fully released —
 > it has at least one child and every child is `RELEASED`. Environments with no children, or with any
