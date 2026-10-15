@@ -13,7 +13,8 @@
 
 - [ ] 3.1 Extend the Playwright harness to booking rows inside a genuinely overflowing bookings table: first row, last row, narrow viewport scrolled horizontally to Actions, and a short viewport where the menu scrolls internally to Release; verify the tests pass in Chromium (or record an explicit real-browser acceptance check if Playwright is unavailable).
 - [ ] 3.2 Cover each menu variant (READY, FAILED, QUEUED, admin PROVISIONING), Escape/outside-click dismissal, the label-save form and an `hx-confirm` action from inside the popover; verify in the same browser tests.
-- [ ] 3.3 Cover a row swap (SSE/reconcile/filter change) while a booking menu is open: no orphaned popover and listener counts return to zero; verify with the existing listener instrumentation.
+- [ ] 3.3 Submit the booking Extend form (`hx-put="/bookings/{id}/extend"`, `hx-target="closest tr"`) from inside the open popover with a real HTMX request: assert the request is sent with the selected `extend_minutes`, the row is replaced with the extended expiry, no orphaned popover remains and the new row's menu opens again; verify in the browser tests.
+- [ ] 3.4 Cover row swaps while a booking menu is open, using the existing listener instrumentation to assert no orphaned popover and listener/observer counts back at zero in every case: (a) an SSE/reconcile replacement that still offers actions — then reopen the replacement row's menu; (b) a filter change that removes the booking from the list — assert no trigger for it remains; (c) a status change to `RELEASED` — assert the replacement row has no menu trigger and no reopen is attempted.
 
 ## 4. Verification
 

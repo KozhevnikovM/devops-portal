@@ -25,8 +25,9 @@ See `proposal.md` for the reported behavior. `/book/vm` and `/book/namespace` bo
 ## Risks / Trade-offs
 
 - [Renaming the script breaks a cached `environment_menu.js` reference] → Rename in `base.html` and the Dockerfile in the same change; static assets are build artifacts, so no stale copy ships.
-- [A form inside a popover (label input, extend select) loses focus or submits oddly] → Same pattern already works for the environment rename/extend forms; cover label save and extend in the browser test.
+- [A form inside a popover (label input, extend select) loses focus or submits oddly] → Same pattern already works for the environment rename/extend forms; cover label save and a real HTMX Extend submission (request sent, `closest tr` replaced) in the browser test.
 - [`hx-confirm` dialog opened from inside a popover] → Native `confirm()` doesn't light-dismiss the popover before the request is sent; verify Release/Delete/Cancel in the browser test.
+- [A swap removes the row, or leaves it without actions, while its menu is open] → The controller's MutationObserver disposes the menu and its listeners whenever the popover leaves the page; the focus hand-back already no-ops when no replacement trigger exists. Tests assert disposal in every case and reopen only when the replacement row still has a trigger.
 - [Popover API support] → Same browser baseline as #538; no extra fallback.
 
 ## Migration Plan

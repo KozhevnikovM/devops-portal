@@ -29,9 +29,15 @@ When a user opens a booking row's action menu on the Virtual Machines or Namespa
 - **WHEN** a booking action menu is open and the user presses Escape or clicks outside it
 - **THEN** the menu closes
 
-#### Scenario: Live row update while the menu is open
-- **WHEN** a booking row's action menu is open and the row is replaced by a live update, a page reconciliation or a filter change
-- **THEN** no orphaned menu remains on screen and the replaced row's menu can be opened again
+#### Scenario: Row replaced while the menu is open
+- **WHEN** a booking row's action menu is open and the row is replaced by a live update or a page reconciliation, and the replacement row still offers actions to that user
+- **THEN** no orphaned menu remains on screen
+- **AND** the replacement row's action menu can be opened and behaves as required above
+
+#### Scenario: Row or menu removed while the menu is open
+- **WHEN** a booking row's action menu is open and a filter change removes the booking from the list, or a status change leaves the replacement row with no actions for that user (for example after it becomes `RELEASED`)
+- **THEN** no orphaned menu remains on screen and nothing of the closed menu keeps reacting to scrolling or resizing
+- **AND** the replacement row, if any, shows no action menu trigger
 
 #### Scenario: Menu keeps permission gating
 - **WHEN** a user opens a booking row's action menu
