@@ -22,12 +22,20 @@ Every pull request targeting `main` SHALL produce a CI check named `browser-test
 
 ### Requirement: The Docker smoke test verifies page assets are served
 
-The `docker-smoke-test` check SHALL, in addition to its existing probes, fetch a server-rendered HTML page from the running production container and request every same-origin script and stylesheet that page references. The check SHALL fail if any of them is not served with HTTP 200.
+The `docker-smoke-test` check SHALL, in addition to its existing probes, sign in to the running production container as its seeded administrator. It SHALL fetch at least one authenticated page built on the shared page layout, the Environments page and a bookings page, plus the login page. It SHALL request every same-origin script and stylesheet those pages reference, and fail, naming the asset, if any is not served with HTTP 200. The check SHALL also include a negative step: with the row-menu script removed from the running container, both the asset check and the readiness probe fail.
 
 #### Scenario: A referenced script is missing from the image
-- **WHEN** a template references `/static/js/<name>.js` and the production image does not contain that file
+- **WHEN** the shared page layout references `/static/js/<name>.js` and the production image does not contain that file
 - **THEN** the `docker-smoke-test` check fails and names the missing asset
 
+#### Scenario: Assets of authenticated pages are checked
+- **WHEN** the smoke test runs against a correctly built image
+- **THEN** it has requested every same-origin script and stylesheet referenced by the authenticated Environments page, a bookings page and the login page, and each returned HTTP 200
+
+#### Scenario: Negative check detects a removed row-menu script
+- **WHEN** the smoke test removes the row-menu script from the running container and re-runs the asset check and readiness probe
+- **THEN** both fail and name the removed script, and the smoke test treats that as the expected outcome
+
 #### Scenario: All referenced assets are served
-- **WHEN** every script and stylesheet referenced by the rendered page is present in the image
+- **WHEN** every script and stylesheet referenced by the checked pages is present in the image
 - **THEN** the asset step of the `docker-smoke-test` check succeeds
