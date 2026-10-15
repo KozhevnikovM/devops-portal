@@ -1,3 +1,4 @@
+{%- from "partials/row_menu.html" import row_menu -%}
 {#- An environment child's lifecycle belongs to its environment (#434): its row never offers the
     ordinary release actions (Release / Cancel / admin Delete — all DELETE /bookings/{id} → 409),
     only a pointer to the environment, which is released as a whole. -#}
@@ -14,6 +15,9 @@
     (data-row-version / data-live). Every row carries its list key, which page reconciliation
     reads from the first displayed row to tell whether newer bookings exist. -#}
 {% set live = live_class(booking.status) %}
+{#- One ⋮ menu per row (partials/row_menu.html, #542); the row shows at most one of the variants below. -#}
+{% set menu_id = "booking-" ~ booking.id ~ "-menu" %}
+{% set menu_label = "Actions for booking " ~ (booking.id | string | truncate(8, True, '')) %}
 <tr
     id="booking-{{ booking.id }}"
     class="border-b border-gray-800 last:border-0 hover:bg-gray-800/40 transition-colors"
@@ -130,9 +134,7 @@
             or (booking.created_by and booking.created_by == (current_user.id | string)) %}
         {% if booking.status.value in ('READY', 'FAILED') %}
             {% if can_manage %}
-                <details class="relative">
-                    <summary class="list-none cursor-pointer w-7 h-7 flex items-center justify-center rounded text-gray-400 hover:text-gray-200 hover:bg-gray-700 transition-colors select-none text-lg leading-none">⋮</summary>
-                    <div class="absolute right-0 {% if is_first_row is defined and is_first_row %}top-full mt-1{% else %}bottom-full mb-1{% endif %} w-48 bg-gray-900 border border-gray-700 rounded shadow-lg z-50 py-1">
+                {% call row_menu(menu_id, menu_label) %}
                         <form
                             hx-patch="/bookings/{{ booking.id }}/label"
                             hx-target="closest tr"
@@ -206,15 +208,12 @@
                             Force release
                         </button>
                         {% endif %}
-                    </div>
-                </details>
+                {% endcall %}
             {% else %}
                 <span class="text-gray-600">—</span>
             {% endif %}
         {% elif booking.status.value in ('PENDING', 'PROVISIONING', 'RETRY') and current_user.role == 'admin' %}
-            <details class="relative">
-                <summary class="list-none cursor-pointer w-7 h-7 flex items-center justify-center rounded text-gray-400 hover:text-gray-200 hover:bg-gray-700 transition-colors select-none text-lg leading-none">⋮</summary>
-                <div class="absolute right-0 {% if is_first_row is defined and is_first_row %}top-full mt-1{% else %}bottom-full mb-1{% endif %} w-48 bg-gray-900 border border-gray-700 rounded shadow-lg z-50 py-1">
+            {% call row_menu(menu_id, menu_label) %}
                     {% if booking.environment_id %}
                     {{ environment_managed_hint(booking) }}
                     {% else %}
@@ -228,13 +227,10 @@
                         Delete
                     </button>
                     {% endif %}
-                </div>
-            </details>
+            {% endcall %}
         {% elif booking.status.value == 'QUEUED' %}
             {% if can_manage %}
-                <details class="relative">
-                    <summary class="list-none cursor-pointer w-7 h-7 flex items-center justify-center rounded text-gray-400 hover:text-gray-200 hover:bg-gray-700 transition-colors select-none text-lg leading-none">⋮</summary>
-                    <div class="absolute right-0 {% if is_first_row is defined and is_first_row %}top-full mt-1{% else %}bottom-full mb-1{% endif %} w-48 bg-gray-900 border border-gray-700 rounded shadow-lg z-50 py-1">
+                {% call row_menu(menu_id, menu_label) %}
                         <form
                             hx-patch="/bookings/{{ booking.id }}/label"
                             hx-target="closest tr"
@@ -265,8 +261,7 @@
                             Cancel
                         </button>
                         {% endif %}
-                    </div>
-                </details>
+                {% endcall %}
             {% else %}
                 <span class="text-gray-600">—</span>
             {% endif %}

@@ -1,0 +1,26 @@
+{#- The ⋮ row action menu shared by environment and booking rows (#538, #542). A native popover
+    renders in the top layer, so the table's overflow-x-auto wrapper can't clip it; row_menu.js
+    positions it from its trigger, and the CSS anchor in base.html keeps it beside the trigger if
+    that script doesn't load. It stays inside the row in the DOM, so `closest tr` targets and row
+    swaps behave as before. `menu_id` must be unique on the page; the caller supplies the contents.
+-#}
+{% macro row_menu(menu_id, label) -%}
+<button
+    type="button"
+    id="{{ menu_id }}-trigger"
+    popovertarget="{{ menu_id }}"
+    aria-label="{{ label }}"
+    data-row-menu-trigger
+    style="anchor-name: --{{ menu_id }}"
+    class="cursor-pointer w-7 h-7 flex items-center justify-center rounded text-gray-400 hover:text-gray-200 hover:bg-gray-700 transition-colors select-none text-lg leading-none"
+>⋮</button>
+<div
+    id="{{ menu_id }}"
+    popover
+    data-row-menu
+    style="position-anchor: --{{ menu_id }}"
+    class="w-48 bg-gray-900 border border-gray-700 rounded shadow-lg px-0 py-1 overflow-y-auto"
+>
+{{ caller() }}
+</div>
+{%- endmacro %}

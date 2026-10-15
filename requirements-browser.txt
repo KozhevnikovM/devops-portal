@@ -1,0 +1,3 @@
+# Real-browser regression tests (#542): `pytest -m browser`, run by the browser-tests CI job.
+# Install on top of requirements-dev.txt, then `playwright install chromium`.
+playwright==1.62.0

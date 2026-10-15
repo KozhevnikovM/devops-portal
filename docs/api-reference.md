@@ -44,11 +44,20 @@ Postgres or Redis had a transient blip.
 
 ### `GET /health/ready`
 
-Readiness probe. Pings Postgres (`SELECT 1`) and Redis (`PING`), each with a 2s timeout.
+Readiness probe. Pings Postgres (`SELECT 1`) and Redis (`PING`), each with a 2s timeout, then
+checks that every script and stylesheet the page templates reference (`/static/….js`/`.css`)
+exists in the static directory the app serves (#542). The asset check is re-evaluated on every
+call, so template or asset changes made while the app keeps running are reflected immediately.
 
-- `200 OK` — `{"status": "ok"}` — both dependencies reachable.
+- `200 OK` — `{"status": "ok", "static_assets": "ok"}` — both dependencies reachable and every
+  referenced asset present.
 - `503 Service Unavailable` — `{"status": "unavailable", "detail": "<postgres|redis> unreachable"}`
   — one dependency didn't respond in time.
+- `503 Service Unavailable` — `{"status": "unavailable", "detail": "static assets missing: …",
+  "missing_static_assets": ["/static/js/…"]}` — the templates reference files the static
+  directory lacks. Under compose this means the `portal_static` volume is older than the
+  templates; see "Static assets: the `portal_static` volume" in `docs/admin-guide.md`. The
+  check is existence-only: changed content under an unchanged filename is not detected.
 
 Not wired into any container's `healthcheck:` block — for manual ops checks or a future load
 balancer, not liveness/restart decisions.

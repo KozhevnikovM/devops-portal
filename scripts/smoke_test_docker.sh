@@ -6,7 +6,8 @@ set -euo pipefail
 # network with container DNS names (keeping backing services isolated from host interfaces
 # and avoiding Docker Desktop host-network issues), builds the production Dockerfile,
 # applies Alembic migrations, runs uvicorn with loopback-only published port 8000, and
-# verifies liveness and readiness endpoints.
+# verifies liveness and readiness endpoints, then that every script/stylesheet the pages
+# reference is served (scripts/check_page_assets.py, #542).
 
 TIMESTAMP="$(date +%s)"
 RAND_ID="${RANDOM:-$$}"
@@ -218,5 +219,23 @@ if [ "${READY_OK}" != "true" ]; then
     exit 1
 fi
 echo "Readiness probe succeeded: ${READY_BODY}"
+
+# #542: every script and stylesheet the pages reference must be in the image and served —
+# a missing one silently broke the row action menus. Checks authenticated base.html pages.
+echo "==> Checking that every page's scripts and stylesheets are served..."
+if ! python3 scripts/check_page_assets.py --base-url http://127.0.0.1:8000 --password smoke-test-admin; then
+    dump_logs
+    exit 1
+fi
+
+# Negative check: with the row-menu script removed from the running container (no restart),
+# both the asset check and readiness must fail and name it.
+echo "==> Negative check: removing app/static/js/row_menu.js from the running container..."
+docker exec -u root "${APP_CONTAINER}" rm app/static/js/row_menu.js
+if ! python3 scripts/check_page_assets.py --base-url http://127.0.0.1:8000 --password smoke-test-admin \
+        --expect-missing /static/js/row_menu.js; then
+    dump_logs
+    exit 1
+fi
 
 echo "==> Production Docker smoke test passed successfully!"

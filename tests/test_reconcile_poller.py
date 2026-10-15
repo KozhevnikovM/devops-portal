@@ -157,13 +157,15 @@ def test_pages_load_the_reconcile_script(client, repos, page):
 
 
 def test_image_ships_the_reconcile_script():
+    """The image ships every frontend/js script (#542): the frontend stage runs `build:static`,
+    which copies frontend/js/*.js into app/static/js, and the image copies that whole tree."""
+    import json
     from pathlib import Path
 
-    dockerfile = (Path(__file__).parent.parent / "Dockerfile").read_text()
-    assert (
-        "COPY --from=frontend /build/dist/js/row_reconcile.js app/static/js/row_reconcile.js"
-        in dockerfile
-    )
-    assert (
-        Path(__file__).parent.parent / "frontend" / "js" / "row_reconcile.js"
-    ).is_file()
+    root = Path(__file__).parent.parent
+    dockerfile = (root / "Dockerfile").read_text()
+    assert "RUN npm run build:static" in dockerfile
+    assert "COPY --from=frontend /build/app/static/ app/static/" in dockerfile
+    build = json.loads((root / "package.json").read_text())["scripts"]["build:static"]
+    assert "cp frontend/js/*.js app/static/js/" in build
+    assert (root / "frontend" / "js" / "row_reconcile.js").is_file()

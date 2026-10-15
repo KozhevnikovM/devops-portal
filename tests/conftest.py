@@ -8,6 +8,9 @@ import pytest
 
 from app.domain.entities import User
 
+# Real-browser test selection and the REQUIRE_BROWSER_TESTS=1 mode (#542).
+pytest_plugins = ("tests.browser_plugin",)
+
 
 def make_fake_user() -> User:
     """Return a fake regular user for use in dependency overrides."""

@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Run pip-audit against requirements.txt using baseline ignored vulnerabilities."""
+"""Run pip-audit against the declared requirements using baseline ignored vulnerabilities.
+
+Audits requirements.txt (the application) and requirements-browser.txt (the pinned Playwright
+used by the browser-tests CI job, #542).
+"""
 
 import subprocess
 import sys
@@ -7,7 +11,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 BASELINE_FILE = ROOT / ".pip-audit-baseline.txt"
-REQUIREMENTS_FILE = ROOT / "requirements.txt"
+REQUIREMENTS_FILES = (ROOT / "requirements.txt", ROOT / "requirements-browser.txt")
 
 
 def load_baseline(path: Path) -> list[str]:
@@ -33,8 +37,7 @@ def main() -> int:
         "-m",
         "pip_audit",
         *ignore_args,
-        "-r",
-        str(REQUIREMENTS_FILE),
+        *(arg for path in REQUIREMENTS_FILES for arg in ("-r", str(path))),
     ]
     if len(sys.argv) > 1:
         cmd.extend(sys.argv[1:])

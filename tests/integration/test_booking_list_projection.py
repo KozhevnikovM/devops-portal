@@ -3,8 +3,8 @@
 The list reads derive `has_provisioning_log`, the ordered `config_role_names` and (#478)
 `has_credentials` in SQL — never returning a raw credential value — and a row
 rendered from the list is semantically equal to the same booking's `GET /bookings/{id}/row`
-rendering (spec: "List row matches the refreshed row"). Byte equality is not the contract — the
-list passes `is_first_row`, which only moves the first row's action menu — so rows are compared
+rendering (spec: "List row matches the refreshed row"). The action menu markup no longer depends
+on the row's position (#542), but byte equality is still not the contract, so rows are compared
 through a summary of their visible text and actions, ignoring `class`.
 """
 

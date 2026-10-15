@@ -39,9 +39,10 @@ jobs:
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             git fetch origin ${{ github.base_ref }} --depth=1 || true
-            FILES=$(git diff --name-only origin/${{ github.base_ref }}...HEAD -- '*.py' | tr '\n' ' ')
+            # --diff-filter=d: a deleted file can't be linted (ruff would fail with E902).
+            FILES=$(git diff --name-only --diff-filter=d origin/${{ github.base_ref }}...HEAD -- '*.py' | tr '\n' ' ')
           else
-            FILES=$(git diff --name-only HEAD~1...HEAD -- '*.py' 2>/dev/null | tr '\n' ' ' || true)
+            FILES=$(git diff --name-only --diff-filter=d HEAD~1...HEAD -- '*.py' 2>/dev/null | tr '\n' ' ' || true)
           fi
           echo "files=$FILES" >> "$GITHUB_OUTPUT"
           echo "Touched Python files: $FILES"

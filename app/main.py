@@ -1,6 +1,7 @@
 import asyncio
 import logging
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 import redis.asyncio as aioredis
 from fastapi import FastAPI
@@ -16,6 +17,7 @@ from app.infrastructure.logging_config import configure_logging
 from app.infrastructure.passwords import hash_password_blocking, shutdown_executor
 from app.infrastructure.repositories.booking_repo import BookingRepository
 from app.infrastructure.repositories.user_repo import UserRepository
+from app.infrastructure.static_assets import StaticAssetCheck
 from app.presentation.middleware.correlation_id import CorrelationIdMiddleware
 from app.presentation.middleware.csrf_origin import CSRFOriginMiddleware
 from app.presentation.routes.admin import router as admin_router
@@ -50,6 +52,7 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    _static_assets.check()  # logs any referenced script/stylesheet the static dir lacks (#542)
     _seed_admin_user()
     refresher = await _start_environment_child_limit(app)
     _recover_in_progress_bookings()
@@ -246,9 +249,18 @@ async def _check_redis() -> None:
         await r.aclose()
 
 
+# Every script/stylesheet the templates reference must exist in the served static directory
+# (#542). Evaluated per readiness call, since template edits under the dev bind mount go live
+# without a restart; see app/infrastructure/static_assets.py.
+_static_assets = StaticAssetCheck(
+    Path("app/presentation/templates"), Path("app/static")
+)
+
+
 @app.get("/health/ready", tags=["platform"], summary="Readiness probe")
 async def health_ready():
-    """Pings Postgres and Redis with a short timeout each (#371 F-4).
+    """Pings Postgres and Redis with a short timeout each (#371 F-4), then checks that every
+    script and stylesheet the page templates reference is served (#542).
 
     Not wired into any container's `healthcheck:` block — this is for manual ops checks /
     a future load balancer, kept deliberately separate from the plain liveness probe above so
@@ -264,4 +276,14 @@ async def health_ready():
                 content={"status": "unavailable", "detail": f"{name} unreachable"},
             )
 
-    return {"status": "ok"}
+    missing = await asyncio.to_thread(_static_assets.check)
+    if missing:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": "unavailable",
+                "detail": f"static assets missing: {', '.join(missing)}",
+                "missing_static_assets": missing,
+            },
+        )
+    return {"status": "ok", "static_assets": "ok"}

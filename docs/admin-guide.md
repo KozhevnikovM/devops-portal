@@ -221,6 +221,33 @@ docker compose -f docker-compose.prod.yml up -d
 
 The `init` service (runs migrations on startup) and the shared `portal_static` volume behave the same in both files.
 
+### Static assets: the `portal_static` volume
+
+The app serves `app/static/` (CSS and every `/static/js/*.js` script) from the named
+`portal_static` volume, not from the image or the bind mount. Only the one-shot `init` service
+fills it, by copying `app/static/` from **its own image** (`scripts/init_static.sh`) on every
+`up`. The copy is additive: files from older builds stay, so during a blue-green cutover the slot
+still running the previous build keeps the files its templates reference. `init` fails, and the
+services that depend on it don't start, if the copy doesn't match its image.
+
+`init`, the app service(s), worker and beat all use one image, tagged `${PORTAL_IMAGE}`
+(default `devops-portal:local` for `docker-compose.yml`, `devops-portal:prod` for
+`docker-compose.prod.yml`). Rebuilding any one of them refreshes the image `init` copies from,
+and Compose re-runs `init` on the next `up` because its image changed.
+
+**After changing frontend scripts or templates under compose, run `docker compose up --build`.**
+With the dev bind mount, template edits go live immediately, but the scripts and CSS they
+reference only reach the browser through a rebuilt image and `init`. A plain `docker compose up`
+reuses the old image, so templates can reference a script the volume never received. #542's row
+action menus opened in the middle of the screen for exactly this reason.
+
+That skew is not silent: `GET /health/ready` returns `503` naming the missing files (see
+`docs/api-reference.md`), and the app logs an ERROR naming them at startup and whenever the set
+changes. The check is evaluated on every readiness call, so a template edited while the app keeps
+running is caught too. It checks that each referenced file **exists**; it does not detect a script
+whose content changed while its filename stayed the same. `docker compose up --build` is the
+refresh path for that case as well.
+
 `docker-compose.prod.yml`'s app tier is actually two services, `app_blue` and `app_green`
 (identical apart from name, host port, and an `APP_SLOT` env var) — see "Blue-green deployment"
 below for what that's for. A plain `docker compose -f docker-compose.prod.yml up -d` brings up
@@ -235,6 +262,20 @@ The fast pull-request gate runs without external services:
 ```bash
 pytest tests/ -m "not integration"
 ```
+
+**Browser tests** (`browser` marker; the row action menus in real Chromium, #542) are deselected
+from that run and only run when selected. They need the static assets built and Playwright
+installed:
+
+```bash
+npm ci && npm run build:static
+pip install -r requirements-browser.txt && python -m playwright install chromium
+pytest tests/ -m browser
+```
+
+Locally they skip if Playwright, Chromium or the built assets are missing. The `browser-tests`
+GitHub Actions check (`.github/workflows/browser-tests.yml`) runs the same command with
+`REQUIRE_BROWSER_TESTS=1`, which turns any skip into a failure.
 
 The PostgreSQL integration gate uses a separate database and an explicit marker, so it does not
 run the Redis-backed integration test. Start a PostgreSQL 15 instance, then configure both the
@@ -268,7 +309,7 @@ does live traffic move over — the old slot keeps serving until the new one has
 2. Builds and starts the **inactive** slot's `app_<slot>` service only (plus `init`, since
    migrations always need to run first) — the active slot's container is never touched.
 3. Polls the inactive slot's own port at `GET /health/ready` (Postgres + Redis dependency
-   checks, not just liveness) until it returns 200, bounded by `blue_green_health_timeout`
+   checks and the static-asset check, not just liveness) until it returns 200, bounded by `blue_green_health_timeout`
    (default 120s). **If it times out, the playbook fails the run** — live traffic never moves,
    the old slot keeps serving, and the half-started new slot is left running for you to inspect.
 4. Writes the new `active_slot` marker and renders `{{ deploy_dir }}/nginx/active_slot.conf`

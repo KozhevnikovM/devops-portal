@@ -1,5 +1,8 @@
 {
   "private": true,
+  "scripts": {
+    "build:static": "mkdir -p app/static/css app/static/js && tailwindcss -i tailwind.input.css -o app/static/css/tailwind.css --minify && cp node_modules/htmx.org/dist/htmx.min.js app/static/js/htmx.min.js && cp node_modules/htmx.org/dist/ext/sse.js app/static/js/htmx-sse.js && cp frontend/js/*.js app/static/js/"
+  },
   "devDependencies": {
     "tailwindcss": "^3.4.0"
   },

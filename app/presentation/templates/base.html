@@ -28,13 +28,20 @@
       .kv-add:hover { color: #6ee7b7; }
       .kv-notice { margin-top: .375rem; font-size: .75rem; color: #fbbf24; }
       .kv-editor textarea.kv-raw { width: 100%; }
+      /* Row action menus (partials/row_menu.html, #542). Replace the UA popover's centred
+         placement with CSS anchoring to the ⋮ trigger (the macro sets the per-row anchor names),
+         flipping above near the bottom edge. row_menu.js overrides this inline with exact
+         viewport coordinates; this rule is what keeps the menu beside its trigger if that script
+         doesn't load. Kept out of Tailwind so purge can't drop it. */
+      [data-row-menu] { margin: 0; inset: auto; position-area: block-end span-inline-start;
+                position-try-fallbacks: flip-block; }
     </style>
     <script src="/static/js/htmx.min.js"></script>
     <script src="/static/js/htmx-sse.js"></script>
     <script src="/static/js/ansible_vars_editor.js"></script>
     <script src="/static/js/row_reconcile.js"></script>
     <script src="/static/js/environment_deployment.js"></script>
-    <script src="/static/js/environment_menu.js"></script>
+    <script src="/static/js/row_menu.js"></script>
     <script>
       (function () {
         // Close any open <details> dropdown (⋮ row menu, ☰ nav) when clicking outside it.

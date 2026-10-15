@@ -2,6 +2,7 @@
 
 from unittest.mock import AsyncMock, patch
 
+import pytest
 from fastapi.testclient import TestClient
 
 
@@ -82,6 +83,13 @@ def test_health_omits_slot_when_app_slot_unset():
 # ── GET /health/ready (#371 F-4) ──────────────────────────────────────────────
 
 
+@pytest.fixture(autouse=True)
+def _static_assets_served(monkeypatch):
+    """The fast suite runs without a built app/static; readiness's asset check (#542) is covered
+    on its own in tests/test_static_assets_readiness.py."""
+    monkeypatch.setattr("app.main._static_assets.check", list)
+
+
 def _mock_session_ctx():
     """A mock async context manager whose __aenter__ resolves to a session with .execute()."""
     mock_session = AsyncMock()
@@ -104,7 +112,7 @@ def test_health_ready_returns_200_when_postgres_and_redis_reachable():
         resp = _client().get("/health/ready")
 
     assert resp.status_code == 200
-    assert resp.json() == {"status": "ok"}
+    assert resp.json() == {"status": "ok", "static_assets": "ok"}
 
 
 def test_health_ready_returns_503_when_postgres_unreachable():
@@ -143,10 +151,9 @@ def test_health_ready_returns_503_when_redis_times_out():
     """A hung dependency must not hang the readiness check itself — asyncio.wait_for enforces
     the timeout, which surfaces here as a TimeoutError (treated the same as any other
     unreachable-dependency exception)."""
-    import asyncio
 
     async def _hang_ping():
-        raise asyncio.TimeoutError()
+        raise TimeoutError()
 
     mock_redis = AsyncMock()
     mock_redis.ping = _hang_ping
