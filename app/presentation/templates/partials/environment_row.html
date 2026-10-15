@@ -52,6 +52,7 @@
             {% endfor %}
         </div>
     </td>
+    {% include "partials/environment_deployment.html" %}
     <td class="px-4 py-3 text-gray-300 text-sm">
         {{ environment.owner_username or '—' }}
         {% if environment.created_by_username %}

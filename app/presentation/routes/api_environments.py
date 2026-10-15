@@ -1,11 +1,13 @@
 """JSON API for ordering and viewing environments (a stack of child bookings)."""
 
+from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.deployment import DeploymentReport
 from app.domain.entities import Environment, User
 from app.domain.enums import ResourceType
 from app.domain.environment_status import derive_environment_status
@@ -46,6 +48,27 @@ _order_use_case = deps.order_environment_uc
 _release_use_case = deps.release_environment_uc
 _update_name_use_case = deps.update_environment_name_uc
 _extend_use_case = deps.extend_environment_uc
+_update_deployment_use_case = deps.update_environment_deployment_uc
+
+
+class UpdateEnvironmentDeploymentRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    deployment_ref: str = Field(min_length=1, max_length=512)
+    deployment_commit: str = Field(
+        min_length=40, max_length=64, pattern=r"^(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})$"
+    )
+    deployment_status: Literal["DEPLOYING", "SUCCESS", "FAILED"]
+    deployment_frontend_url: str = Field(min_length=1, max_length=2048)
+    deployment_admin_url: str = Field(min_length=1, max_length=2048)
+
+    @model_validator(mode="after")
+    def validate_report(self):
+        self.to_report()
+        return self
+
+    def to_report(self) -> DeploymentReport:
+        return DeploymentReport(**self.model_dump())
 
 
 class UpdateEnvironmentRequest(BaseModel):
@@ -89,6 +112,14 @@ def _serialize(env: Environment) -> dict:
         "ttl_minutes": env.ttl_minutes,
         "expires_at": env.expires_at.isoformat(),
         "created_at": env.created_at.isoformat(),
+        "deployment_ref": env.deployment_ref,
+        "deployment_commit": env.deployment_commit,
+        "deployment_status": env.deployment_status,
+        "deployment_frontend_url": env.deployment_frontend_url,
+        "deployment_admin_url": env.deployment_admin_url,
+        "deployment_updated_at": env.deployment_updated_at.isoformat()
+        if env.deployment_updated_at
+        else None,
         "bookings": [
             {
                 "id": str(b.id),
@@ -266,6 +297,27 @@ async def get_environment(
         env = await _env_repo.get(session, environment_id)
     except NotFoundError:
         raise HTTPException(status_code=404, detail="Environment not found")
+    return _serialize(env)
+
+
+@router.patch("/{environment_id}/deployment-info")
+async def update_environment_deployment(
+    environment_id: UUID,
+    body: UpdateEnvironmentDeploymentRequest,
+    session: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(require_user),
+):
+    """Replace all Jenkins deployment fields; owner, creating dispatcher or admin only."""
+    try:
+        env = await _update_deployment_use_case.execute(
+            session, environment_id, body.to_report(), current_user
+        )
+    except EnvironmentNotFoundError:
+        raise HTTPException(status_code=404, detail="Environment not found")
+    except BookingPermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+    except EnvironmentError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
     return _serialize(env)
 
 

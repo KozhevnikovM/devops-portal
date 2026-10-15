@@ -1770,6 +1770,164 @@ released ones. Release and re-order a `FAILED` stack instead.
 
 ---
 
+## Environment Deployment Reports
+
+Jenkins can publish the current application revision through
+`PATCH /api/v1/environments/<environment-id>/deployment-info` (legacy alias:
+`PATCH /api/environments/<environment-id>/deployment-info`). This records information only;
+it neither deploys software nor changes the environment's infrastructure status, lease or resources.
+An application `FAILED` report can therefore appear on a `READY` environment.
+
+All six fields (`deployment_ref`, `deployment_commit`, `deployment_status`,
+`deployment_frontend_url`, `deployment_admin_url`, `deployment_updated_at`) are null before the
+first report, including on environments that existed before the upgrade. List/get/creation and
+namespace-lookup JSON responses expose them on both API mounts without changing read permissions.
+Every report replaces all five writable fields atomically; the portal generates the UTC acceptance
+timestamp. No deployment history, manual notes or browser editing is available.
+
+### Reading the Deployment column
+
+On **Environments**, the read-only **Deployment** column sits between **Resources** and **Owner**.
+It shows the ref, a separate seven-character commit hash, application status/local update time,
+and **Frontend ↗** / **Admin ↗** links. Those links open the exact supplied URLs in protected new
+tabs. Long refs truncate; activate the report button with mouse or keyboard to see the full ref,
+commit, status, both URLs and full date/time in your profile timezone. Escape or an outside click
+closes the overlay and returns focus. Row refreshes close an open report; reopen it for fresh data.
+The panel stays within the viewport while the table retains horizontal scrolling.
+
+Before the first report the cell reads **No deployment information**, without service links.
+Released environments retain the report; enable the existing released-row filter to see them.
+Their disclosure reads **Last report (released environment)**. Further reports receive `409`.
+Reports refresh through existing SSE and bounded reconciliation, including rows added with
+**Load more**. A missed event converges under the existing rotating batch schedule, so a report
+on a later appended page is not guaranteed to refresh within a single 60-second cycle.
+
+### CI identity and payload
+
+Use a dedicated CI user and store its API key as a Jenkins **Secret text** credential. The key
+inherits that user's existing privileges: it is not a deployment-only token. The user must own the
+environment or be the dispatcher who created it for the owner; existing admin access also works
+but is unnecessary. Merely finding a UUID through namespace lookup grants no write permission.
+Do not use a shared admin key to work around ownership. Existing API authentication rules apply.
+
+Each request requires five non-null strings, with no extra fields or caller timestamp:
+
+| Field | Accepted value |
+|-------|----------------|
+| `deployment_ref` | 1–512 characters, at least one non-whitespace character, no controls |
+| `deployment_commit` | Full hexadecimal SHA-1 (40 characters) or SHA-256 (64) |
+| `deployment_status` | Exactly `DEPLOYING`, `SUCCESS` or `FAILED` |
+| `deployment_frontend_url`, `deployment_admin_url` | Each at most 2048 characters, absolute HTTP(S) with host, no embedded credentials, whitespace or controls; valid ports and no unsafe literal `\`, `<`, `>` or `"` |
+
+Accepted strings are preserved, including URL paths, queries and fragments. The portal does not
+fetch these URLs. Never include credentials, tokens or other secrets in refs or URLs. Unknown,
+partial, null, non-string and invalid fields return `422` without changing the saved report or
+timestamp. Successful writes return `200` with the environment JSON; unauthorized management
+returns `403`, a missing environment `404`, and fully released environments `409`.
+Management authorization is checked before lifecycle conflict disclosure.
+
+### Jenkins reporting example
+
+This illustrative Pipeline fragment requires Jenkins Credentials Binding and Lockable Resources,
+plus `curl` and `python3` on the agent. It documents integration; it does not install or implement
+a Jenkins job. Substitute your existing deployment command for `./deploy-existing.sh`.
+Set `PORTAL_URL` to the portal base URL (including its reverse-proxy prefix if any), `NAMESPACE`
+and `CLUSTER` to the target, `DEPLOY_REF` to the exact source ref, and both service URL variables
+to their actual destinations. Checkout and deployment must use the same captured commit.
+
+```groovy
+// Within an allocated node/workspace; PORTAL_URL has no trailing slash.
+withCredentials([string(credentialsId: 'portal-ci-api-key', variable: 'PORTAL_KEY')]) {
+    // Always disambiguate the namespace with its cluster. Lookup is read-only.
+    def environmentId = sh(returnStdout: true, script: '''
+        set +x
+        encoded_ns=$(python3 -c 'import os,urllib.parse; print(urllib.parse.quote(os.environ["NAMESPACE"], safe=""))')
+        curl --fail --silent --show-error --get \
+          "$PORTAL_URL/api/environments/by-namespace/$encoded_ns" \
+          --data-urlencode "cluster=$CLUSTER" \
+          -H "Authorization: Bearer $PORTAL_KEY" -o environment.json
+        python3 -c 'import json,uuid; print(uuid.UUID(json.load(open("environment.json"))["id"]))'
+    ''').trim()
+    withEnv(["ENVIRONMENT_ID=${environmentId}"]) {
+        // Use this SAME global resource key in every job targeting this environment.
+        lock(resource: "portal-environment-${environmentId}") {
+            checkout scm
+            def commit = sh(returnStdout: true, script: 'git rev-parse HEAD').trim()
+            withEnv(["DEPLOY_COMMIT=${commit}"]) {
+                def report = { state ->
+                    withEnv(["REPORT_STATUS=${state}"]) {
+                        sh '''
+                            set +x
+                            python3 - <<'PY'
+import json, os
+payload = {
+    "deployment_ref": os.environ["DEPLOY_REF"],
+    "deployment_commit": os.environ["DEPLOY_COMMIT"],
+    "deployment_status": os.environ["REPORT_STATUS"],
+    "deployment_frontend_url": os.environ["FRONTEND_URL"],
+    "deployment_admin_url": os.environ["ADMIN_URL"],
+}
+with open("deployment-report.json", "w") as output:
+    json.dump(payload, output)
+PY
+                            curl --fail --silent --show-error -X PATCH \
+                              "$PORTAL_URL/api/v1/environments/$ENVIRONMENT_ID/deployment-info" \
+                              -H "Authorization: Bearer $PORTAL_KEY" \
+                              -H 'Content-Type: application/json' \
+                              --data-binary @deployment-report.json -o deployment-response.json
+                        '''
+                    }
+                }
+                report('DEPLOYING') // Abort before deployment if publishing fails.
+                try {
+                    sh './deploy-existing.sh' // Existing synchronous deployment of this checkout.
+                } catch (deploymentFailure) {
+                    report('FAILED') // Full five-field payload; still inside the same lock.
+                    throw deploymentFailure
+                }
+                report('SUCCESS') // Full five-field payload, including BOTH exact service URLs.
+            }
+        }
+    }
+}
+```
+
+The lock covers checkout, `DEPLOYING`, the entire deployment and `SUCCESS`/`FAILED`, across all
+jobs targeting the UUID. A per-job `disableConcurrentBuilds` option alone does not serialize other
+jobs using the same environment. For multiple Jenkins controllers, provide one shared external
+serialization mechanism; controller-local locks are insufficient.
+
+Do not publish in an unlocked `post`, `finally`, asynchronous callback or background process.
+Cancel/join deployment work and suppress obsolete callbacks **before releasing the lock**, including
+on timeouts/aborts. A superseded build must never report after a newer deployment. Keep any retry
+within that same authoritative deployment sequence; do not replay an old report later. Ensure the
+real deployment command is synchronous and honors cancellation; the fragment cannot impose that
+on an external deployment system. The portal cannot infer Jenkins build precedence from a commit
+or receipt timestamp: it displays the last accepted complete report. If reporting fails, surface
+the failure in Jenkins and investigate; do not reinterpret a failed SUCCESS report as a failed
+deployment. Keep shell tracing off and do not echo keys, payloads or response files into logs.
+
+### Production rollout and rollback
+
+1. Keep Jenkins reporting disabled while upgrading. Apply additive migration `0037` before the
+   new application. It adds six nullable columns without defaults, backfill, report indexes or
+   synthetic timestamps. Existing data and new environments remain unreported. The migration uses
+   a five-second lock timeout: if a busy production table prevents acquisition, retry in a suitable
+   window rather than allowing an indefinite migration wait.
+2. Deploy the new application and workers; verify existing pages, API consumers and migrations.
+   **Drain or replace every old app and Celery worker process, including in-flight release work,
+   before enabling reporting.** All release-completion writers must use the shared parent lock.
+   Nullable columns permit old readers/writers during schema rollout, but mixed-version processes
+   are not safe for reporting/release races.
+3. Bind the dedicated authorized CI key, verify namespace-plus-cluster discovery, configure
+   serialization for the whole deployment/report sequence, then enable Jenkins reporting.
+4. For application rollback, **stop Jenkins reports first**, then deploy the previous portal
+   version. Leave the additive columns and saved reports intact. A destructive schema downgrade
+   is optional only after all new readers/writers have stopped and report data loss is accepted;
+   column removal is not part of routine rollback.
+
+---
+
 ## Releasing Bookings
 
 A `READY` (or `FAILED`) booking can be released manually via the UI or the API.

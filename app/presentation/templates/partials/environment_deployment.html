@@ -1,0 +1,37 @@
+{# Read-only Jenkins report; autoescaped template content is cloned into a detached overlay. #}
+<td class="px-4 py-3 text-xs text-gray-300">
+    {% if environment.deployment_ref %}
+    {% set report_status = environment.deployment_status.value if environment.deployment_status.value is defined else environment.deployment_status %}
+    <button type="button" id="deployment-trigger-{{ environment.id }}" data-deployment-trigger
+            aria-expanded="false" aria-controls="deployment-panel-{{ environment.id }}"
+            aria-label="Deployment details for {{ environment.name }}"
+            class="block text-left rounded hover:text-gray-100 focus:outline-none focus:ring-1 focus:ring-gray-500">
+        <span class="block font-mono truncate max-w-[12rem]">{{ environment.deployment_ref }}</span>
+        <span class="block font-mono">{{ environment.deployment_commit[:7] }}</span>
+        <span class="block">{{ report_status }} · <span class="text-[10px] text-gray-500">{{ (environment.deployment_updated_at | as_tz(current_user.timezone))[0:16] }}</span></span>
+    </button>
+    <div class="flex gap-2 mt-1">
+        <a href="{{ environment.deployment_frontend_url }}" target="_blank" rel="noopener noreferrer"
+           aria-label="Frontend for {{ environment.name }} (opens in a new tab)" class="text-gray-400 hover:text-gray-200">Frontend ↗</a>
+        <a href="{{ environment.deployment_admin_url }}" target="_blank" rel="noopener noreferrer"
+           aria-label="Admin for {{ environment.name }} (opens in a new tab)" class="text-gray-400 hover:text-gray-200">Admin ↗</a>
+    </div>
+    <template data-deployment-template>
+        <div id="deployment-panel-{{ environment.id }}" role="region" tabindex="-1" aria-label="Deployment report for {{ environment.name }}"
+             class="bg-gray-900 border border-gray-700 rounded shadow-lg p-4 text-xs text-gray-300 space-y-2"
+             style="position:fixed;z-index:100;overflow:auto;overflow-wrap:anywhere;width:28rem;box-sizing:border-box">
+            <p class="font-semibold">{% if environment.derived_status == 'RELEASED' %}Last report (released environment){% else %}Deployment report{% endif %}</p>
+            <dl class="space-y-2">
+                <div><dt class="text-gray-500">Ref</dt><dd class="font-mono">{{ environment.deployment_ref }}</dd></div>
+                <div><dt class="text-gray-500">Commit</dt><dd class="font-mono">{{ environment.deployment_commit }}</dd></div>
+                <div><dt class="text-gray-500">Deployment status</dt><dd>{{ report_status }}</dd></div>
+                <div><dt class="text-gray-500">Updated</dt><dd>{{ environment.deployment_updated_at | as_tz(current_user.timezone) }}</dd></div>
+                <div><dt class="text-gray-500">Frontend</dt><dd><a href="{{ environment.deployment_frontend_url }}" target="_blank" rel="noopener noreferrer" aria-label="Frontend for {{ environment.name }} (opens in a new tab)" class="underline">{{ environment.deployment_frontend_url }}</a></dd></div>
+                <div><dt class="text-gray-500">Admin</dt><dd><a href="{{ environment.deployment_admin_url }}" target="_blank" rel="noopener noreferrer" aria-label="Admin for {{ environment.name }} (opens in a new tab)" class="underline">{{ environment.deployment_admin_url }}</a></dd></div>
+            </dl>
+        </div>
+    </template>
+    {% else %}
+    <span class="text-gray-500">No deployment information</span>
+    {% endif %}
+</td>

@@ -28,6 +28,7 @@ environment child's lifecycle notification whose environment routing couldn't be
 subscriber also listens on it, which keeps publishers running pre-#443 code reaching new tabs
 during a rolling deploy.
 """
+
 import json
 import logging
 import threading
@@ -52,6 +53,7 @@ ADMIN_CHANNEL = "portal:row-changed:admin"
 def user_channel(user_id: UUID | str) -> str:
     return f"portal:row-changed:user:{user_id}"
 
+
 _sync_redis: redis_lib.Redis | None = None
 _async_redis: aioredis.Redis | None = None
 
@@ -70,8 +72,10 @@ def _get_sync_redis() -> redis_lib.Redis:
     global _sync_redis
     if _sync_redis is None:
         _sync_redis = redis_lib.Redis.from_url(
-            settings.REDIS_URL, decode_responses=True,
-            socket_connect_timeout=_CONNECT_TIMEOUT, socket_timeout=_CONNECT_TIMEOUT,
+            settings.REDIS_URL,
+            decode_responses=True,
+            socket_connect_timeout=_CONNECT_TIMEOUT,
+            socket_timeout=_CONNECT_TIMEOUT,
         )
     return _sync_redis
 
@@ -85,8 +89,10 @@ def get_async_redis() -> aioredis.Redis:
     global _async_redis
     if _async_redis is None:
         _async_redis = aioredis.from_url(
-            settings.REDIS_URL, decode_responses=True,
-            socket_connect_timeout=_CONNECT_TIMEOUT, socket_timeout=_CONNECT_TIMEOUT,
+            settings.REDIS_URL,
+            decode_responses=True,
+            socket_connect_timeout=_CONNECT_TIMEOUT,
+            socket_timeout=_CONNECT_TIMEOUT,
         )
     return _async_redis
 
@@ -117,12 +123,16 @@ def _payload(
         "environment_id": str(environment_id) if environment_id else None,
         "kind": kind,
         "owner_id": str(booking_routing.owner_id),
-        "created_by": str(booking_routing.created_by) if booking_routing.created_by else None,
+        "created_by": str(booking_routing.created_by)
+        if booking_routing.created_by
+        else None,
     }
     if environment_routing is not None:
         payload["environment_owner_id"] = str(environment_routing.owner_id)
         payload["environment_created_by"] = (
-            str(environment_routing.created_by) if environment_routing.created_by else None
+            str(environment_routing.created_by)
+            if environment_routing.created_by
+            else None
         )
     return json.dumps(payload)
 
@@ -147,7 +157,9 @@ def recipient_channels(
         routings.append(environment_routing)
     user_ids = [uid for r in routings for uid in (r.owner_id, r.created_by) if uid]
     # dict.fromkeys: dedupe, keeping order (owner first).
-    return [user_channel(uid) for uid in dict.fromkeys(str(uid) for uid in user_ids)] + [ADMIN_CHANNEL]
+    return [
+        user_channel(uid) for uid in dict.fromkeys(str(uid) for uid in user_ids)
+    ] + [ADMIN_CHANNEL]
 
 
 def _queue_publishes(
@@ -160,8 +172,12 @@ def _queue_publishes(
 ) -> Any:
     """Queue one PUBLISH per recipient channel on a sync or async pipeline, so a notification is a
     single round trip. Non-transactional: these are invalidation signals, atomicity buys nothing."""
-    data = _payload(booking_id, environment_id, kind, booking_routing, environment_routing)
-    for channel in recipient_channels(kind, booking_routing, environment_id, environment_routing):
+    data = _payload(
+        booking_id, environment_id, kind, booking_routing, environment_routing
+    )
+    for channel in recipient_channels(
+        kind, booking_routing, environment_id, environment_routing
+    ):
         pipe.publish(channel, data)
     return pipe
 
@@ -176,10 +192,16 @@ def _sync_publish(
     try:
         _queue_publishes(
             _get_sync_redis().pipeline(transaction=False),
-            booking_id, environment_id, kind, booking_routing, environment_routing,
+            booking_id,
+            environment_id,
+            kind,
+            booking_routing,
+            environment_routing,
         ).execute()
     except Exception:
-        logger.exception("Failed to publish row-changed event for booking %s", booking_id)
+        logger.exception(
+            "Failed to publish row-changed event for booking %s", booking_id
+        )
 
 
 class Timer(Protocol):
@@ -203,8 +225,12 @@ class _Entry:
         self.context = context
         self.pending = False
         self.timer: Timer | None = None
-        self.in_flight = False  # a publish for this booking is running (never more than one)
-        self.cancelled = False  # a lifecycle cancel() arrived while that publish was in flight
+        self.in_flight = (
+            False  # a publish for this booking is running (never more than one)
+        )
+        self.cancelled = (
+            False  # a lifecycle cancel() arrived while that publish was in flight
+        )
 
 
 class ProgressCoalescer:
@@ -319,7 +345,9 @@ class ProgressCoalescer:
                     # Can't open the window: forget the booking so its next line is a leading
                     # edge again, rather than leaving a timer-less entry that swallows it.
                     del self._entries[key]
-                    logger.exception("Failed to arm progress coalescing timer for booking %s", key)
+                    logger.exception(
+                        "Failed to arm progress coalescing timer for booking %s", key
+                    )
                 return
 
     def _on_window_closed(self, key: str, entry: _Entry) -> None:
@@ -349,7 +377,9 @@ def _get_coalescer() -> ProgressCoalescer | None:
         if _coalescer is None:
             _coalescer = ProgressCoalescer(
                 settings.SSE_PROGRESS_COALESCE_MS / 1000,
-                lambda booking_id, context: _sync_publish(booking_id, context[0], "progress", context[1]),
+                lambda booking_id, context: _sync_publish(
+                    booking_id, context[0], "progress", context[1]
+                ),
             )
         return _coalescer
 
@@ -373,7 +403,9 @@ def publish_row_changed(
     coalescer = _coalescer
     if coalescer is not None:
         coalescer.cancel(booking_id)
-    _sync_publish(booking_id, environment_id, "lifecycle", booking_routing, environment_routing)
+    _sync_publish(
+        booking_id, environment_id, "lifecycle", booking_routing, environment_routing
+    )
 
 
 def publish_progress_changed(
@@ -414,7 +446,41 @@ async def apublish_row_changed(
     try:
         await _queue_publishes(
             get_async_redis().pipeline(transaction=False),
-            booking_id, environment_id, "lifecycle", booking_routing, environment_routing,
+            booking_id,
+            environment_id,
+            "lifecycle",
+            booking_routing,
+            environment_routing,
         ).execute()
     except Exception:
-        logger.exception("Failed to publish row-changed event for booking %s", booking_id)
+        logger.exception(
+            "Failed to publish row-changed event for booking %s", booking_id
+        )
+
+
+async def apublish_environment_changed(
+    *, environment_id: UUID, routing: Routing
+) -> None:
+    """Environment-only invalidation with the same scoped routing as child lifecycle events."""
+    payload = json.dumps(
+        {
+            "booking_id": None,
+            "environment_id": str(environment_id),
+            "kind": "lifecycle",
+            "environment_owner_id": str(routing.owner_id),
+            "environment_created_by": str(routing.created_by)
+            if routing.created_by
+            else None,
+        }
+    )
+    try:
+        pipe = get_async_redis().pipeline(transaction=False)
+        for channel in recipient_channels(
+            "lifecycle", routing, environment_id, routing
+        ):
+            pipe.publish(channel, payload)
+        await pipe.execute()
+    except Exception:
+        logger.exception(
+            "Failed to publish row-changed event for environment %s", environment_id
+        )
