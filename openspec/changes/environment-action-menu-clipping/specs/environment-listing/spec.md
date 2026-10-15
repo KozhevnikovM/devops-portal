@@ -12,6 +12,10 @@ When a user opens an environment row's action menu, every action available to th
 - **WHEN** a user opens an environment action menu on a row near any edge of the horizontally scrollable table
 - **THEN** the menu remains visible and operable without requiring the user to scroll the table to reveal clipped menu content
 
+#### Scenario: Menu is taller than a short viewport
+- **WHEN** a user opens an environment action menu whose full height exceeds the available viewport height
+- **THEN** the menu is bounded to the available viewport height and scrolls internally so every permitted action, including Release, remains reachable
+
 #### Scenario: Menu keeps permission gating
 - **WHEN** a user opens an environment row action menu
 - **THEN** the menu contains only actions that user is permitted to perform for that environment
