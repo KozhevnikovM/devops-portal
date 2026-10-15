@@ -17,8 +17,9 @@ never sets `is_first_row`, so `is_first_row is defined` is False there and behav
 `bottom-full`, unchanged — exactly as it was meant to for the `loop`-based guard, just now
 actually working for the list-render case too.
 """
+
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
@@ -32,7 +33,7 @@ _MENU_RE = re.compile(r'class="absolute right-0 (top-full mt-1|bottom-full mb-1)
 
 
 def _make_booking(user_id: str, owner_username: str) -> Booking:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     return Booking(
         id=uuid4(),
         user_id=user_id,
@@ -51,9 +52,9 @@ def _make_booking(user_id: str, owner_username: str) -> Booking:
 
 
 def _client(fake_user):
-    from app.main import app
     from app.infrastructure.auth import require_user
     from app.infrastructure.database.session import get_async_session
+    from app.main import app
 
     session_mock = AsyncMock()
     app.dependency_overrides[get_async_session] = lambda: session_mock
@@ -71,12 +72,14 @@ def test_first_row_opens_downward_others_upward():
     b1 = _make_booking(str(fake_user.id), fake_user.username)
     b2 = _make_booking(str(fake_user.id), fake_user.username)
 
-    with patch("app.presentation.routes.bookings._repo") as mock_repo, \
-         patch("app.presentation.routes.bookings._image_repo") as mock_img, \
-         patch("app.presentation.routes.bookings._hw_config_repo") as mock_hw, \
-         patch("app.presentation.routes.bookings._namespace_repo") as mock_ns, \
-         patch("app.presentation.routes.bookings._static_vm_repo") as mock_svm, \
-         patch("app.presentation.routes.bookings._role_repo") as mock_role:
+    with (
+        patch("app.presentation.routes.bookings._repo") as mock_repo,
+        patch("app.presentation.routes.bookings._image_repo") as mock_img,
+        patch("app.presentation.routes.bookings._hw_config_repo") as mock_hw,
+        patch("app.presentation.routes.bookings._namespace_repo") as mock_ns,
+        patch("app.presentation.routes.bookings._static_vm_repo") as mock_svm,
+        patch("app.presentation.routes.bookings._role_repo") as mock_role,
+    ):
         mock_repo.list_page = AsyncMock(return_value=KeysetPage(items=[b1, b2]))
         mock_img.list_active = AsyncMock(return_value=[])
         mock_hw.list_active = AsyncMock(return_value=[])
@@ -115,20 +118,39 @@ def test_standalone_row_poll_keeps_bottom_full_no_500():
     assert matches == ["bottom-full mb-1"]
 
 
-# ── Environments page — identical bug/fix, same include structure ────────────
+# ── Environments page — superseded by a top-layer popover (#538) ─────────────
+# The environment menu no longer picks a side in the template: it is a native popover that
+# environment_menu.js places from the trigger at runtime (see test_environment_menu_browser.py),
+# so neither the list render nor a standalone row render may emit the in-cell absolute menu.
+
 
 def _make_environment(owner_username: str) -> Environment:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     return Environment(
-        id=uuid4(), name="dev-stack", blueprint_name="dev-stack", user_id=uuid4(),
-        ttl_minutes=240, expires_at=now + timedelta(minutes=240), created_at=now,
-        bookings=[], owner_username=owner_username,
+        id=uuid4(),
+        name="dev-stack",
+        blueprint_name="dev-stack",
+        user_id=uuid4(),
+        ttl_minutes=240,
+        expires_at=now + timedelta(minutes=240),
+        created_at=now,
+        bookings=[],
+        owner_username=owner_username,
     )
 
 
-def test_first_environment_row_opens_downward_others_upward():
-    from tests.conftest import make_fake_admin
+def _assert_popover_menus(html: str, environments) -> None:
+    assert _MENU_RE.findall(html) == []
+    for environment in environments:
+        menu_id = f"environment-{environment.id}-menu"
+        assert f'popovertarget="{menu_id}"' in html
+        assert re.search(rf'id="{menu_id}"\s+popover\b', html)
+
+
+def test_environment_list_rows_render_popover_menus():
     from fastapi.testclient import TestClient
+
+    from tests.conftest import make_fake_admin
 
     admin = make_fake_admin()
     app, _ = _client(admin)
@@ -136,9 +158,11 @@ def test_first_environment_row_opens_downward_others_upward():
     e1 = _make_environment(admin.username)
     e2 = _make_environment(admin.username)
 
-    with patch("app.presentation.routes.environments._env_repo") as mock_er, \
-         patch("app.presentation.routes.environments._blueprint_repo") as mock_br, \
-         patch("app.presentation.routes.environments._namespace_repo") as mock_ns:
+    with (
+        patch("app.presentation.routes.environments._env_repo") as mock_er,
+        patch("app.presentation.routes.environments._blueprint_repo") as mock_br,
+        patch("app.presentation.routes.environments._namespace_repo") as mock_ns,
+    ):
         mock_er.list_page = AsyncMock(return_value=EnvironmentPage(items=[e1, e2]))
         mock_br.list_active = AsyncMock(return_value=[])
         mock_ns.list_available = AsyncMock(return_value=[])
@@ -148,15 +172,14 @@ def test_first_environment_row_opens_downward_others_upward():
     app.dependency_overrides.clear()
 
     assert resp.status_code == 200
-    matches = _MENU_RE.findall(resp.text)
-    assert len(matches) == 2, f"expected exactly 2 action menus, found {matches}"
-    assert matches[0] == "top-full mt-1"
-    assert matches[1] == "bottom-full mb-1"
+    _assert_popover_menus(resp.text, [e1, e2])
+    assert '<script src="/static/js/environment_menu.js"></script>' in resp.text
 
 
-def test_standalone_environment_row_poll_keeps_bottom_full_no_500():
-    from tests.conftest import make_fake_admin
+def test_standalone_environment_row_renders_popover_menu_no_500():
     from fastapi.testclient import TestClient
+
+    from tests.conftest import make_fake_admin
 
     admin = make_fake_admin()
     app, _ = _client(admin)
@@ -170,5 +193,4 @@ def test_standalone_environment_row_poll_keeps_bottom_full_no_500():
     app.dependency_overrides.clear()
 
     assert resp.status_code == 200
-    matches = _MENU_RE.findall(resp.text)
-    assert matches == ["bottom-full mb-1"]
+    _assert_popover_menus(resp.text, [environment])

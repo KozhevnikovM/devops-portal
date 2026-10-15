@@ -134,6 +134,7 @@ COPY --from=frontend /build/dist/js/ansible_vars_editor.js app/static/js/ansible
 COPY --from=frontend /build/dist/js/row_reconcile.js app/static/js/row_reconcile.js
 
 COPY --from=frontend /build/dist/js/environment_deployment.js app/static/js/environment_deployment.js
+COPY --from=frontend /build/dist/js/environment_menu.js app/static/js/environment_menu.js
 
 ENV TF_CLI_CONFIG_FILE=/app/terraform/terraformrc
 
