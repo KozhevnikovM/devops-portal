@@ -2,11 +2,28 @@
 
 ### Requirement: Booking row action menus remain visible outside the table scroll area
 
-When a user opens a booking row's action menu on the Virtual Machines or Namespaces bookings page, every action available to that user SHALL remain visible and operable, even when the menu would extend beyond the horizontally scrollable bookings table or the viewport edge. This applies to every menu a booking row can show: the manage menu of a `READY` or `FAILED` booking, the admin menu of a `PENDING`, `PROVISIONING` or `RETRY` booking, and the menu of a `QUEUED` booking. The table SHALL remain horizontally scrollable on narrow viewports. The menu SHALL continue to expose only the actions permitted for that user and booking, with the same confirmation prompts and the same effect on the row.
+When a user opens a booking row's action menu on the Virtual Machines or Namespaces bookings page, every action available to that user SHALL remain visible and operable, even when the menu would extend beyond the horizontally scrollable bookings table or the viewport edge. This applies to every menu a booking row can show: the manage menu of a `READY` or `FAILED` booking, the admin menu of a `PENDING`, `PROVISIONING` or `RETRY` booking, and the menu of a `QUEUED` booking. The open menu SHALL be anchored to the `⋮` button that opened it: it SHALL open directly below the button, or directly above it when there is not enough room below, it SHALL never appear at the viewport centre or anywhere detached from the button, including in the first rendered frame, and it SHALL follow the button when the page or table scrolls or the viewport is resized. The menu SHALL stay anchored even if the page's menu-placement script fails to load. The table SHALL remain horizontally scrollable on narrow viewports. The menu SHALL continue to expose only the actions permitted for that user and booking, with the same confirmation prompts and the same effect on the row.
 
 #### Scenario: Menu opens on the first row
 - **WHEN** a user who may manage a booking opens the action menu of the first row on `/book/vm` or `/book/namespace`
 - **THEN** the complete menu is visible and its available actions can be selected
+
+#### Scenario: Menu opens next to its trigger
+- **WHEN** a user opens a booking row's action menu on a row with enough room below it
+- **THEN** the menu's top edge is just below the `⋮` button and the menu is horizontally aligned with it
+- **AND** at no point after the click is the menu shown at the viewport centre or detached from the button
+
+#### Scenario: Menu flips above near the bottom edge
+- **WHEN** a user opens a booking row's action menu on a row too close to the bottom of the viewport for the menu to fit below
+- **THEN** the menu's bottom edge is just above the `⋮` button and the whole menu is on screen
+
+#### Scenario: Menu follows its trigger on scroll and resize
+- **WHEN** a booking action menu is open and the user scrolls the page, scrolls the table horizontally or resizes the viewport while the button stays visible
+- **THEN** the menu stays adjacent to its button and fully on screen
+
+#### Scenario: Menu stays anchored without the placement script
+- **WHEN** the page's menu-placement script is not served and a user opens a booking row's action menu
+- **THEN** the menu is still shown next to its `⋮` button, not at the viewport centre
 
 #### Scenario: Menu opens on the last row
 - **WHEN** a user opens the action menu of the last row of the bookings table, including a row appended by Load more
