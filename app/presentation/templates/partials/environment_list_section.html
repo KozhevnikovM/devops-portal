@@ -51,7 +51,6 @@
             </thead>
             <tbody id="environments-tbody" hx-ext="sse" sse-connect="/events/stream">
                 {% for environment in environments %}
-                {% set is_first_row = loop.first %}
                 {% include "partials/environment_row.html" %}
                 {% endfor %}
                 {% include "partials/environment_load_more.html" %}
