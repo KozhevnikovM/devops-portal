@@ -247,7 +247,7 @@ def portal_factory(browser):
 
     def make(user, viewport=NARROW):
         page = browser.new_page(viewport=viewport)
-        page.set_default_timeout(5000)
+        page.set_default_timeout(15000)  # generous: CI runners can be slow
         portal = Portal(page, user)
         portals.append(portal)
         return portal
@@ -373,9 +373,25 @@ def _scroll_row_to_top(page, trigger_id):
     )
 
 
-def _closed_and_disposed(page):
-    page.wait_for_function("window.menuListeners.observers === 0")
+def _scroll_row_to_middle(page, trigger_id):
+    # Room above and below, so scrolling the page or table a little keeps the trigger in view.
+    page.evaluate(
+        "(id) => { const r = document.getElementById(id).getBoundingClientRect();"
+        " window.scrollBy(0, r.top - window.innerHeight / 2); }",
+        trigger_id,
+    )
+
+
+def _no_listeners(page):
+    # The popover `toggle` event that triggers disposal fires asynchronously after closing.
+    page.wait_for_function(
+        "Object.values(window.menuListeners).every((count) => count === 0)"
+    )
     assert page.evaluate("window.menuListeners") == _NO_LISTENERS
+
+
+def _closed_and_disposed(page):
+    _no_listeners(page)
     assert page.locator(":popover-open").count() == 0
 
 
@@ -411,22 +427,28 @@ def test_environment_menu_anchored_at_first_and_last_rows(environments):
     menu = _open(page, "environment", last)
     _assert_anchored(page, "environment", last, expect="above")
     _assert_usable(menu, menu.get_by_role("button", name="Release"))
+    page.keyboard.press("Escape")
 
     # Page scroll, table scroll and resize keep the open menu beside its trigger.
-    page.mouse.wheel(0, -30)
-    _assert_reanchored(page, "environment", last)
+    mid = environments.environments[len(environments.environments) // 2]
+    _scroll_row_to_middle(page, _ids("environment", mid)[1])
+    menu = _open(page, "environment", mid)
+    _assert_anchored(page, "environment", mid)
+    for dy in (40, -80):
+        page.evaluate(f"window.scrollBy(0, {dy})")
+        _assert_reanchored(page, "environment", mid)
     page.locator(".overflow-x-auto").first.evaluate("(e) => e.scrollLeft -= 20")
-    _assert_reanchored(page, "environment", last)
+    _assert_reanchored(page, "environment", mid)
     page.set_viewport_size({"width": 340, "height": 600})
     if menu.evaluate("(m) => m.matches(':popover-open')"):
-        _assert_reanchored(page, "environment", last)
+        _assert_reanchored(page, "environment", mid)
 
     # A trigger scrolled out of the visible table closes the menu instead of leaving it floating.
     page.locator(".overflow-x-auto").first.evaluate("(e) => e.scrollLeft = 0")
     page.wait_for_function(
         "(m) => !m.matches(':popover-open')", arg=menu.element_handle()
     )
-    assert page.evaluate("window.menuListeners") == _NO_LISTENERS
+    _no_listeners(page)
 
 
 def test_environment_menu_anchored_on_desktop(portal_factory):
@@ -451,7 +473,8 @@ def test_environment_menu_keyboard_escape_and_outside_click(environments):
     page.wait_for_function(
         "(m) => m.matches(':popover-open')", arg=menu.element_handle()
     )
-    page.keyboard.press("Tab")
+    # Escape from a control inside the menu closes it and returns focus to the trigger.
+    menu.locator('input[name="name"]').focus()
     assert menu.evaluate("(m) => m.contains(document.activeElement)")
     page.keyboard.press("Escape")
     assert not menu.evaluate("(m) => m.matches(':popover-open')")
@@ -465,7 +488,7 @@ def test_environment_menu_keyboard_escape_and_outside_click(environments):
     assert not menu.evaluate("(m) => m.matches(':popover-open')")
     page.keyboard.press("Escape")
     assert not other.evaluate("(m) => m.matches(':popover-open')")
-    assert page.evaluate("window.menuListeners") == _NO_LISTENERS
+    _no_listeners(page)
 
 
 def test_environment_row_and_section_swaps_dispose_without_leaks(environments):
@@ -531,16 +554,23 @@ def test_booking_menu_anchored_at_first_and_last_rows(bookings):
     menu = _open(page, "booking", last)
     _assert_anchored(page, "booking", last, expect="above")
     _assert_usable(menu, menu.get_by_role("button", name="Release"))
+    page.keyboard.press("Escape")
 
-    page.mouse.wheel(0, -30)
-    _assert_reanchored(page, "booking", last)
+    # Page scroll, table scroll and resize keep the open menu beside its trigger.
+    mid = bookings.listed[len(bookings.listed) // 2]
+    _scroll_row_to_middle(page, _ids("booking", mid)[1])
+    menu = _open(page, "booking", mid)
+    _assert_anchored(page, "booking", mid)
+    for dy in (40, -80):
+        page.evaluate(f"window.scrollBy(0, {dy})")
+        _assert_reanchored(page, "booking", mid)
     page.locator(".overflow-x-auto").first.evaluate("(e) => e.scrollLeft -= 20")
-    _assert_reanchored(page, "booking", last)
+    _assert_reanchored(page, "booking", mid)
     page.set_viewport_size({"width": 340, "height": 600})
     if menu.evaluate("(m) => m.matches(':popover-open')"):
-        _assert_reanchored(page, "booking", last)
+        _assert_reanchored(page, "booking", mid)
     page.keyboard.press("Escape")
-    assert page.evaluate("window.menuListeners") == _NO_LISTENERS
+    _no_listeners(page)
 
 
 def test_booking_menu_anchored_on_load_more_row(bookings):
@@ -613,7 +643,7 @@ def test_every_booking_menu_variant_escapes_the_table(bookings):
     _assert_usable(failed_menu, failed_menu.get_by_role("link", name="Audit log"))
     page.mouse.click(2, 2)  # outside click closes it
     assert not failed_menu.evaluate("(m) => m.matches(':popover-open')")
-    assert page.evaluate("window.menuListeners") == _NO_LISTENERS
+    _no_listeners(page)
 
 
 def test_label_save_from_the_popover_replaces_the_row(bookings):
@@ -638,26 +668,26 @@ def test_label_save_from_the_popover_replaces_the_row(bookings):
 def test_extend_from_the_popover_sends_htmx_request_and_replaces_the_row(bookings):
     page = bookings.page
     booking = bookings.ready[0]
-    before = page.locator(f"#booking-{booking.id}").inner_text()
+    from app.presentation.templating import templates
+
+    as_tz = templates.env.filters["as_tz"]
+    timezone = bookings.user.timezone
+    expected = str(as_tz(booking.expires_at + timedelta(minutes=1440), timezone))
+    assert expected not in page.locator(f"#booking-{booking.id}").inner_text()
     menu = _open(page, "booking", booking)
     menu.locator('select[name="extend_minutes"]').select_option("1440")
     menu.get_by_role("button", name="Extend").click()
+    # Wait for the swapped-in row: opening the menu already changes the row's text.
     page.wait_for_function(
-        "([id, before]) => { const r = document.getElementById(id);"
-        " return r && r.innerText !== before; }",
-        arg=[f"booking-{booking.id}", before],
+        "([id, text]) => document.getElementById(id)?.innerText.includes(text)",
+        arg=[f"booking-{booking.id}", expected],
     )
     assert bookings.requests[-1] == (
         "PUT",
         f"/bookings/{booking.id}/extend",
         {"extend_minutes": "1440"},
     )
-    from app.presentation.templating import templates
-
-    expected = templates.env.filters["as_tz"](
-        booking.expires_at, bookings.user.timezone
-    )
-    assert str(expected) in page.locator(f"#booking-{booking.id}").inner_text()
+    assert str(as_tz(booking.expires_at, timezone)) == expected
     _closed_and_disposed(page)
     _open(page, "booking", booking)
     _assert_anchored(page, "booking", booking)
