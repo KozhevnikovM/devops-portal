@@ -8,7 +8,8 @@
 {% endfor %}
 {% for environment in over_limit %}
 <tr id="environment-{{ environment.id }}" data-key="{{ list_key(environment) }}" hx-swap-oob="true"
-    sse-swap="environment-{{ environment.id }}" data-row-version="{{ '0' * 16 }}" data-live="inflight"
+    sse-swap="environment-{{ environment.id }}" hx-swap="outerHTML settle:0ms" hx-disinherit="hx-swap"
+    data-row-version="{{ '0' * 16 }}" data-live="inflight"
     class="border-b border-gray-800 last:border-0 align-top">
     <td class="px-4 py-3 text-gray-200">{{ environment.name }}</td>
     <td colspan="6" class="px-4 py-3 text-xs text-amber-400">
