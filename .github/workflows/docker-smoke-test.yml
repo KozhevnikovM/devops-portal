@@ -128,6 +128,16 @@ jobs:
             exit 1
           fi
 
+      # #542: a script a page references but the image lacks silently broke the row menus.
+      - name: Verify page scripts and stylesheets are served
+        run: python3 scripts/check_page_assets.py --base-url http://127.0.0.1:8000 --password smoke-test-admin
+
+      - name: Negative check — a removed script fails the asset check and readiness
+        run: |
+          docker exec -u root portal-app rm app/static/js/row_menu.js
+          python3 scripts/check_page_assets.py --base-url http://127.0.0.1:8000 \
+            --password smoke-test-admin --expect-missing /static/js/row_menu.js
+
       - name: Dump container diagnostics on failure
         if: failure()
         run: |

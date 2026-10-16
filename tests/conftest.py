@@ -1,11 +1,15 @@
 """Shared test helpers — available to all test modules."""
-from datetime import datetime, timezone
+
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
 
 from app.domain.entities import User
+
+# Real-browser test selection and the REQUIRE_BROWSER_TESTS=1 mode (#542).
+pytest_plugins = ("tests.browser_plugin",)
 
 
 def make_fake_user() -> User:
@@ -16,7 +20,7 @@ def make_fake_user() -> User:
         password_hash="",
         role="user",
         is_active=True,
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
 
 
@@ -28,7 +32,7 @@ def make_fake_admin() -> User:
         password_hash="",
         role="admin",
         is_active=True,
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
 
 
@@ -41,10 +45,18 @@ def mock_row_changed_publish():
 
     Yields ``(sync_mock, async_mock)``; the progress-path mock (#440) is exposed as
     ``sync_mock.progress`` so existing two-way unpacking keeps working."""
-    with patch("app.infrastructure.repositories.booking_repo.publish_row_changed") as sync_mock, \
-         patch("app.infrastructure.repositories.booking_repo.publish_progress_changed") as progress_mock, \
-         patch("app.infrastructure.repositories.booking_repo.apublish_row_changed",
-               new=AsyncMock()) as async_mock:
+    with (
+        patch(
+            "app.infrastructure.repositories.booking_repo.publish_row_changed"
+        ) as sync_mock,
+        patch(
+            "app.infrastructure.repositories.booking_repo.publish_progress_changed"
+        ) as progress_mock,
+        patch(
+            "app.infrastructure.repositories.booking_repo.apublish_row_changed",
+            new=AsyncMock(),
+        ) as async_mock,
+    ):
         sync_mock.progress = progress_mock
         yield sync_mock, async_mock
 

@@ -26,6 +26,9 @@ services:
       retries: 5
 
   init:
+    # One image for init and every app/worker/beat service (#542): rebuilding any of them
+    # refreshes the image init copies static assets from, so templates and assets match.
+    image: ${PORTAL_IMAGE:-devops-portal:local}
     build:
       context: .
       secrets:
@@ -48,7 +51,7 @@ services:
         APT_REPO_HOST: ${APT_REPO_HOST:-}
         APT_REPO_USER: ${APT_REPO_USER:-token}
         ANSIBLE_COLLECTIONS_REQUIREMENTS: ${ANSIBLE_COLLECTIONS_REQUIREMENTS:-ansible/requirements.yml}
-    command: sh -c "cp -r /app/app/static/. /static/ && alembic upgrade head"
+    command: sh -c "scripts/init_static.sh && alembic upgrade head"
     user: root
     env_file: .env
     volumes:
@@ -59,6 +62,7 @@ services:
     restart: "no"
 
   app:
+    image: ${PORTAL_IMAGE:-devops-portal:local}
     build:
       context: .
       secrets:
@@ -101,6 +105,7 @@ services:
       start_period: 30s
 
   worker:
+    image: ${PORTAL_IMAGE:-devops-portal:local}
     build:
       context: .
       secrets:
@@ -142,6 +147,7 @@ services:
       start_period: 60s
 
   beat:
+    image: ${PORTAL_IMAGE:-devops-portal:local}
     build:
       context: .
       secrets:

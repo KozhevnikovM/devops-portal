@@ -1,3 +1,4 @@
+{%- from "partials/row_menu.html" import row_menu -%}
 {# Not refreshed by progress-only SSE notifications (#441): showing a child's status_message or
    provisioning_log here would need _rows_to_refresh in routes/events.py revisited. #}
 {#- Live unless RELEASED, with a row version and list key — see booking_row.html (#497). -#}
@@ -67,23 +68,7 @@
     </td>
     <td class="px-4 py-3">
         {% if can_manage and environment.derived_status != 'RELEASED' %}
-        {# A native popover renders in the top layer, so the table's overflow-x-auto wrapper can't
-           clip it (#538); environment_menu.js positions it from the trigger. It stays inside the
-           row in the DOM, so `closest tr` targets and row swaps behave as before. #}
-        <button
-            type="button"
-            id="environment-{{ environment.id }}-menu-trigger"
-            popovertarget="environment-{{ environment.id }}-menu"
-            aria-label="Actions for {{ environment.name }}"
-            data-environment-menu-trigger
-            class="cursor-pointer w-7 h-7 flex items-center justify-center rounded text-gray-400 hover:text-gray-200 hover:bg-gray-700 transition-colors select-none text-lg leading-none"
-        >⋮</button>
-        <div
-            id="environment-{{ environment.id }}-menu"
-            popover
-            data-environment-menu
-            class="w-48 bg-gray-900 border border-gray-700 rounded shadow-lg px-0 py-1 overflow-y-auto"
-        >
+        {% call row_menu("environment-" ~ environment.id ~ "-menu", "Actions for " ~ environment.name) %}
             <form
                 hx-patch="/environments/{{ environment.id }}/name"
                 hx-target="closest tr"
@@ -133,7 +118,7 @@
             >
                 Release
             </button>
-        </div>
+        {% endcall %}
         {% else %}
         <span class="text-gray-600">—</span>
         {% endif %}
