@@ -21,6 +21,23 @@ When a non-forced teardown task executes for a booking that is in `FAILED` statu
 - **WHEN** a non-forced teardown task execution runs for a VM booking that is already in `FAILED` status
 - **THEN** the task completes as a no-op without re-triggering destroy operations or modifying booking status
 
+### Requirement: Concurrent VM teardown execution enforces mutual exclusion via execution lease
+The system SHALL enforce per-booking mutual exclusion during provisioned VM teardown so that concurrent duplicate task deliveries cannot execute simultaneous `terraform.destroy()` operations on the same workspace.
+
+Before initiating Terraform destruction, `teardown_vm_task` SHALL acquire a bounded teardown execution lease (with TTL `VCD_TOKEN_LOCK_TTL`) for the target booking. If another worker actively holds the teardown lease, the competing delivery SHALL NOT execute `terraform.destroy()` and SHALL NOT attempt to force-unlock the state lock. The competing task SHALL wait with bounded backoff for the in-flight teardown to finish, and upon completion of the holder, SHALL observe the `RELEASED` status and complete cleanly as a no-op.
+
+If a worker crashes, is terminated, or encounters an unhandled runtime error while holding the teardown execution lease, the lease SHALL expire automatically after its bounded TTL. Following lease expiration, a redelivered teardown task or administrative force-release SHALL be permitted to acquire the lease and execute teardown to completion.
+
+#### Scenario: Concurrent duplicate teardown deliveries for RELEASING VM
+- **WHEN** two worker tasks concurrently execute teardown for the same provisioned VM in `RELEASING` status
+- **THEN** exactly one task acquires the execution lease and executes `terraform.destroy()`
+- **AND** the competing task waits for the lease, observes the subsequent `RELEASED` transition, and exits as a no-op without running a concurrent destroy or force-unlocking the active state lock
+
+#### Scenario: Worker crash during VM teardown allows safe redelivery after lease expiry
+- **WHEN** a worker executing VM teardown terminates unexpectedly while holding the execution lease before database status is updated to `RELEASED`
+- **THEN** the execution lease expires after its bounded TTL
+- **AND** a redelivered teardown task acquires the lease and transitions the booking to `RELEASED`
+
 ### Requirement: Pooled resource release uses an atomic transition claim and never double-promotes
 Releasing a pooled resource (namespace or static VM) SHALL return the allocated resource to the available pool. If an active, eligible resource is free in the pool, the system SHALL promote the oldest queued booking for that resource type at most once. The transition to `RELEASED` and any resulting queue promotion SHALL be executed within a single atomic database transaction. All release entry points—including asynchronous Celery workers (`teardown_vm_task`), synchronous/async use cases (`ReleaseBookingUseCase`), and periodic TTL sweeps (`_release_child_sync`)—SHALL execute pooled release and queue promotion through this atomic single-transaction operation.
 

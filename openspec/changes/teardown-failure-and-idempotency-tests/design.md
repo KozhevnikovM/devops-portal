@@ -4,15 +4,17 @@ The booking release and teardown lifecycle spans synchronous use cases (`Release
 
 Several concrete hazards exist in the current implementation:
 1. `teardown_vm_task` unconditionally attempts `repo.sync_update_status(s, booking_uuid, BookingStatus.RELEASING)` on line 108. If the booking has already reached `RELEASED` (or settled in `FAILED` from exhausted retries on non-forced execution), attempting `RELEASED → RELEASING` violates state machine invariants (`ALLOWED_TRANSITIONS`), triggering exceptions, retries, and invalid state writes.
-2. For pooled resources (namespaces and static VMs), release and queue promotion currently execute as two separate repository operations committing independently (`sync_update_status` and `sync_promote_next_queued`). This two-step pattern exists in three separate entry points: `teardown_vm_task` in `app/tasks/teardown.py`, `ReleaseBookingUseCase` in `app/application/use_cases/release_booking.py`, and `_release_child_sync` in `app/tasks/beat_tasks.py`. If a worker crashes after claiming `RELEASED` but before `sync_promote_next_queued` commits, the queued booking remains stuck indefinitely; duplicate deliveries skip promotion because the claim is already taken (a lost-promotion bug). Furthermore, concurrent executions racing across worker, API, or TTL entry points can double-promote queued bookings.
-3. In `ReleaseEnvironmentUseCase`, child bookings are filtered with `if child.status in _TERMINAL: continue`. Children in `RELEASING` status are not skipped, so a repeated environment release calls `ReleaseBookingUseCase.execute(force=True)`, which transitions `RELEASING → RELEASING` (accepted as a no-op) but unconditionally calls `self._dispatcher.dispatch_teardown(...)`, enqueuing duplicate teardown tasks.
-4. Equating `FAILED` with "already freed": when a VM teardown fails and exhausts retries, it is marked `FAILED` while the cloud vApp/VM still exists. The system must distinguish successfully freed resources from failed ones, ensure environment status reflects the failure, and provide administrative force-release recovery.
-5. In `teardown_vm_task(force=True)`, lines 133–137 wrap the fallback `_lifecycle` database write in a blanket `try ... except Exception: pass` and immediately return. `teardown_vm_task` is configured without `autoretry_for`, relying strictly on explicit `raise self.retry(exc=exc)`. If the new force path simply lets database exceptions escape without `self.retry`, Celery marks the task as `FAILURE` immediately rather than scheduling another attempt. Conversely, swallowing persistence errors falsely reports success while the booking remains in `RELEASING` or `FAILED`.
+2. Concurrent duplicate deliveries of `teardown_vm_task` for provisioned VMs: when release is initiated by API or TTL, the booking is transitioned to `RELEASING` prior to dispatch. If two worker tasks receive duplicate deliveries concurrently, both observe `RELEASING` status, pass terminal-state guards, and execute `sync_update_status(RELEASING)` (which accepts same-status writes). Both workers then invoke `asyncio.run(terraform.destroy(...))` concurrently on workspace `booking-{id}`. Because `TerraformVcdAdapter._destroy_state()` force-unlocks reported Terraform state locks to recover from stale locks, one worker can force-unlock the *live* Terraform state lock held by the other worker, leading to concurrent Terraform mutations and state corruption.
+3. For pooled resources (namespaces and static VMs), release and queue promotion currently execute as two separate repository operations committing independently (`sync_update_status` and `sync_promote_next_queued`). This two-step pattern exists in three separate entry points: `teardown_vm_task` in `app/tasks/teardown.py`, `ReleaseBookingUseCase` in `app/application/use_cases/release_booking.py`, and `_release_child_sync` in `app/tasks/beat_tasks.py`. If a worker crashes after claiming `RELEASED` but before `sync_promote_next_queued` commits, the queued booking remains stuck indefinitely; duplicate deliveries skip promotion because the claim is already taken (a lost-promotion bug). Furthermore, concurrent executions racing across worker, API, or TTL entry points can double-promote queued bookings.
+4. In `ReleaseEnvironmentUseCase`, child bookings are filtered with `if child.status in _TERMINAL: continue`. Children in `RELEASING` status are not skipped, so a repeated environment release calls `ReleaseBookingUseCase.execute(force=True)`, which transitions `RELEASING → RELEASING` (accepted as a no-op) but unconditionally calls `self._dispatcher.dispatch_teardown(...)`, enqueuing duplicate teardown tasks.
+5. Equating `FAILED` with "already freed": when a VM teardown fails and exhausts retries, it is marked `FAILED` while the cloud vApp/VM still exists. The system must distinguish successfully freed resources from failed ones, ensure environment status reflects the failure, and provide administrative force-release recovery.
+6. In `teardown_vm_task(force=True)`, lines 133–137 wrap the fallback `_lifecycle` database write in a blanket `try ... except Exception: pass` and immediately return. `teardown_vm_task` is configured without `autoretry_for`, relying strictly on explicit `raise self.retry(exc=exc)`. If the new force path simply lets database exceptions escape without `self.retry`, Celery marks the task as `FAILURE` immediately rather than scheduling another attempt. Conversely, swallowing persistence errors falsely reports success while the booking remains in `RELEASING` or `FAILED`.
 
 ## Goals / Non-Goals
 
 **Goals:**
 - Guarantee idempotent behavior in `teardown_vm_task`: if a booking is already `RELEASED`, or if a non-forced task runs on an already `FAILED` booking, log and cleanly return (no-op).
+- Enforce per-booking mutual exclusion and an execution lease with crash recovery during provisioned VM teardown, ensuring that concurrent duplicate Celery deliveries on `RELEASING` bookings never execute simultaneous `terraform.destroy()` operations on the same workspace and never force-unlock each other's live Terraform state locks.
 - Make pooled resource release and promotion atomic within a single database transaction across all release entry points (Celery worker, use case, beat TTL task): gate `promote_next_queued` strictly on a successful transition claim to `RELEASED`, eliminating the crash window between claim and promotion and preventing double promotion under concurrent execution.
 - Wire the atomic pooled-release operation through sync and async paths while preserving existing public API 409 Conflict behavior for rejected repeated release requests.
 - Prevent duplicate teardown dispatch in `ReleaseEnvironmentUseCase` by skipping children that are already `RELEASING`, while maintaining explicit administrative force-release for stuck tasks.
@@ -27,14 +29,24 @@ Several concrete hazards exist in the current implementation:
 
 ## Decisions
 
-### Decision 1: Terminal and Settled State Guard in `teardown_vm_task`
-In `teardown_vm_task`, inspect `booking.status` immediately after fetching the booking:
-- If `booking.status == BookingStatus.RELEASED`: log that the booking is already released and return early as a no-op.
-- If `booking.status == BookingStatus.FAILED` and `not force`: log that the booking is already failed and return early as a no-op, preventing infinite retry loops or thrashing against failed resources from stale task messages. Forced teardown (`force=True`) continues to allow `FAILED → RELEASING → RELEASED` cleanup.
+### Decision 1: Terminal/Settled State Guard and Teardown Execution Lease for Provisioned VMs
+1. **Terminal and settled state guard (sequential/delayed deliveries):**
+   In `teardown_vm_task`, inspect `booking.status` immediately after fetching the booking:
+   - If `booking.status == BookingStatus.RELEASED`: log that the booking is already released and return early as a no-op.
+   - If `booking.status == BookingStatus.FAILED` and `not force`: log that the booking is already failed and return early as a no-op, preventing infinite retry loops or thrashing against failed resources from stale task messages. Forced teardown (`force=True`) continues to allow `FAILED → RELEASING → RELEASED` cleanup.
+
+2. **Per-booking execution lease and mutual exclusion (concurrent deliveries):**
+   Simply skipping `RELEASING` is invalid because API/TTL marks the booking `RELEASING` prior to task dispatch. To prevent concurrent duplicate deliveries from executing simultaneous `terraform.destroy()` calls:
+   - Introduce a Redis-backed teardown execution lease (`teardown-lock:{booking_id}`) with bounded TTL `settings.VCD_TOKEN_LOCK_TTL`, mirroring `provisioning_lock`.
+   - Before executing `terraform.destroy()`, `teardown_vm_task` attempts to acquire the lease atomically (`SET key token NX EX VCD_TOKEN_LOCK_TTL`).
+   - If the lease is held by another live worker: the competing task does not execute destroy and does not force-unlock the state lock. It polls with bounded wait for the active destroy to complete. Once the holder commits `RELEASED`, the competing task re-reads status, observes `RELEASED`, and exits cleanly as a no-op.
+   - Crash recovery: If a worker terminates unexpectedly (OOM, SIGKILL, container restart) while holding the teardown lease before reaching `RELEASED`, the lease expires automatically upon TTL expiration. Subsequent redeliveries or administrative recovery acquire the lease and drive teardown to completion.
+   - The execution lease is released in a `finally` block on task completion or failure.
 
 *Alternatives considered:*
 - Catching `IllegalStatusTransitionError`: Rejected because it invokes error handling, increments retry counters, and attempts to write `FAILED`.
-- Enforcing only at API dispatch: Rejected because message brokers can duplicate tasks after dispatch.
+- Skipping `RELEASING` bookings: Rejected because legitimate release requests mark the booking `RELEASING` before dispatching the teardown task.
+- Relying solely on Terraform state locks: Rejected because `TerraformVcdAdapter._destroy_state()` force-unlocks state locks to recover from stale locks, which would force-unlock a live competing worker.
 
 ### Decision 2: Atomic Single-Transaction Claim and Promotion for Pooled Resources Across All Entry Points
 Instead of relying on a read check prior to calling independent status update and promotion methods that commit separately, pooled resource release and queue promotion must execute atomically in a single database transaction:
@@ -95,6 +107,8 @@ In `teardown_vm_task(force=True)`:
 1. **Unit & Task Suite** (`tests/test_teardown_task.py`, `tests/test_release_booking.py`, `tests/test_dispatcher_release_environment.py`, and `tests/test_teardown_idempotency.py`):
    - Duplicate Celery delivery on `RELEASED` VM booking (verifying no-op).
    - Duplicate non-forced Celery delivery on `FAILED` VM booking (verifying no-op).
+   - Concurrent duplicate Celery deliveries for the same `RELEASING` VM booking: verify teardown execution lease ensures only one worker executes `terraform.destroy()`, the competing delivery waits and cleanly exits as a no-op upon `RELEASED`, and no concurrent state-lock force-unlock occurs.
+   - Worker crash recovery during VM teardown: simulate worker crash while holding the execution lease, verify redelivery acquires the lease after TTL expiration and completes teardown to `RELEASED`.
    - Duplicate delivery on `RELEASED` pooled resource (verifying no duplicate promotion).
    - Transient cloud destroy error retry and convergence to `FAILED` on retry exhaustion.
    - Forced teardown with missing cloud resource converging to `RELEASED`.
@@ -110,6 +124,8 @@ In `teardown_vm_task(force=True)`:
 
 ## Risks / Trade-offs
 
+- **[Risk] Concurrent duplicate VM teardown deliveries racing Terraform destroy**
+  → *Mitigation*: Redis-backed teardown execution lease (`teardown-lock:{booking_id}`) with bounded TTL guarantees mutual exclusion, preventing concurrent `terraform.destroy()` invocations and avoiding destructive state-lock force-unlock races while enabling automatic recovery on worker crashes.
 - **[Risk] High concurrency on pooled resource release across API and background tasks**
   → *Mitigation*: Row locking (`with_for_update`) within a single database transaction combining release claim and queue promotion guarantees strict serialization across all entry points.
 - **[Risk] Transient database failure during forced teardown**

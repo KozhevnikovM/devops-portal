@@ -6,6 +6,7 @@ In a distributed infrastructure orchestration system with asynchronous Celery wo
 
 - Specify and test idempotency guarantees for teardown execution across all resource types: provisioned VMs, static VMs, and namespaces.
 - Require `teardown_vm_task` to handle bookings already in `RELEASED` status, or non-forced executions on already `FAILED` bookings, as safe no-ops, preventing illegal transitions and unnecessary task retries upon duplicate Celery delivery.
+- Enforce per-booking mutual exclusion and an execution lease with crash recovery during provisioned VM teardown, ensuring that concurrent duplicate Celery deliveries on `RELEASING` bookings never execute simultaneous `terraform.destroy()` operations on the same workspace and never force-unlock each other's live Terraform state locks.
 - Guarantee that releasing pooled resources (namespaces and static VMs) executes the release claim and queue promotion within a single atomic database transaction across all release entry points (Celery worker, use case, and beat TTL task). The atomic operation preserves the parent-before-child lock order (`_async_release_target` / `_sync_release_target`) to serialize environment child releases with deployment reporting and extensions, and enforces active/free pool eligibility checks (`_free_resource_stmt`) so that queued waiters are promoted only when eligible active capacity exists, while preserving the public API's existing 409 Conflict behavior for repeated release requests.
 - Ensure `ReleaseEnvironmentUseCase` guards in-flight child bookings: child bookings already in `RELEASING` status are not re-dispatched for teardown on repeated environment release calls, reserving forced re-dispatch exclusively for explicit administrative recovery.
 - Clarify failure semantics: distinguish successfully freed resources (`RELEASED`) from failed states (`FAILED` where cloud resources may still linger), and specify administrative force-release recovery for failed teardown children.
@@ -13,6 +14,7 @@ In a distributed infrastructure orchestration system with asynchronous Celery wo
 - Formalize retry semantics for VM teardown failures: transient errors retry up to `max_retries` while maintaining `RELEASING` status, and retry exhaustion converges deterministically to `FAILED` with an informative status message.
 - Add comprehensive unit, orchestration, and concurrent integration test suites covering:
   - Releasing the same booking or environment twice.
+  - Concurrently releasing the same provisioned VM across two workers, asserting mutual exclusion with only one active destroy and safe redelivery after a crash.
   - Concurrently releasing the same pooled resource across workers with queued bookings waiting.
   - Retrying teardown after transient or partial cloud failure.
   - Executing teardown when the cloud resource is already free or missing.
@@ -35,7 +37,7 @@ In a distributed infrastructure orchestration system with asynchronous Celery wo
 
 ## Impact
 
-- **Tasks**: `app/tasks/teardown.py` and `app/tasks/beat_tasks.py` — guard terminal booking states (`RELEASED`, non-forced `FAILED`), wire single-transaction atomic pooled release and promotion, and invoke explicit bounded Celery retries for database persistence errors in forced teardown.
+- **Tasks**: `app/tasks/teardown.py` and `app/tasks/beat_tasks.py` — guard terminal booking states (`RELEASED`, non-forced `FAILED`), enforce per-booking teardown execution lease with crash recovery, wire single-transaction atomic pooled release and promotion, and invoke explicit bounded Celery retries for database persistence errors in forced teardown.
 - **Application**: `app/application/use_cases/release_environment.py`, `release_booking.py`, and `ports.py` — skip in-flight (`RELEASING`) children on environment release, adopt atomic pooled release and promotion in use cases, and preserve 409 Conflict semantics on duplicate release calls.
 - **Repositories**: `app/infrastructure/repositories/booking_repo.py` — provide single-transaction atomic release claim and queue promotion methods (`sync_release_pooled_and_promote`, `release_pooled_and_promote`).
 - **Tests**: `tests/test_teardown_task.py`, `tests/test_teardown_idempotency.py`, `tests/test_dispatcher_release_environment.py`, `tests/test_release_booking.py`, and `tests/integration/test_pooled_release_concurrency.py` — comprehensive test coverage.
