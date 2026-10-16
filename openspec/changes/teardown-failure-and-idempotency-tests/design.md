@@ -41,11 +41,14 @@ Instead of relying on a read check prior to calling independent status update an
 - In `BookingRepositoryPort` and `BookingRepository`, introduce atomic methods:
   - `sync_release_pooled_and_promote(session: Session, booking_id: UUID, actor_id: str = "system") -> tuple[Booking, Booking | None]`
   - `release_pooled_and_promote(session: AsyncSession, booking_id: UUID, actor_id: str = "system") -> tuple[Booking, Booking | None]`
-- Transaction semantics:
-  1. Under a row lock (`with_for_update()`), fetch the pooled booking row. If the booking is already in `RELEASED` status, return immediately without performing queue promotion.
-  2. Transition the target booking to `RELEASED` and record the audit log entry.
-  3. Within the same transaction, look up the oldest `QUEUED` booking for that resource type. If found, allocate the freed resource, transition the queued booking to `READY`, record its audit entry, and commit both updates together.
-  4. Post-commit: emit lifecycle notifications (SSE) for both bookings and start the lease for environment children if ready.
+- Transaction semantics & lock protocol:
+  1. Reuse the established parent-before-child release lock protocol via `_async_release_target` / `_sync_release_target`: if the booking belongs to an environment (`environment_id` is set), acquire the parent `EnvironmentModel` row lock (`with_for_update()`) before acquiring the child `BookingModel` row lock (`with_for_update()`), and re-check environment membership. For standalone bookings, lock the `BookingModel` directly. This preserves strict serialization against concurrent deployment status reporting and environment extension concurrency checks.
+  2. If the locked booking is already in `RELEASED` status, return immediately without performing queue promotion.
+  3. Transition the target booking to `RELEASED` and record its audit log entry.
+  4. Enforce pool eligibility: queue promotion must not unconditionally assign the freed resource. An administrator may deactivate a namespace or static VM while it is held (`NamespaceRepository.deactivate`, `StaticVMRepository.deactivate`). The atomic operation must query for available capacity using `_free_resource_stmt` with its `is_active.is_(True)` and `with_for_update(skip_locked=True)` predicates.
+  5. If an active, eligible resource is available and a queued waiter exists (`_oldest_queued_stmt`), allocate the active resource to the oldest queued booking, transition it to `READY`, record its audit entry, and commit both updates together in the transaction.
+  6. If no eligible active resource is free (e.g. the released resource was retired/deactivated while held and no other active capacity exists), the booking release to `RELEASED` commits successfully, but no queue promotion occurs and the waiter remains in `QUEUED`.
+  7. Post-commit: emit lifecycle notifications (SSE) for affected bookings and start the lease for environment children if ready.
 - Eliminating the crash gap:
   - If a worker crashes or the connection drops before commit, the transaction rolls back entirely. Both the target booking and the queued booking retain their previous statuses, allowing a redelivery or subsequent release attempt to retry and execute both steps cleanly.
   - If a crash occurs after commit, both updates are persisted; redeliveries observe `RELEASED` and perform no second promotion.
@@ -54,11 +57,13 @@ Instead of relying on a read check prior to calling independent status update an
   2. Use Case: `ReleaseBookingUseCase.execute()` in `app/application/use_cases/release_booking.py`. If an API caller calls release on a booking already in `RELEASED` status (or claimed concurrently), `ReleaseBookingUseCase` raises `BookingError`, preserving the public API's 409 Conflict response.
   3. Beat TTL sweep: `_release_child_sync` in `app/tasks/beat_tasks.py`.
 - Verification:
-  - Unit tests verifying single-transaction commit and crash/rollback recovery without lost promotion.
-  - Concurrent PostgreSQL integration test simulating multiple sessions (API release vs Celery worker vs TTL sweep) racing on the same pooled resource with queued bookings waiting.
+  - Unit tests verifying single-transaction commit, parent-before-child locking, crash/rollback recovery without lost promotion, and deactivation while held preventing promotion of retired capacity.
+  - Concurrent PostgreSQL integration test simulating multiple sessions (API release vs Celery worker vs TTL sweep) racing on the same pooled resource with queued bookings waiting, and racing final pooled child release against deployment reporting.
 
 *Alternatives considered:*
 - Independent `update_status` followed by `promote_next_queued`: Rejected because worker crashes between commits strand queued bookings, and concurrent deliveries cause double promotion.
+- Bypassing parent environment lock: Rejected because releasing the final pooled child could commit while deployment reporting inspects child statuses, leading to inconsistent deployment state writes.
+- Unconditionally assigning the freed resource to queued waiters: Rejected because it reassigns resources that were deactivated while allocated.
 
 ### Decision 3: In-Flight Child Guard in `ReleaseEnvironmentUseCase`
 In `ReleaseEnvironmentUseCase.execute()`, check each child booking's status:
@@ -80,7 +85,7 @@ In `teardown_vm_task(force=True)`:
   - Do not use blanket `except Exception: pass`, which falsely acknowledges task completion while database state remains unreleased.
   - Do not allow database persistence exceptions to escape unhandled, because `teardown_vm_task` lacks `autoretry_for` and Celery would terminate the task with `FAILURE` without retrying.
   - On retry, `teardown_vm_task` runs again with `force=True`: cloud destroy gracefully handles already-deleted resources, and database persistence is re-attempted.
-  - When retries are exhausted (`self.request.retries >= self.max_retries`), `self.retry` raises `MaxRetriesExceededError` and Celery marks the task as failed.
+  - When retries are exhausted (`self.request.retries >= self.max_retries`), Celery reraises the original persistence exception `exc`, marking the task as `FAILURE`.
 
 *Alternatives considered:*
 - Catching all exceptions with `pass`: Rejected because it falsely acknowledges task completion while database state remains unreleased.
@@ -93,13 +98,15 @@ In `teardown_vm_task(force=True)`:
    - Duplicate delivery on `RELEASED` pooled resource (verifying no duplicate promotion).
    - Transient cloud destroy error retry and convergence to `FAILED` on retry exhaustion.
    - Forced teardown with missing cloud resource converging to `RELEASED`.
-   - Forced teardown with database persistence failure invoking explicit `self.retry(exc=...)` and failing on retry exhaustion.
+   - Forced teardown with database persistence failure invoking explicit `self.retry(exc=...)` and reraising original exception on retry exhaustion with Celery `FAILURE`.
    - Crash/rollback simulation between pooled release claim and promotion followed by redelivery asserting no lost promotion.
+   - Release of a held pooled resource that was deactivated while held, asserting transition to `RELEASED` succeeds without promoting queued waiters to retired capacity.
    - Repeated release via `ReleaseBookingUseCase` raising `BookingError` (409 Conflict in API).
    - Repeated environment release with `RELEASING` child asserting no duplicate dispatch.
    - Admin force-release recovery of a teardown-failed child VM.
 2. **Integration Suite** (`tests/integration/test_pooled_release_concurrency.py`):
-   - Concurrently release the same pooled resource across multiple database sessions (racing API release, Celery worker, and TTL beat sweep) while queued bookings wait, asserting that exactly one promotion occurs.
+   - Concurrently release the same pooled resource across multiple database sessions (racing API release, Celery worker, and TTL beat sweep) while queued bookings wait, asserting that at most one promotion occurs and pool capacity is not corrupted.
+   - Race the release of the final pooled child of an environment against deployment status reporting, verifying parent-before-child locking serializes the operations and prevents stale/inconsistent deployment reports.
 
 ## Risks / Trade-offs
 
