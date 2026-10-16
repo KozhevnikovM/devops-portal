@@ -7,8 +7,8 @@ A live (SSE) row update nests the new row inside the old one instead of replacin
 - A live update **replaces the whole displayed row** on the Bookings and Environments lists. It no longer inserts the new row into the old one.
 - Every element that receives live row updates declares a table-safe, whole-row swap. This includes the environment "reload required" placeholder that page reconciliation renders for an environment over the child limit.
 - The swap strategy applies only to the live update. Row action controls keep their own declared swap behaviour.
-- After any number of updates, each resource has exactly one row and one row id, valid table markup, and one live subscription. Menus, popovers and listeners from the replaced row do not survive.
-- Regression coverage: template-level checks on the row partials, plus real-browser checks that reproduce the nesting today and pass after the fix. The browser checks cover repeated updates, an open action menu, row actions and reconciliation.
+- After any number of updates, each resource has exactly one row and one row id, valid table markup, and one effective live-update handler, so each update is applied exactly once. Menus, popovers and row-menu listeners from the replaced row do not survive. A handler left by a replaced row may linger until the next same-name event, but it is inert.
+- Regression coverage: fast-suite template checks on the row partials, plus real-browser checks that go through the real SSE swap path. The browser checks are required in CI. They reproduce the nesting today and pass after the fix. They cover repeated updates, an open action menu with focus restoration, row actions, reconciliation, filter change, Load more and RELEASED rows.
 - No change to the SSE event names, payloads, routing, authorization, row versions, list keys, filters or pagination.
 
 ## Capabilities
@@ -24,7 +24,7 @@ _None._
 ## Impact
 
 - **Templates:** `app/presentation/templates/partials/booking_row.html`, `partials/environment_row.html` and `partials/environment_reconcile.html` (the over-limit placeholder row).
-- **Frontend:** no new JavaScript is expected. `frontend/js/environment_menu.js` and `frontend/js/row_reconcile.js` are checked for behaviour under whole-row replacement and change only if a check fails.
+- **Frontend:** no new JavaScript is expected. `frontend/js/row_menu.js` (the shared row menu since #542) and `frontend/js/row_reconcile.js` are checked for behaviour under whole-row replacement and change only if a check fails.
 - **Server:** `app/presentation/routes/events.py` is unchanged; the event payloads already contain the full row.
-- **Tests:** template assertions alongside the existing row-partial tests, and optional Playwright browser tests in the style of `tests/test_environment_menu_browser.py`.
+- **Tests:** template assertions in the fast suite. Also `pytest.mark.browser` tests on the real-page harness of `tests/test_row_menu_browser.py`, which drive a stubbed `EventSource` through the real htmx-sse extension and run in the required `browser-tests` CI job.
 - **APIs, data, migrations:** none. No user-facing API or workflow change, so the admin guide and API reference stay as they are.
