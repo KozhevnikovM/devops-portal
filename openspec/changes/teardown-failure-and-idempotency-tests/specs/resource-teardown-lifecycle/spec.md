@@ -22,18 +22,26 @@ When a non-forced teardown task executes for a booking that is in `FAILED` statu
 - **THEN** the task completes as a no-op without re-triggering destroy operations or modifying booking status
 
 ### Requirement: Pooled resource release uses an atomic transition claim and never double-promotes
-Releasing a pooled resource (namespace or static VM) SHALL return the allocated resource to the available pool and promote the oldest queued booking for that resource type at most once. The transition to `RELEASED` SHALL be performed as an atomic conditional state claim or under a row lock within the transaction. Queue promotion SHALL be strictly gated on a successful release claim that transitions the booking from an active state to `RELEASED`.
+Releasing a pooled resource (namespace or static VM) SHALL return the allocated resource to the available pool and promote the oldest queued booking for that resource type at most once. The transition to `RELEASED` and the queue promotion of the oldest queued booking SHALL be executed within a single atomic database transaction. All release entry points—including asynchronous Celery workers (`teardown_vm_task`), synchronous/async use cases (`ReleaseBookingUseCase`), and periodic TTL sweeps (`_release_child_sync`)—SHALL execute pooled release and queue promotion through this atomic single-transaction operation. Queue promotion SHALL be strictly gated on a successful release claim within that same transaction.
 
-If multiple workers or requests concurrently attempt to release the same pooled booking, exactly one attempt SHALL claim the release transition and execute queue promotion. Any subsequent or concurrent release attempt that finds the booking already released SHALL complete safely without promoting another queued booking and without decrementing or corrupting pool allocation counters.
+If a worker or process fails before the transaction commits, both the transition and promotion SHALL roll back, ensuring that subsequent task retries or release calls can execute the operation cleanly without leaving queued bookings stranded.
+
+If multiple workers, TTL sweeps, or API requests concurrently attempt to release the same pooled booking, exactly one attempt SHALL claim the release transition and execute queue promotion. Any subsequent or concurrent release attempt that finds the booking already released SHALL complete safely without promoting another queued booking and without decrementing or corrupting pool allocation counters.
+
+For public API release endpoints, repeated release requests for already-released bookings SHALL continue to be rejected with an HTTP 409 Conflict error without altering database state or dispatching redundant work.
 
 #### Scenario: Second release call on pooled resource with queued bookings waiting
 - **WHEN** release is invoked for a pooled booking that has already been transitioned to `RELEASED`, while other bookings remain in `QUEUED` status
 - **THEN** the queued bookings are not promoted a second time and available pool capacity is not inflated
 
-#### Scenario: Concurrent release attempts on the same pooled resource
-- **WHEN** two worker tasks or API requests concurrently execute release for the same active pooled booking while queued bookings exist
-- **THEN** exactly one execution claims the transition to `RELEASED` and promotes the oldest queued booking
-- **AND** the other execution observes the already-claimed release and performs no queue promotion
+#### Scenario: Concurrent release attempts across multiple entry points
+- **WHEN** two worker tasks, API requests, or TTL sweeps concurrently execute release for the same active pooled booking while queued bookings exist
+- **THEN** exactly one execution claims the transition to `RELEASED` and promotes the oldest queued booking within a single transaction
+- **AND** the competing execution observes the already-claimed release and performs no queue promotion
+
+#### Scenario: Failure prior to transaction commit rolls back claim and promotion
+- **WHEN** an error occurs or the worker crashes before the release-and-promote transaction commits
+- **THEN** the booking status remains unreleased and the queued booking remains in `QUEUED` status, allowing redelivery to complete both steps cleanly
 
 ### Requirement: Teardown infrastructure failures retry and converge to a deterministic terminal state
 When teardown of a provisioned VM encounters a cloud provider or infrastructure failure during non-forced execution, the system SHALL keep the booking in `RELEASING` status and schedule a task retry if retry attempts remain. When retries are exhausted, the system SHALL transition the booking to `FAILED` and record an explanatory status message and audit entry. Retries SHALL converge to a single terminal state (`RELEASED` upon successful destroy or `FAILED` upon exhaustion).
@@ -46,10 +54,10 @@ When teardown of a provisioned VM encounters a cloud provider or infrastructure 
 - **WHEN** a non-forced teardown attempt fails on its final retry attempt
 - **THEN** the booking transitions to `FAILED` with a status message indicating teardown failure and no further retries are scheduled
 
-### Requirement: Force teardown suppresses cloud destroy errors but propagates persistence failures
+### Requirement: Force teardown suppresses cloud destroy errors but retries persistence failures
 When force teardown is executed for a VM booking, the system SHALL suppress and log cloud provider destroy errors (including missing resources, out-of-band deletions, or provider API errors), ensuring the teardown can proceed even when the cloud infrastructure is absent or broken.
 
-However, the system SHALL NOT suppress database persistence errors during forced teardown. If the database update to `RELEASED` or clearing the status message fails, the task SHALL raise the database exception and allow the task runner to retry the persistence operation. The task SHALL NOT return successfully when the database record failed to reach `RELEASED`.
+However, the system SHALL NOT suppress database persistence errors during forced teardown. If the database update to `RELEASED` or clearing the status message fails, the task SHALL catch the database persistence error and explicitly invoke task retries via Celery (`raise self.retry(exc=exc)`), bounded by `max_retries`. The task SHALL NOT return successfully when the database record failed to reach `RELEASED`, and SHALL NOT allow persistence exceptions to escape without scheduling a bounded retry. When retries are exhausted on persistent database failure, Celery SHALL mark the task as failed.
 
 #### Scenario: Force teardown when cloud resource is already destroyed or missing
 - **WHEN** force teardown is executed for a booking whose underlying cloud resource does not exist or raises an error indicating the resource is gone
@@ -59,9 +67,13 @@ However, the system SHALL NOT suppress database persistence errors during forced
 - **WHEN** force teardown is executed for a booking currently in `FAILED` status with an error status message
 - **THEN** the booking transitions to `RELEASED` and the status message is cleared
 
-#### Scenario: Database persistence failure during forced teardown raises error
-- **WHEN** force teardown is executed and the cloud destroy finishes (or is suppressed), but the database update to `RELEASED` fails
-- **THEN** the task raises the database persistence error and does not report a successful release
+#### Scenario: Database persistence failure during forced teardown triggers Celery retry
+- **WHEN** force teardown is executed and the cloud destroy finishes (or is suppressed), but the database update to `RELEASED` encounters a transient database error
+- **THEN** the task invokes bounded Celery retry via `self.retry` and converges to `RELEASED` on the subsequent attempt
+
+#### Scenario: Exhausted retries on persistent database failure in forced teardown
+- **WHEN** forced teardown persistently fails database updates up to `max_retries`
+- **THEN** Celery records task failure and the task does not report a successful release
 
 ### Requirement: Repeated release requests for bookings and environments behave safely
 When a user or API caller requests the release of a booking that is already in `RELEASED` or `RELEASING` status without force privileges, the system SHALL reject the request with a conflict error without changing booking status or dispatching redundant tasks.

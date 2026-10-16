@@ -6,10 +6,10 @@ In a distributed infrastructure orchestration system with asynchronous Celery wo
 
 - Specify and test idempotency guarantees for teardown execution across all resource types: provisioned VMs, static VMs, and namespaces.
 - Require `teardown_vm_task` to handle bookings already in `RELEASED` status, or non-forced executions on already `FAILED` bookings, as safe no-ops, preventing illegal transitions and unnecessary task retries upon duplicate Celery delivery.
-- Guarantee that releasing pooled resources (namespaces and static VMs) uses an atomic release claim (e.g. conditional update or row lock) so that concurrent release requests or duplicate Celery tasks never double-promote queued bookings or corrupt pool allocation invariants.
+- Guarantee that releasing pooled resources (namespaces and static VMs) executes the release claim and queue promotion within a single atomic database transaction across all release entry points (Celery worker, use case, and beat TTL task), eliminating the crash window between claim and promotion and preventing double promotion, while preserving the public API's existing 409 Conflict behavior for repeated release requests.
 - Ensure `ReleaseEnvironmentUseCase` guards in-flight child bookings: child bookings already in `RELEASING` status are not re-dispatched for teardown on repeated environment release calls, reserving forced re-dispatch exclusively for explicit administrative recovery.
 - Clarify failure semantics: distinguish successfully freed resources (`RELEASED`) from failed states (`FAILED` where cloud resources may still linger), and specify administrative force-release recovery for failed teardown children.
-- Scope exception suppression during forced teardown (`force=True`) strictly to cloud provider destroy errors (e.g. missing vApp/VM or API failures), ensuring that database persistence failures (updating status to `RELEASED`) are not swallowed and propagate to Celery for retry.
+- Scope exception suppression during forced teardown (`force=True`) strictly to cloud provider destroy errors (e.g. missing vApp/VM or API failures), ensuring that database persistence failures (updating status to `RELEASED`) explicitly invoke bounded Celery retries via `self.retry` and are never swallowed or falsely reported as successful releases.
 - Formalize retry semantics for VM teardown failures: transient errors retry up to `max_retries` while maintaining `RELEASING` status, and retry exhaustion converges deterministically to `FAILED` with an informative status message.
 - Add comprehensive unit, orchestration, and concurrent integration test suites covering:
   - Releasing the same booking or environment twice.
@@ -17,7 +17,9 @@ In a distributed infrastructure orchestration system with asynchronous Celery wo
   - Retrying teardown after transient or partial cloud failure.
   - Executing teardown when the cloud resource is already free or missing.
   - Executing teardown when the booking is already `RELEASED` or `FAILED`.
-  - Persistence failure during forced teardown ensuring it is not reported as success.
+  - Persistence failure during forced teardown triggering Celery `self.retry` and failing upon retry exhaustion.
+  - Failure/crash between release claim and promotion followed by redelivery.
+  - Racing API release against worker and TTL releases on pooled resources.
   - Repeated environment release with in-flight (`RELEASING`) children asserting no duplicate dispatch.
   - Administrative force-release recovery of a teardown-failed VM.
 
@@ -31,8 +33,8 @@ In a distributed infrastructure orchestration system with asynchronous Celery wo
 
 ## Impact
 
-- **Tasks**: `app/tasks/teardown.py` — guard terminal booking states (`RELEASED`, non-forced `FAILED`), gate pooled resource promotion behind an atomic release claim, and ensure database persistence errors in forced teardown are not swallowed.
-- **Application**: `app/application/use_cases/release_environment.py` and `release_booking.py` — skip in-flight (`RELEASING`) children to prevent duplicate teardown dispatches on repeated environment release.
-- **Repositories**: `app/infrastructure/repositories/booking_repo.py` — provide atomic conditional release claim semantics for pooled resources.
-- **Tests**: `tests/test_teardown_task.py`, `tests/test_teardown_idempotency.py`, `tests/test_dispatcher_release_environment.py`, and `tests/integration/test_pooled_release_concurrency.py` — comprehensive test coverage.
+- **Tasks**: `app/tasks/teardown.py` and `app/tasks/beat_tasks.py` — guard terminal booking states (`RELEASED`, non-forced `FAILED`), wire single-transaction atomic pooled release and promotion, and invoke explicit bounded Celery retries for database persistence errors in forced teardown.
+- **Application**: `app/application/use_cases/release_environment.py`, `release_booking.py`, and `ports.py` — skip in-flight (`RELEASING`) children on environment release, adopt atomic pooled release and promotion in use cases, and preserve 409 Conflict semantics on duplicate release calls.
+- **Repositories**: `app/infrastructure/repositories/booking_repo.py` — provide single-transaction atomic release claim and queue promotion methods (`sync_release_pooled_and_promote`, `release_pooled_and_promote`).
+- **Tests**: `tests/test_teardown_task.py`, `tests/test_teardown_idempotency.py`, `tests/test_dispatcher_release_environment.py`, `tests/test_release_booking.py`, and `tests/integration/test_pooled_release_concurrency.py` — comprehensive test coverage.
 - **APIs & Schema**: Zero breaking API changes; zero database schema migrations.
