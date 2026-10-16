@@ -60,6 +60,59 @@ MutationObserver.prototype.disconnect = function () {
     return disconnect.call(this);
 };
 """
+# The live-update stream, driven by the test (#541): htmx-sse opens `new EventSource(...)` for the
+# list's `sse-connect`, so a stand-in built on EventTarget gets real dispatch semantics (a listener
+# added during an event does not run for it). `window.sse.emit` delivers a named event to every
+# open source; `count(name)` is how many listeners for that event name the open sources hold (a
+# closed source never delivers again), `inserted` counts row elements (by id) added to the
+# document, nested ones included.
+_SSE = """
+window.sse = { sources: [], inserted: {} };
+class FakeEventSource extends EventTarget {
+    constructor(url) {
+        super();
+        this.url = url;
+        this.readyState = 1;
+        this.onopen = this.onerror = this.onmessage = null;
+        this.listeners = {};
+        window.sse.sources.push(this);
+    }
+    addEventListener(type, listener, options) {
+        (this.listeners[type] ??= new Set()).add(listener);
+        super.addEventListener(type, listener, options);
+    }
+    removeEventListener(type, listener, options) {
+        this.listeners[type]?.delete(listener);
+        super.removeEventListener(type, listener, options);
+    }
+    close() { this.readyState = 2; }
+}
+FakeEventSource.CONNECTING = 0;
+FakeEventSource.OPEN = 1;
+FakeEventSource.CLOSED = 2;
+window.EventSource = FakeEventSource;
+window.sse.emit = (name, data) => {
+    for (const source of window.sse.sources) {
+        if (source.readyState !== 2) source.dispatchEvent(new MessageEvent(name, { data }));
+    }
+};
+window.sse.count = (name) => window.sse.sources
+    .filter((source) => source.readyState !== 2)
+    .reduce((total, source) => total + (source.listeners[name]?.size ?? 0), 0);
+new MutationObserver((records) => {
+    for (const record of records) {
+        for (const node of record.addedNodes) {
+            if (node.nodeType !== 1) continue;
+            for (const tr of [node, ...node.querySelectorAll("tr[id]")]) {
+                if (tr.tagName === "TR" && tr.id) {
+                    window.sse.inserted[tr.id] = (window.sse.inserted[tr.id] ?? 0) + 1;
+                }
+            }
+        }
+    }
+}).observe(document, { childList: true, subtree: true });
+"""
+
 _NO_LISTENERS = {"resize": 0, "scroll": 0, "observers": 0}
 _ONE_MENU_LISTENERS = {"resize": 1, "scroll": 1, "observers": 1}
 
@@ -124,6 +177,7 @@ class Portal:
         self.listed: list = []  # what the bookings list returns, in order
         self.environments: list = []
         self.requests: list = []  # (method, path, form) of every mutating request
+        self.canned: dict = {}  # path -> HTML body, served instead of the app
         self.block_menu_script = False
         app.dependency_overrides[get_async_session] = lambda: AsyncMock()
         app.dependency_overrides[require_user] = lambda: user
@@ -132,6 +186,7 @@ class Portal:
         # Not entered as a context manager: that would run the app's startup (DB seeding).
         self.client = TestClient(app)
         page.add_init_script(_INSTRUMENT)
+        page.add_init_script(_SSE)
         page.route(f"{ORIGIN}/**", self._handle)
 
     def _mock_repos(self):
@@ -182,14 +237,55 @@ class Portal:
     def _row(self, booking):
         return self.client.get(f"/bookings/{booking.id}/row")
 
+    def push(self, kind, record):
+        """Deliver `record`'s live row update, as routes/events.py frames it, to the page."""
+        html = self.client.get(f"/{kind}s/{record.id}/row").text
+        # EventSource rejoins the `data:` lines with \n.
+        data = "\n".join(html.splitlines())
+        self.page.evaluate(
+            "([name, data]) => window.sse.emit(name, data)",
+            [f"{kind}-{record.id}", data],
+        )
+
+    def _environment_mutation(self, env_id, action, form):
+        from app.presentation.routes.environments import _annotate
+
+        env = next(e for e in self.environments if str(e.id) == env_id)
+        if action == "/extend":
+            env.expires_at += timedelta(minutes=int(form["extend_minutes"]))
+        else:
+            for child in env.bookings:
+                child.status = BookingStatus.RELEASING
+        _annotate(env)
+        return self.client.get(f"/environments/{env.id}/row")
+
     def _handle(self, route, request):
         url = urlsplit(request.url)
         path = url.path + (f"?{url.query}" if url.query else "")
+        if url.path in self.canned:
+            route.fulfill(
+                status=200,
+                headers={"content-type": "text/html"},
+                body=self.canned[url.path],
+            )
+            return
         if url.path == "/events/stream" or url.path.endswith("/reconcile"):
             route.fulfill(status=204)  # no live updates or reconciliation during a test
             return
         if self.block_menu_script and url.path == "/static/js/row_menu.js":
             route.fulfill(status=404, body="not found")
+            return
+        # Environment mutations, likewise answered with the row the real /row endpoint renders.
+        match = re.fullmatch(r"/environments/([0-9a-f-]+)(/extend)?", url.path)
+        if match and request.method in ("PUT", "DELETE"):
+            form = {k: v[0] for k, v in parse_qs(request.post_data or "").items()}
+            self.requests.append((request.method, url.path, form))
+            response = self._environment_mutation(match.group(1), match.group(2), form)
+            route.fulfill(
+                status=response.status_code,
+                headers={"content-type": "text/html"},
+                body=response.content,
+            )
             return
         # Booking mutations: the browser sends the real HTMX request; the response is the row the
         # real /row endpoint renders after applying the change, as the real handler would.

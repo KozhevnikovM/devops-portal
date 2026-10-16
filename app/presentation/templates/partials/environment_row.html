@@ -13,6 +13,11 @@
     data-key="{{ list_key(environment) }}"
     {% if live %}
         sse-swap="environment-{{ environment.id }}"
+        {#- A live update is a whole <tr>: replace the row, never nest into it (#541). settle:0ms
+            registers the new row's own live listener at once, so an update right behind this
+            one is not dropped; hx-disinherit keeps the row's controls on their own swaps. -#}
+        hx-swap="outerHTML settle:0ms"
+        hx-disinherit="hx-swap"
         data-row-version="{{ environment_row_version(environment) }}"
         data-live="{{ live }}"
     {% endif %}
