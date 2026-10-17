@@ -1,5 +1,5 @@
 import logging
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from datetime import UTC, datetime, timedelta
 from typing import cast as type_cast
 from uuid import UUID
@@ -896,6 +896,55 @@ class BookingRepository:
         await session.commit()
         await _apublish_lifecycle(session, model)
 
+    async def claim_status_transition(
+        self,
+        session: AsyncSession,
+        booking_id: UUID,
+        target_status: BookingStatus,
+        eligible_statuses: Collection[BookingStatus],
+        actor_id: str = "system",
+    ) -> bool:
+        if target_status == BookingStatus.RELEASED:
+            model = await _async_release_target(session, booking_id)
+        else:
+            result = await session.execute(
+                select(BookingModel)
+                .where(BookingModel.id == booking_id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
+            model = result.scalar_one_or_none()
+            if model is None:
+                raise BookingNotFoundError(booking_id)
+
+        try:
+            current_status = BookingStatus(model.status)
+        except ValueError:
+            raise ValueError(
+                f"Booking {booking_id} has unrecognised status {model.status!r} in the database"
+            )
+
+        if current_status not in eligible_statuses:
+            await session.commit()
+            return False
+
+        if current_status != target_status:
+            _check_transition(model.status, target_status, booking_id)
+            old_status = model.status
+            model.status = target_status.value
+            session.add(
+                BookingAuditModel(
+                    booking_id=booking_id,
+                    actor_id=actor_id,
+                    action="STATUS_CHANGED",
+                    old_status=old_status,
+                    new_status=target_status.value,
+                )
+            )
+            await session.commit()
+            await _apublish_lifecycle(session, model)
+        return True
+
     async def list_all(
         self,
         session: AsyncSession,
@@ -1297,6 +1346,51 @@ class BookingRepository:
         )
         session.commit()
         _publish_lifecycle(session, model)
+
+    def sync_claim_status_transition(
+        self,
+        session: Session,
+        booking_id: UUID,
+        target_status: BookingStatus,
+        eligible_statuses: Collection[BookingStatus],
+        actor_id: str = "system",
+    ) -> bool:
+        if target_status == BookingStatus.RELEASED:
+            model = _sync_release_target(session, booking_id)
+        else:
+            model = session.get(
+                BookingModel, booking_id, populate_existing=True, with_for_update=True
+            )
+            if model is None:
+                raise BookingNotFoundError(booking_id)
+
+        try:
+            current_status = BookingStatus(model.status)
+        except ValueError:
+            raise ValueError(
+                f"Booking {booking_id} has unrecognised status {model.status!r} in the database"
+            )
+
+        if current_status not in eligible_statuses:
+            session.commit()
+            return False
+
+        if current_status != target_status:
+            _check_transition(model.status, target_status, booking_id)
+            old_status = model.status
+            model.status = target_status.value
+            session.add(
+                BookingAuditModel(
+                    booking_id=booking_id,
+                    actor_id=actor_id,
+                    action="STATUS_CHANGED",
+                    old_status=old_status,
+                    new_status=target_status.value,
+                )
+            )
+            session.commit()
+            _publish_lifecycle(session, model)
+        return True
 
     def sync_set_status_message(
         self,

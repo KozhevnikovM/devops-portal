@@ -15,7 +15,7 @@ The one pragmatic concession (see `docs/refactor/repository-interfaces.md`): the
 parameter" contract — rather than introducing a Unit-of-Work abstraction.
 """
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Collection, Sequence
 from contextlib import AbstractContextManager
 from datetime import datetime
 from typing import Any, Protocol, TypeVar, runtime_checkable
@@ -81,6 +81,14 @@ class BookingRepositoryPort(Protocol):
         vm_password: str | None = None,
         actor_id: str = "system",
     ) -> None: ...
+    async def claim_status_transition(
+        self,
+        session: AsyncSession,
+        booking_id: UUID,
+        target_status: BookingStatus,
+        eligible_statuses: Collection[BookingStatus],
+        actor_id: str = "system",
+    ) -> bool: ...
     async def extend(
         self,
         session: AsyncSession,

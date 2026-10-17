@@ -6,9 +6,11 @@ from app.application.ports import EnvironmentRepositoryPort
 from app.application.use_cases._permissions import can_manage
 from app.domain.entities import Environment, User
 from app.domain.enums import BookingStatus
-from app.domain.exceptions import BookingPermissionError, EnvironmentError, EnvironmentNotFoundError
+from app.domain.exceptions import (
+    BookingPermissionError,
+)
 
-_TERMINAL = {BookingStatus.RELEASED, BookingStatus.FAILED}
+_TERMINAL = {BookingStatus.RELEASED}
 
 
 class ReleaseEnvironmentUseCase:
@@ -19,22 +21,33 @@ class ReleaseEnvironmentUseCase:
     its derived status becomes RELEASED once the children settle.
     """
 
-    def __init__(self, env_repo: EnvironmentRepositoryPort, release_booking_use_case) -> None:
+    def __init__(
+        self, env_repo: EnvironmentRepositoryPort, release_booking_use_case
+    ) -> None:
         self._env_repo = env_repo
         self._release = release_booking_use_case
 
     async def execute(
-        self, session: AsyncSession, environment_id: UUID, current_user: User, *, force: bool = False,
+        self,
+        session: AsyncSession,
+        environment_id: UUID,
+        current_user: User,
+        *,
+        force: bool = False,
         request_id: str | None = None,
     ) -> Environment:
         env = await self._env_repo.get(session, environment_id)
 
-        if not force and not can_manage(owner_id=env.user_id, created_by=env.created_by, user=current_user):
+        if not force and not can_manage(
+            owner_id=env.user_id, created_by=env.created_by, user=current_user
+        ):
             raise BookingPermissionError("Not the environment owner")
 
         for child in env.bookings:
             if child.status in _TERMINAL:
                 continue  # idempotent — already gone
-            await self._release.execute(session, child.id, current_user, force=True, request_id=request_id)
+            await self._release.execute(
+                session, child.id, current_user, force=True, request_id=request_id
+            )
 
         return await self._env_repo.get(session, environment_id)
