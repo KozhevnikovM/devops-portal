@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -11,7 +11,7 @@ from app.domain.exceptions import BookingNotFoundError
 
 
 def _make_booking(status: BookingStatus) -> Booking:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     return Booking(
         id=uuid4(),
         user_id="dev-user",
@@ -129,7 +129,7 @@ async def test_release_booking_atomic_claim_winner_dispatches_teardown():
         password_hash="",
         role="user",
         is_active=True,
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
     booking.user_id = str(user.id)
 
@@ -165,7 +165,7 @@ async def test_release_booking_atomic_claim_loser_does_not_dispatch_teardown():
         password_hash="",
         role="user",
         is_active=True,
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
     booking.user_id = str(user.id)
 
@@ -200,7 +200,7 @@ async def test_release_pooled_booking_atomic_claim_winner_promotes():
         password_hash="",
         role="user",
         is_active=True,
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
     booking.user_id = str(user.id)
 
@@ -239,7 +239,7 @@ async def test_release_pooled_booking_atomic_claim_loser_does_not_promote():
         password_hash="",
         role="user",
         is_active=True,
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
     booking.user_id = str(user.id)
 
@@ -274,7 +274,7 @@ async def test_release_failed_booking_preserves_teardown():
         password_hash="",
         role="user",
         is_active=True,
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
     booking.user_id = str(user.id)
 
@@ -312,7 +312,7 @@ async def test_force_release_already_released_or_releasing_is_safe_noop():
         password_hash="",
         role="admin",
         is_active=True,
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
 
     uc = ReleaseBookingUseCase(repo, dispatcher)

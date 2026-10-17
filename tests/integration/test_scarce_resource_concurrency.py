@@ -12,7 +12,7 @@ Exercises race conditions across independent PostgreSQL sessions and row locks:
 import asyncio
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock
 from uuid import UUID, uuid4
 
@@ -100,7 +100,7 @@ async def _isolate_scarce_resource(
 
 async def _seed_user(engine: AsyncEngine) -> User:
     user_id = uuid4()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     user = User(
         id=user_id,
         username=f"user-{user_id.hex[:8]}",
@@ -126,7 +126,7 @@ async def _seed_user(engine: AsyncEngine) -> User:
 
 async def _seed_namespace(engine: AsyncEngine) -> UUID:
     ns_id = uuid4()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     async with AsyncSession(engine, expire_on_commit=False) as session:
         session.add(
             NamespaceModel(
@@ -144,7 +144,7 @@ async def _seed_namespace(engine: AsyncEngine) -> UUID:
 
 async def _seed_static_vm(engine: AsyncEngine) -> UUID:
     vm_id = uuid4()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     async with AsyncSession(engine, expire_on_commit=False) as session:
         session.add(
             StaticVMModel(
@@ -529,7 +529,7 @@ async def test_concurrent_worker_queue_promotion(
         svm_ids = [res_id]
 
     # Clean up any pre-existing QUEUED bookings for this type and seed two QUEUED bookings
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     q1_id = uuid4()
     q2_id = uuid4()
     async with AsyncSession(async_engine, expire_on_commit=False) as session:
@@ -679,7 +679,7 @@ async def test_concurrent_environment_release(async_engine: AsyncEngine):
     vm_child_id = uuid4()
     pooled_child_id = uuid4()
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     async with AsyncSession(async_engine, expire_on_commit=False) as session:
         session.add(
             EnvironmentModel(
@@ -818,7 +818,7 @@ async def test_overlapping_read_release_race(async_engine: AsyncEngine):
     """
     user = await _seed_user(async_engine)
     vm_id = uuid4()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     async with AsyncSession(async_engine, expire_on_commit=False) as session:
         session.add(
@@ -951,7 +951,7 @@ async def test_allocation_races_with_release(
         fk_field = "static_vm_id"
 
     # Seed initial booking holding the resource
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     held_booking_id = uuid4()
     async with AsyncSession(async_engine, expire_on_commit=False) as session:
         session.add(
