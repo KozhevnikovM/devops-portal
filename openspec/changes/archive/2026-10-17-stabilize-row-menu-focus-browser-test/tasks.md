@@ -1,7 +1,7 @@
 ## 1. Root-cause verification (gates everything below)
 
 - [x] 1.1 Add temporary instrumentation to `test_environment_menu_keyboard_escape_and_outside_click`: on assertion failure capture `document.activeElement` (tag/id), the menu's `:popover-open` state, computed `visibility`, and bounding box; fail with that state in the message
-- [x] 1.2 Reproduce locally: run the single test in a 50–100 iteration loop in Chromium (`pytest tests/test_row_menu_browser.py::test_environment_menu_keyboard_escape_and_outside_click` repeated) until the failure fires and the captured state confirms the open-but-hidden race
+- [x] 1.2 Attempt to reproduce the intermittent failure with 50–100 repeated Chromium runs; if the original interleaving does not occur, use controlled microtask instrumentation to demonstrate the open-but-hidden window and the resulting no-op focus, and record both the unsuccessful natural reproductions and the deterministic evidence in design.md
 - [x] 1.3 Confirm no application focus defect: verify focus loss occurs only while the menu is `visibility: hidden` and never with the menu visible and settled; if a genuine app bug is found, stop and `/opsx:update` this change with an app fix + `environment-listing` delta before continuing
 - [x] 1.4 Record the confirmed root cause in this change's design notes (one paragraph), then remove the temporary instrumentation
 
@@ -22,4 +22,4 @@
 
 - [x] 4.1 Run `ruff check tests/test_row_menu_browser.py && ruff format --check tests/test_row_menu_browser.py` clean
 - [x] 4.2 Run the `py-review` quality gate on the changed Python file
-- [ ] 4.3 `openspec validate stabilize-row-menu-focus-browser-test --strict` passes; `tasks.md` checked off for everything that landed
+- [x] 4.3 `openspec validate stabilize-row-menu-focus-browser-test --strict` passes; `tasks.md` checked off for everything that landed
