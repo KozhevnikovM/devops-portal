@@ -39,7 +39,9 @@ In `teardown_vm_task`, before initiating Terraform destruction, the worker SHALL
 
 While `terraform.apply()` or `terraform.destroy()` is executing, the active worker SHALL actively renew `workspace-lock:{booking_id}` via a periodic heartbeat loop. If renewal fails or ownership is lost, the worker SHALL fail closed: immediately aborting the active Terraform subprocess and exiting without performing database status updates (`READY`, `RELEASED`, or `FAILED`).
 
-The system SHALL NOT force-unlock a Terraform state lock during teardown unless the worker actively holds the valid `workspace-lock` token. Because the workspace lease is unified across both apply and destroy, holding the token guarantees no active apply or destroy task is running on the workspace, proving that any state lock present in Terraform state backend is an abandoned lock from a crashed process.
+Terraform subprocesses SHALL run under a supervisor independent of the Celery task worker. The supervisor SHALL own each Terraform process group and record an identity including workspace, unique run/lease epoch, host/container, PID and process start time, and process-group identity. It SHALL retain the workspace reservation while any process in that run group remains alive, including after worker death, and SHALL terminate and reap the full group on cancellation or confirmed worker loss before releasing the reservation.
+
+Redis workspace lease ownership or expiry alone SHALL NOT be considered proof that a Terraform state lock is stale. `TerraformVcdAdapter._destroy_state()` SHALL force-unlock only after the supervisor authoritatively confirms that the matching run's entire process group is dead and reaped. If a process is active, identity is missing or mismatched, or supervisor/host status is unavailable or ambiguous, the adapter SHALL fail closed: do not force-unlock, preserve the state lock and booking for retry or operator recovery.
 
 `teardown_vm_task` SHALL declare task-level unlimited retries (`max_retries=None` on the Celery task decorator) so that Celery's shared internal retry counter (`request.retries`) does not impose a hard limit on contention wait rescheduling. To prevent conflation of contention waiting with infrastructure failures and ensure strictly bounded failure retries:
 - Cloud destroy failures SHALL be tracked via an explicit, separately persisted Redis counter (`teardown-destroy-attempts:{booking_id}`) with an explicitly safe multi-day lifetime (7 days, refreshed by the lease heartbeat during execution) that survives the full teardown lifecycle without premature expiration between failed attempts. Crucially, durable terminal status updates (`FAILED` or `RELEASED`) SHALL be committed to PostgreSQL before Redis counters are deleted. The task SHALL allow at most `TEARDOWN_MAX_DESTROY_RETRIES` (2) destroy failure retries before converging to `FAILED`. If a worker crashes or encounters a database error while attempting to transition an exhausted booking to `FAILED`, the exhausted retry counter SHALL remain preserved in Redis; redelivered tasks SHALL observe the exhausted counter, skip repeating `terraform.destroy()`, and directly re-attempt the `FAILED` database commit. The Redis counter SHALL be cleared only after the terminal status is durably committed, or upon administrative force-release recovery. Contention rescheduling SHALL NOT increment this counter.
@@ -132,10 +134,18 @@ The system SHALL also provide an idempotent startup reconciler in `app/main.py` 
 - **THEN** teardown cannot acquire `workspace-lock:{booking_id}` and enters bounded contention wait
 - **AND** teardown reschedules via Celery retry if provisioning remains active throughout the wait budget without executing destroy, force-unlocking state locks, or consuming destroy failure retry limits
 
-#### Scenario: Force-unlock permitted only with valid workspace lease token
-- **WHEN** `TerraformVcdAdapter._destroy_state()` encounters a reported Terraform state lock during teardown
-- **THEN** the adapter issues `terraform force-unlock` only if the active worker holds the valid `workspace-lock` token
-- **AND** workers lacking the active lease token are strictly forbidden from issuing `terraform force-unlock`
+#### Scenario: Celery worker dies while Terraform subprocess remains alive
+- **WHEN** the worker receives SIGKILL/OOM while its supervised Terraform child is still running and the Redis lease would otherwise expire
+- **THEN** the supervisor retains the workspace reservation until that process group exits or is terminated and reaped
+- **AND** a redelivered task neither starts another Terraform operation nor force-unlocks the live state lock
+
+#### Scenario: Terraform process is conclusively reaped before stale-lock recovery
+- **WHEN** the supervisor confirms the matching process group is fully dead and reaped for the recorded run identity
+- **THEN** teardown may force-unlock the reported state lock and retry destroy
+
+#### Scenario: Supervisor cannot determine Terraform process activity
+- **WHEN** the supervisor is unavailable, the run identity is missing/mismatched, or process status is otherwise uncertain
+- **THEN** teardown does not force-unlock and leaves the booking recoverable for a later retry or operator action
 
 #### Scenario: Teardown duration exceeding base lease TTL avoids premature broker redelivery
 - **WHEN** a provisioned VM teardown executes for longer than `VCD_TOKEN_LOCK_TTL` with active heartbeat renewal
