@@ -17,7 +17,7 @@ The click-path helper `_open()` already waits for `:popover-open` **and** `getCo
 - Condition-based focus assertion instead of a single immediate sample.
 - Root cause demonstrated with captured UI state before any code changes.
 - Stability evidence: ≥50 consecutive Chromium runs of the repaired test, then the full suite in required mode.
-- A spec requirement making suite determinism durable policy.
+- A spec requirement scoped to this race: menu-open readiness synchronization for row action menu tests, plus the repair-not-masked policy for intermittent failures.
 
 **Non-Goals:**
 - Changing `row_menu.js` placement or the hide-while-positioning behavior.
@@ -37,7 +37,7 @@ Temporarily wrap the failing assertions to capture, at failure time: `document.a
 Extract the open-and-visible wait from `_open()` into a helper both paths call; the keyboard path invokes it after pressing Enter and before touching menu contents. Rejected alternative: duplicating the two-condition wait inline in the keyboard test — two hand-rolled encodings of one condition is precisely how this divergence happened.
 
 **4. Condition-based focus assertion.**
-Replace the immediate boolean assert with a bounded wait for the menu to contain `document.activeElement`. A slow-but-correct controller passes; a real focus defect still fails, within Playwright's timeout, with a message naming the observed state. The downstream assertions (Escape closes, focus returns to the trigger, outside click dismisses, second menu closes the first, listeners disposed) keep their current form and coverage — they act only once focus inside the menu is confirmed, and each is already a deterministic consequence of the previous step.
+Replace the immediate boolean assert with a bounded wait for the menu to contain `document.activeElement`. A slow-but-correct controller passes; a real focus defect still fails, within Playwright's timeout, with a message naming the observed state. The downstream assertions (Escape closes, focus returns to the trigger, outside click dismisses, second menu closes the first, listeners disposed) keep their current form and coverage — they act only once focus inside the menu is confirmed, and each is already a deterministic consequence of the previous step. The spec requirement is deliberately scoped to this menu-opening readiness race; existing fixed waits elsewhere in the suite (`_open()`'s frame-sampling timeout, `_assert_reanchored`'s settle wait, the one-shot post-Escape focus assert) are not mandated to change.
 
 **5. The fix lives in `tests/test_row_menu_browser.py` only.**
 No new fixtures, markers, or conftest changes; `_open()` keeps its frame-recording behavior.
