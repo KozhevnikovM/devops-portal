@@ -2,18 +2,25 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.entities import Booking, User
-from app.domain.enums import BookingStatus, ResourceType
 from app.application.ports import BookingRepositoryPort, TaskDispatcher
 from app.application.use_cases._permissions import can_manage
-from app.domain.exceptions import BookingError, BookingPermissionError, EnvironmentChildReleaseError
+from app.domain.entities import Booking, User
+from app.domain.enums import BookingStatus, ResourceType
+from app.domain.exceptions import (
+    BookingError,
+    BookingPermissionError,
+    EnvironmentChildReleaseError,
+)
 
 # A booking the owner may release directly (it holds a live resource).
 _RELEASABLE_STATUSES = {BookingStatus.READY, BookingStatus.FAILED}
 # In-flight states an admin may force-delete (provisioning never reached a steady resource).
 # CONFIGURING included: the VM exists in VCD, so an abandoned config still tears it down.
 _FORCE_DELETABLE_STATUSES = {
-    BookingStatus.PENDING, BookingStatus.PROVISIONING, BookingStatus.CONFIGURING, BookingStatus.RETRY,
+    BookingStatus.PENDING,
+    BookingStatus.PROVISIONING,
+    BookingStatus.CONFIGURING,
+    BookingStatus.RETRY,
 }
 # States that are not safe for an ordinary release (work is mid-flight).
 _IN_FLIGHT_STATUSES = {*_FORCE_DELETABLE_STATUSES, BookingStatus.RELEASING}
@@ -34,12 +41,20 @@ class ReleaseBookingUseCase:
         self._dispatcher = dispatcher
 
     async def execute(
-        self, session: AsyncSession, booking_id: UUID, current_user: User, force: bool = False,
+        self,
+        session: AsyncSession,
+        booking_id: UUID,
+        current_user: User,
+        force: bool = False,
         request_id: str | None = None,
     ) -> Booking:
-        booking = await self._repo.get(session, booking_id)  # raises BookingNotFoundError
+        booking = await self._repo.get(
+            session, booking_id
+        )  # raises BookingNotFoundError
 
-        if not can_manage(owner_id=booking.user_id, created_by=booking.created_by, user=current_user):
+        if not can_manage(
+            owner_id=booking.user_id, created_by=booking.created_by, user=current_user
+        ):
             raise BookingPermissionError("Not the booking owner")
 
         # An environment child's lifecycle belongs to its environment (#434): releasing it alone
@@ -58,26 +73,68 @@ class ReleaseBookingUseCase:
 
         if booking.status == BookingStatus.QUEUED:
             # Cancel the queue slot — holds no resource, so nothing to tear down or promote.
-            await self._repo.update_status(
-                session, booking_id, BookingStatus.RELEASED, actor_id=str(current_user.id)
+            await self._repo.claim_status_transition(
+                session,
+                booking_id,
+                BookingStatus.RELEASED,
+                {BookingStatus.QUEUED},
+                actor_id=str(current_user.id),
             )
         else:
             if not is_admin_force_delete:
                 if booking.status in _IN_FLIGHT_STATUSES:
                     raise BookingError("Cannot release an in-flight booking")
                 if booking.status not in _RELEASABLE_STATUSES:
-                    raise BookingError(f"Cannot release booking with status {booking.status.value}")
+                    raise BookingError(
+                        f"Cannot release booking with status {booking.status.value}"
+                    )
 
-            if booking.resource_type in (ResourceType.NAMESPACE, ResourceType.STATIC_VM):
+            if booking.resource_type in (
+                ResourceType.NAMESPACE,
+                ResourceType.STATIC_VM,
+            ):
                 # Pooled resource — return it to the pool, then hand it to the next queued booking.
-                await self._repo.update_status(
-                    session, booking_id, BookingStatus.RELEASED, actor_id=str(current_user.id)
+                eligible = (
+                    {
+                        BookingStatus.READY,
+                        BookingStatus.FAILED,
+                        BookingStatus.QUEUED,
+                        *_FORCE_DELETABLE_STATUSES,
+                    }
+                    if is_admin_force_delete
+                    else _RELEASABLE_STATUSES
                 )
-                await self._repo.promote_next_queued(session, booking.resource_type.value)
+                claimed = await self._repo.claim_status_transition(
+                    session,
+                    booking_id,
+                    BookingStatus.RELEASED,
+                    eligible,
+                    actor_id=str(current_user.id),
+                )
+                if claimed:
+                    await self._repo.promote_next_queued(
+                        session, booking.resource_type.value
+                    )
             else:
-                await self._repo.update_status(
-                    session, booking_id, BookingStatus.RELEASING, actor_id=str(current_user.id)
+                eligible = (
+                    {
+                        BookingStatus.READY,
+                        BookingStatus.FAILED,
+                        *_FORCE_DELETABLE_STATUSES,
+                    }
+                    if is_admin_force_delete
+                    else _RELEASABLE_STATUSES
                 )
-                self._dispatcher.dispatch_teardown(str(booking_id), request_id=request_id)
+                claimed = await self._repo.claim_status_transition(
+                    session,
+                    booking_id,
+                    BookingStatus.RELEASING,
+                    eligible,
+                    actor_id=str(current_user.id),
+                )
+                if claimed:
+                    self._dispatcher.dispatch_teardown(
+                        str(booking_id), request_id=request_id
+                    )
 
         return await self._repo.get(session, booking_id)

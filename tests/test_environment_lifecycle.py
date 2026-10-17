@@ -73,6 +73,7 @@ async def test_force_releases_in_flight_booking():
     releasing.id = b.id
     repo = MagicMock()
     repo.get = AsyncMock(side_effect=[b, releasing])
+    repo.claim_status_transition = AsyncMock(return_value=True)
     repo.update_status = AsyncMock()
     dispatcher = MagicMock()
     uc = ReleaseBookingUseCase(repo, dispatcher)

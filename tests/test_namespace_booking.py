@@ -1,4 +1,4 @@
-from datetime import datetime, timezone, timedelta
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
@@ -7,13 +7,13 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.domain.entities import Booking
-from app.domain.pagination import KeysetPage
 from app.domain.enums import BookingStatus, ResourceType
 from app.domain.exceptions import NamespaceUnavailableError
+from app.domain.pagination import KeysetPage
 
 
 def _make_ns_booking(**kwargs) -> Booking:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     return Booking(
         id=kwargs.get("id", uuid4()),
         user_id=kwargs.get("user_id", "dev-user"),
@@ -31,9 +31,9 @@ def _make_ns_booking(**kwargs) -> Booking:
 
 @pytest.fixture
 def client():
-    from app.main import app
     from app.infrastructure.auth import require_user
     from app.infrastructure.database.session import get_async_session
+    from app.main import app
     from tests.conftest import make_fake_admin
 
     session_mock = AsyncMock()
@@ -46,12 +46,15 @@ def client():
 
 # ── Use case ──────────────────────────────────────────────────────────────────
 
+
 @pytest.mark.asyncio
 async def test_use_case_allocates_free_namespace():
     from app.application.use_cases.book_namespace import BookNamespaceUseCase
 
     ns_id = uuid4()
-    ns_model = SimpleNamespace(id=ns_id, name="team-a-dev", cluster_name="prod", api_url=None, is_active=True)
+    ns_model = SimpleNamespace(
+        id=ns_id, name="team-a-dev", cluster_name="prod", api_url=None, is_active=True
+    )
 
     repo = MagicMock()
     repo.create = AsyncMock(side_effect=lambda session, booking: booking)
@@ -74,7 +77,9 @@ async def test_use_case_allocates_free_namespace():
 async def test_use_case_rejects_inactive_namespace():
     from app.application.use_cases.book_namespace import BookNamespaceUseCase
 
-    ns_model = SimpleNamespace(id=uuid4(), name="x", cluster_name="c", api_url=None, is_active=False)
+    ns_model = SimpleNamespace(
+        id=uuid4(), name="x", cluster_name="c", api_url=None, is_active=False
+    )
     repo = MagicMock()
     repo.create = AsyncMock()
     ns_repo = MagicMock()
@@ -91,7 +96,9 @@ async def test_use_case_rejects_inactive_namespace():
 async def test_use_case_rejects_held_namespace():
     from app.application.use_cases.book_namespace import BookNamespaceUseCase
 
-    ns_model = SimpleNamespace(id=uuid4(), name="x", cluster_name="c", api_url=None, is_active=True)
+    ns_model = SimpleNamespace(
+        id=uuid4(), name="x", cluster_name="c", api_url=None, is_active=True
+    )
     repo = MagicMock()
     repo.create = AsyncMock()
     ns_repo = MagicMock()
@@ -106,6 +113,7 @@ async def test_use_case_rejects_held_namespace():
 
 # ── POST /bookings (namespace) ────────────────────────────────────────────────
 
+
 def test_post_booking_namespace_returns_row(client):
     cl, _ = client
     booking = _make_ns_booking()
@@ -113,7 +121,11 @@ def test_post_booking_namespace_returns_row(client):
         mock_uc.execute = AsyncMock(return_value=booking)
         resp = cl.post(
             "/bookings",
-            data={"resource_type": "NAMESPACE", "namespace_id": str(booking.namespace_id), "ttl_minutes": "240"},
+            data={
+                "resource_type": "NAMESPACE",
+                "namespace_id": str(booking.namespace_id),
+                "ttl_minutes": "240",
+            },
         )
 
     assert resp.status_code == 201
@@ -124,11 +136,17 @@ def test_post_booking_namespace_returns_row(client):
 def test_post_booking_namespace_json(client):
     cl, _ = client
     booking = _make_ns_booking()
-    with patch("app.presentation.routes.api_bookings._book_namespace_use_case") as mock_uc:
+    with patch(
+        "app.presentation.routes.api_bookings._book_namespace_use_case"
+    ) as mock_uc:
         mock_uc.execute = AsyncMock(return_value=booking)
         resp = cl.post(
             "/api/bookings",
-            json={"resource_type": "NAMESPACE", "namespace_id": str(booking.namespace_id), "ttl_minutes": 240},
+            json={
+                "resource_type": "NAMESPACE",
+                "namespace_id": str(booking.namespace_id),
+                "ttl_minutes": 240,
+            },
         )
 
     assert resp.status_code == 201
@@ -141,11 +159,19 @@ def test_post_booking_namespace_json(client):
 
 def test_post_booking_namespace_unavailable_409_json(client):
     cl, _ = client
-    with patch("app.presentation.routes.api_bookings._book_namespace_use_case") as mock_uc:
-        mock_uc.execute = AsyncMock(side_effect=NamespaceUnavailableError("already booked"))
+    with patch(
+        "app.presentation.routes.api_bookings._book_namespace_use_case"
+    ) as mock_uc:
+        mock_uc.execute = AsyncMock(
+            side_effect=NamespaceUnavailableError("already booked")
+        )
         resp = cl.post(
             "/api/bookings",
-            json={"resource_type": "NAMESPACE", "namespace_id": str(uuid4()), "ttl_minutes": 240},
+            json={
+                "resource_type": "NAMESPACE",
+                "namespace_id": str(uuid4()),
+                "ttl_minutes": 240,
+            },
         )
 
     assert resp.status_code == 409
@@ -155,10 +181,14 @@ def test_post_booking_namespace_no_id_uses_any_available(client):
     """No namespace_id → 'Any available' path; the use case is called with namespace_id=None."""
     cl, _ = client
     booking = _make_ns_booking()
-    with patch("app.presentation.routes.bookings._book_namespace_use_case") as mock_uc, \
-         patch("app.presentation.routes.bookings._repo") as mock_repo:
+    with (
+        patch("app.presentation.routes.bookings._book_namespace_use_case") as mock_uc,
+        patch("app.presentation.routes.bookings._repo"),
+    ):
         mock_uc.execute = AsyncMock(return_value=booking)
-        resp = cl.post("/bookings", data={"resource_type": "NAMESPACE", "ttl_minutes": "240"})
+        resp = cl.post(
+            "/bookings", data={"resource_type": "NAMESPACE", "ttl_minutes": "240"}
+        )
 
     assert resp.status_code == 201
     assert mock_uc.execute.call_args.kwargs["namespace_id"] is None
@@ -166,25 +196,32 @@ def test_post_booking_namespace_no_id_uses_any_available(client):
 
 # ── Release (namespace) ───────────────────────────────────────────────────────
 
+
 def test_release_namespace_sets_released_without_teardown(client):
     cl, fake_user = client
     booking = _make_ns_booking(user_id=str(fake_user.id), status=BookingStatus.READY)
-    released = _make_ns_booking(id=booking.id, user_id=str(fake_user.id), status=BookingStatus.RELEASED)
+    released = _make_ns_booking(
+        id=booking.id, user_id=str(fake_user.id), status=BookingStatus.RELEASED
+    )
 
     from app.presentation.routes import api_bookings
+
     mock_repo = MagicMock()
     mock_repo.get = AsyncMock(side_effect=[booking, released])
+    mock_repo.claim_status_transition = AsyncMock(return_value=True)
     mock_repo.update_status = AsyncMock()
     mock_repo.promote_next_queued = AsyncMock()
     mock_dispatcher = MagicMock()
-    with patch.object(api_bookings._release_use_case, "_repo", mock_repo), \
-         patch.object(api_bookings._release_use_case, "_dispatcher", mock_dispatcher):
+    with (
+        patch.object(api_bookings._release_use_case, "_repo", mock_repo),
+        patch.object(api_bookings._release_use_case, "_dispatcher", mock_dispatcher),
+    ):
         resp = cl.delete(f"/api/bookings/{booking.id}")
 
     assert resp.status_code == 202
     assert resp.json()["status"] == "RELEASED"
     # status set directly to RELEASED; no teardown task queued for a namespace
-    assert mock_repo.update_status.call_args.args[2] == BookingStatus.RELEASED
+    assert mock_repo.claim_status_transition.call_args.args[2] == BookingStatus.RELEASED
     mock_dispatcher.dispatch_teardown.assert_not_called()
     # releasing a pooled resource hands it to the next queued booking
     mock_repo.promote_next_queued.assert_awaited_once()
@@ -192,13 +229,16 @@ def test_release_namespace_sets_released_without_teardown(client):
 
 # ── Teardown task (namespace) ─────────────────────────────────────────────────
 
+
 def test_teardown_task_namespace_releases_without_adapter():
     from app.tasks import teardown as teardown_mod
 
     booking = _make_ns_booking(status=BookingStatus.READY)
-    with patch.object(teardown_mod, "repo") as mock_repo, \
-         patch.object(teardown_mod, "terraform") as mock_tf, \
-         patch.object(teardown_mod, "SyncSessionLocal") as mock_session_local:
+    with (
+        patch.object(teardown_mod, "repo") as mock_repo,
+        patch.object(teardown_mod, "terraform") as mock_tf,
+        patch.object(teardown_mod, "SyncSessionLocal") as mock_session_local,
+    ):
         mock_session_local.return_value.__enter__.return_value = MagicMock()
         mock_repo.sync_get = MagicMock(return_value=booking)
         mock_repo.sync_update_status = MagicMock()
@@ -212,15 +252,18 @@ def test_teardown_task_namespace_releases_without_adapter():
 
 # ── Booking form rendering ────────────────────────────────────────────────────
 
+
 def test_namespace_page_renders_namespace_form(client):
     cl, _ = client
     ns = SimpleNamespace(id=uuid4(), name="team-a-dev", cluster_name="prod-cluster")
-    with patch("app.presentation.routes.bookings._repo") as mock_repo, \
-         patch("app.presentation.routes.bookings._image_repo") as mock_img, \
-         patch("app.presentation.routes.bookings._hw_config_repo") as mock_hw, \
-         patch("app.presentation.routes.bookings._namespace_repo") as mock_ns, \
-         patch("app.presentation.routes.bookings._static_vm_repo") as mock_svm, \
-         patch("app.presentation.routes.bookings._role_repo") as mock_role:
+    with (
+        patch("app.presentation.routes.bookings._repo") as mock_repo,
+        patch("app.presentation.routes.bookings._image_repo") as mock_img,
+        patch("app.presentation.routes.bookings._hw_config_repo") as mock_hw,
+        patch("app.presentation.routes.bookings._namespace_repo") as mock_ns,
+        patch("app.presentation.routes.bookings._static_vm_repo") as mock_svm,
+        patch("app.presentation.routes.bookings._role_repo") as mock_role,
+    ):
         mock_repo.list_page = AsyncMock(return_value=KeysetPage(items=[]))
         mock_img.list_active = AsyncMock(return_value=[])
         mock_hw.list_active = AsyncMock(return_value=[])
@@ -241,12 +284,14 @@ def test_namespace_page_renders_namespace_form(client):
 
 def test_vm_page_lists_only_vm_bookings(client):
     cl, _ = client
-    with patch("app.presentation.routes.bookings._repo") as mock_repo, \
-         patch("app.presentation.routes.bookings._image_repo") as mock_img, \
-         patch("app.presentation.routes.bookings._hw_config_repo") as mock_hw, \
-         patch("app.presentation.routes.bookings._namespace_repo") as mock_ns, \
-         patch("app.presentation.routes.bookings._static_vm_repo") as mock_svm, \
-         patch("app.presentation.routes.bookings._role_repo") as mock_role:
+    with (
+        patch("app.presentation.routes.bookings._repo") as mock_repo,
+        patch("app.presentation.routes.bookings._image_repo") as mock_img,
+        patch("app.presentation.routes.bookings._hw_config_repo") as mock_hw,
+        patch("app.presentation.routes.bookings._namespace_repo") as mock_ns,
+        patch("app.presentation.routes.bookings._static_vm_repo") as mock_svm,
+        patch("app.presentation.routes.bookings._role_repo") as mock_role,
+    ):
         mock_repo.list_page = AsyncMock(return_value=KeysetPage(items=[]))
         mock_img.list_active = AsyncMock(return_value=[])
         mock_hw.list_active = AsyncMock(return_value=[])
@@ -264,7 +309,7 @@ def test_vm_page_lists_only_vm_bookings(client):
 def test_action_menu_not_clipped_by_table_wrapper(client):
     """Regression: the bookings table wrapper must not clip the row's ⋮ dropdown."""
     cl, fake_user = client
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     booking = Booking(
         id=uuid4(),
         user_id=str(fake_user.id),
@@ -280,12 +325,14 @@ def test_action_menu_not_clipped_by_table_wrapper(client):
         vm_ip="10.0.0.1",
         owner_username=fake_user.username,
     )
-    with patch("app.presentation.routes.bookings._repo") as mock_repo, \
-         patch("app.presentation.routes.bookings._image_repo") as mock_img, \
-         patch("app.presentation.routes.bookings._hw_config_repo") as mock_hw, \
-         patch("app.presentation.routes.bookings._namespace_repo") as mock_ns, \
-         patch("app.presentation.routes.bookings._static_vm_repo") as mock_svm, \
-         patch("app.presentation.routes.bookings._role_repo") as mock_role:
+    with (
+        patch("app.presentation.routes.bookings._repo") as mock_repo,
+        patch("app.presentation.routes.bookings._image_repo") as mock_img,
+        patch("app.presentation.routes.bookings._hw_config_repo") as mock_hw,
+        patch("app.presentation.routes.bookings._namespace_repo") as mock_ns,
+        patch("app.presentation.routes.bookings._static_vm_repo") as mock_svm,
+        patch("app.presentation.routes.bookings._role_repo") as mock_role,
+    ):
         mock_repo.list_page = AsyncMock(return_value=KeysetPage(items=[booking]))
         mock_img.list_active = AsyncMock(return_value=[])
         mock_hw.list_active = AsyncMock(return_value=[])
@@ -305,12 +352,14 @@ def test_action_menu_not_clipped_by_table_wrapper(client):
 
 def test_header_nav_shows_booking_types(client):
     cl, _ = client
-    with patch("app.presentation.routes.bookings._repo") as mock_repo, \
-         patch("app.presentation.routes.bookings._image_repo") as mock_img, \
-         patch("app.presentation.routes.bookings._hw_config_repo") as mock_hw, \
-         patch("app.presentation.routes.bookings._namespace_repo") as mock_ns, \
-         patch("app.presentation.routes.bookings._static_vm_repo") as mock_svm, \
-         patch("app.presentation.routes.bookings._role_repo") as mock_role:
+    with (
+        patch("app.presentation.routes.bookings._repo") as mock_repo,
+        patch("app.presentation.routes.bookings._image_repo") as mock_img,
+        patch("app.presentation.routes.bookings._hw_config_repo") as mock_hw,
+        patch("app.presentation.routes.bookings._namespace_repo") as mock_ns,
+        patch("app.presentation.routes.bookings._static_vm_repo") as mock_svm,
+        patch("app.presentation.routes.bookings._role_repo") as mock_role,
+    ):
         mock_repo.list_page = AsyncMock(return_value=KeysetPage(items=[]))
         mock_img.list_active = AsyncMock(return_value=[])
         mock_hw.list_active = AsyncMock(return_value=[])
