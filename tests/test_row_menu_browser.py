@@ -375,15 +375,21 @@ def _ids(kind, record):
     return f"{kind}-{record.id}-menu", f"{kind}-{record.id}-menu-trigger"
 
 
+def _wait_ready(page, menu):
+    """Open and positioned: row_menu.js holds `visibility: hidden` until its toggle handler
+    places the menu (#552) — between those, focus into the menu is a silent no-op."""
+    page.wait_for_function(
+        "(m) => m.matches(':popover-open') && getComputedStyle(m).visibility !== 'hidden'",
+        arg=menu.element_handle(),
+    )
+
+
 def _open(page, kind, record):
     menu_id, trigger_id = _ids(kind, record)
     page.evaluate(_RECORD_FRAMES, [menu_id, trigger_id])
     page.locator(f"#{trigger_id}").click()
     menu = page.locator(f"#{menu_id}")
-    page.wait_for_function(
-        "(m) => m.matches(':popover-open') && getComputedStyle(m).visibility !== 'hidden'",
-        arg=menu.element_handle(),
-    )
+    _wait_ready(page, menu)
     page.wait_for_function(
         "window.menuFrames.length > 0 && requestAnimationFrame(() => 0)"
     )
@@ -566,12 +572,13 @@ def test_environment_menu_keyboard_escape_and_outside_click(environments):
     trigger, menu = page.locator(f"#{trigger_id}"), page.locator(f"#{menu_id}")
     trigger.focus()
     page.keyboard.press("Enter")
-    page.wait_for_function(
-        "(m) => m.matches(':popover-open')", arg=menu.element_handle()
-    )
+    _wait_ready(page, menu)
     # Escape from a control inside the menu closes it and returns focus to the trigger.
     menu.locator('input[name="name"]').focus()
-    assert menu.evaluate("(m) => m.contains(document.activeElement)")
+    # Wait for the focus to land rather than sampling it once, uncontrolled (#552).
+    page.wait_for_function(
+        "(m) => m.contains(document.activeElement)", arg=menu.element_handle()
+    )
     page.keyboard.press("Escape")
     assert not menu.evaluate("(m) => m.matches(':popover-open')")
     assert trigger.evaluate("(e) => e === document.activeElement")
