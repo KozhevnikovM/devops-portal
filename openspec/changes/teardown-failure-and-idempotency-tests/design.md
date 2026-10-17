@@ -42,10 +42,23 @@ Several concrete hazards exist in the current implementation:
    - **Compare-and-delete (CAS) on release**: Releasing the lease in the `finally` block MUST NOT use an unconditional `DEL`. It executes an atomic Lua script verifying token ownership before deleting (`if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end`). This prevents a delayed or stale worker whose lease expired from inadvertently deleting a newer worker's active lease.
    - **Heartbeat renewal and fail-closed semantics**: Cloud destroy operations can take several minutes and may exceed the base lease TTL. While `terraform.destroy()` executes, a background heartbeat periodically renews the lease TTL (e.g. extending every `VCD_TOKEN_LOCK_TTL // 3` seconds via Lua token check). If renewal fails or lease ownership is lost (e.g. network partition or node eviction), the worker fails closed: it immediately aborts the active destroy subprocess (SIGTERM/SIGKILL) and exits without updating database status (`RELEASED` or `FAILED`) and without deleting the Redis key, ensuring a stale worker never overwrites state or destroys resources while another worker has taken over.
    - **State lock protection**: `TerraformVcdAdapter._destroy_state()` force-unlocks reported state locks to recover from stale locks left by crashes. To prevent concurrent workers from force-unlocking each other's live locks, force-unlock execution is strictly guarded: the adapter must verify that the active worker holds the valid teardown execution lease token. Workers lacking the active lease token are strictly forbidden from issuing `terraform force-unlock`.
-   - **Contention wait and Celery retry rescheduling**: If a competing task arrives and finds the lease held by another worker, it polls with bounded wait for the active destroy to complete:
-     - If the holder completes and commits `RELEASED` (or settles in `FAILED` for non-forced teardown), the competing task observes the terminal status and exits cleanly as an acknowledged no-op.
-     - If the holder crashes and its lease expires without renewal, the waiting task acquires the lease and executes teardown to completion.
-     - If the contention wait budget expires while the holder is still actively destroying (`booking.status == BookingStatus.RELEASING`), the competing task MUST NOT return success or treat the task as finished, as doing so would prematurely acknowledge message delivery while release is ongoing. Instead, it reschedules itself via Celery retry (`raise self.retry(countdown=30)`) with a dedicated contention retry budget decoupled from destroy failure retries (`max_retries=None` or dedicated counter), ensuring it does not consume `max_retries=2` intended for infrastructure failures.
+   - **Contention wait, task-level unlimited retries, and decoupled persisted failure counters**:
+     In Celery, `self.request.retries` is a single counter incremented on every `self.retry()`. If a task is declared with `@celery_app.task(max_retries=2)`, passing `max_retries=None` to `self.retry()` does not remove the cap (it defaults back to `self.max_retries = 2`), causing `MaxRetriesExceededError` after two contention timeouts or stealing retries from real cloud failures. To achieve clean separation:
+     1. **Task-level declaration**: Declare `teardown_vm_task` with `max_retries=None` on `@celery_app.task(bind=True, max_retries=None, default_retry_delay=30)`. This removes Celery's framework-level ceiling on `self.retry()`, allowing contention rescheduling to retry as many times as necessary while the active holder heartbeats.
+     2. **Explicit separately persisted destroy failure counter**: Cloud infrastructure failures in unforced teardown are bounded strictly to `TEARDOWN_MAX_DESTROY_RETRIES = 2` using an explicit Redis counter `teardown-destroy-attempts:{booking_id}` (with TTL 3600s, atomic `INCR`). When `terraform.destroy()` fails:
+        - If `attempt <= TEARDOWN_MAX_DESTROY_RETRIES`: worker calls `raise self.retry(exc=exc, countdown=30)`.
+        - If `attempt > TEARDOWN_MAX_DESTROY_RETRIES`: worker cleans up the Redis counter, transitions booking to `FAILED` with audit message ("Teardown failed — see audit log"), and reraises `exc`.
+        - On successful release (`RELEASED`), the Redis key is deleted.
+        - Contention retries (`self.retry(countdown=30)`) never touch this counter. Even after >2 contention timeouts, a newly promoted worker that encounters a transient destroy failure has its full 2-attempt destroy retry budget intact.
+     3. **Explicit separately persisted DB-persistence counter**: In forced teardown (`force=True`), database persistence failures are bounded strictly to `TEARDOWN_MAX_DB_RETRIES = 2` using an explicit Redis counter `teardown-db-attempts:{booking_id}` (with TTL 3600s, atomic `INCR`). When DB persistence fails:
+        - If `db_attempt <= TEARDOWN_MAX_DB_RETRIES`: worker calls `raise self.retry(exc=exc, countdown=30)`.
+        - If `db_attempt > TEARDOWN_MAX_DB_RETRIES`: worker cleans up the Redis counter and reraises the persistence exception `exc`, marking the Celery task as `FAILURE`.
+        - On successful commit to `RELEASED`, the Redis key is deleted.
+     4. **Contention wait behavior**: If a competing task arrives and finds the lease held by another worker:
+        - It polls with bounded wait (e.g. 15–30s) for the active destroy to complete.
+        - If the holder completes and commits `RELEASED` (or settles in `FAILED` for non-forced teardown), the competing task observes the terminal status and exits cleanly as an acknowledged no-op.
+        - If the holder crashes and its lease expires without renewal, the waiting task acquires the lease and executes teardown to completion.
+        - If the contention wait budget expires while the holder is still actively destroying (`booking.status == BookingStatus.RELEASING`), the competing task MUST NOT return success or treat the task as finished (which would prematurely acknowledge message delivery). Instead, it reschedules execution via `raise self.retry(countdown=30)`. Thanks to `max_retries=None` and decoupled failure counters, this contention retry succeeds without hitting a Celery framework ceiling and without consuming the destroy failure retry budget.
 
 *Alternatives considered:*
 - Catching `IllegalStatusTransitionError`: Rejected because it invokes error handling, increments retry counters, and attempts to write `FAILED`.
@@ -53,6 +66,7 @@ Several concrete hazards exist in the current implementation:
 - Unconditional `DEL` on release: Rejected because a stale worker whose lease timed out can delete a newer worker's valid lease, breaking mutual exclusion.
 - Relying solely on Terraform state locks: Rejected because `TerraformVcdAdapter._destroy_state()` force-unlocks state locks to recover from stale locks, which would force-unlock a live competing worker without execution lease token validation.
 - Acknowledging success upon contention timeout: Rejected because duplicate delivery would silently drop while teardown is still in progress and may fail.
+- Relying on Celery `self.request.retries` with task `max_retries=2`: Rejected because Celery increments `self.request.retries` on every retry (including contention wait countdowns), causing contention timeouts to exhaust the failure retry budget or raise `MaxRetriesExceededError`.
 
 ### Decision 2: Atomic Single-Transaction Claim and Promotion for Pooled Resources Across All Entry Points
 Instead of relying on a read check prior to calling independent status update and promotion methods that commit separately, pooled resource release and queue promotion must execute atomically in a single database transaction:
@@ -99,15 +113,19 @@ In `teardown_vm_task(force=True)`:
 - Isolate the `asyncio.run(terraform.destroy(...))` call: trap and log Terraform/cloud provider exceptions as warnings so that destroy errors (e.g. resource already deleted out-of-band, vApp missing, or cloud API 400/404) do not block release.
 - Execute the subsequent database updates (`repo.sync_set_status_message(s, booking_uuid, None)` and `repo.sync_update_status(s, booking_uuid, BookingStatus.RELEASED)`).
 - Handle database persistence failures explicitly:
-  - Catch database persistence exceptions and invoke `raise self.retry(exc=exc)` with Celery's configured retry parameters (`max_retries=2`, `default_retry_delay=30`).
+  - Because `teardown_vm_task` has task-level `max_retries=None`, database persistence failures are bounded strictly to `TEARDOWN_MAX_DB_RETRIES = 2` using an explicit Redis counter `teardown-db-attempts:{booking_id}` (with TTL 3600s, atomic `INCR`).
+  - When database persistence fails:
+    - If `db_attempt <= TEARDOWN_MAX_DB_RETRIES`: worker invokes `raise self.retry(exc=exc, countdown=30)`.
+    - If `db_attempt > TEARDOWN_MAX_DB_RETRIES`: worker cleans up the Redis counter and reraises the original persistence exception `exc`, marking the Celery task as `FAILURE`.
+  - On successful commit to `RELEASED`, the Redis counter is deleted.
   - Do not use blanket `except Exception: pass`, which falsely acknowledges task completion while database state remains unreleased.
-  - Do not allow database persistence exceptions to escape unhandled, because `teardown_vm_task` lacks `autoretry_for` and Celery would terminate the task with `FAILURE` without retrying.
+  - Do not allow database persistence exceptions to escape unhandled without retry, because Celery would terminate the task with `FAILURE` immediately without attempting configured retries.
   - On retry, `teardown_vm_task` runs again with `force=True`: cloud destroy gracefully handles already-deleted resources, and database persistence is re-attempted.
-  - When retries are exhausted (`self.request.retries >= self.max_retries`), Celery reraises the original persistence exception `exc`, marking the task as `FAILURE`.
 
 *Alternatives considered:*
 - Catching all exceptions with `pass`: Rejected because it falsely acknowledges task completion while database state remains unreleased.
 - Unhandled re-raise without `self.retry`: Rejected because Celery marks the task `FAILURE` immediately without attempting configured retries.
+- Relying on `self.request.retries` for DB persistence: Rejected because task-level `max_retries=None` requires an explicit separately persisted counter to enforce bounded retries.
 
 ### Decision 5: Test Suite Architecture
 1. **Unit & Task Suite** (`tests/test_teardown_task.py`, `tests/test_release_booking.py`, `tests/test_dispatcher_release_environment.py`, and `tests/test_teardown_idempotency.py`):
@@ -117,11 +135,12 @@ In `teardown_vm_task(force=True)`:
    - Long-running destroy exceeding initial lease TTL: verify active heartbeat renewal maintains exclusive lease ownership throughout destroy execution.
    - Stale worker losing lease fails closed: verify that when lease ownership is lost during destroy, the stale worker aborts destroy subprocess, skips DB status updates, does not delete competitor's lease token via CAS, and does not force-unlock competitor's live Terraform state lock.
    - Contention wait timeout rescheduling: verify competing task on an active teardown does not acknowledge success when wait budget expires, and reschedules via Celery retry with countdown without consuming destruction failure retry budget.
+   - Decoupled contention and destroy failure retries: verify that after >2 contention timeouts (e.g. 3 contention retries), when the waiting worker takes over and encounters a transient destroy failure, its full 2-retry destroy failure budget (`teardown-destroy-attempts`) remains intact.
    - Worker crash recovery during VM teardown: simulate worker crash while holding the execution lease, verify redelivery acquires the lease after TTL expiration and completes teardown to `RELEASED`.
    - Duplicate delivery on `RELEASED` pooled resource (verifying no duplicate promotion).
-   - Transient cloud destroy error retry and convergence to `FAILED` on retry exhaustion.
+   - Transient cloud destroy error retry and convergence to `FAILED` on retry exhaustion via `teardown-destroy-attempts`.
    - Forced teardown with missing cloud resource converging to `RELEASED`.
-   - Forced teardown with database persistence failure invoking explicit `self.retry(exc=...)` and reraising original exception on retry exhaustion with Celery `FAILURE`.
+   - Forced teardown with database persistence failure invoking explicit `self.retry(exc=...)` via `teardown-db-attempts` and reraising original exception on retry exhaustion with Celery `FAILURE`.
    - Crash/rollback simulation between pooled release claim and promotion followed by redelivery asserting no lost promotion.
    - Release of a held pooled resource that was deactivated while held, asserting transition to `RELEASED` succeeds without promoting queued waiters to retired capacity.
    - Repeated release via `ReleaseBookingUseCase` raising `BookingError` (409 Conflict in API).
@@ -134,8 +153,8 @@ In `teardown_vm_task(force=True)`:
 ## Risks / Trade-offs
 
 - **[Risk] Concurrent duplicate VM teardown deliveries racing Terraform destroy**
-  → *Mitigation*: Redis-backed teardown execution lease (`teardown-lock:{booking_id}`) with bounded TTL, token-checked CAS release, heartbeat renewal with fail-closed cancellation, state-lock protection requiring lease token, and contention retry rescheduling guarantees mutual exclusion, preventing concurrent `terraform.destroy()` invocations and avoiding destructive state-lock force-unlock races while enabling safe redelivery.
+  → *Mitigation*: Redis-backed teardown execution lease (`teardown-lock:{booking_id}`) with bounded TTL, token-checked CAS release, heartbeat renewal with fail-closed cancellation, state-lock protection requiring lease token, and contention retry rescheduling with task-level `max_retries=None` and separately persisted counters (`teardown-destroy-attempts`, `teardown-db-attempts`) guarantees mutual exclusion without retry budget conflation.
 - **[Risk] High concurrency on pooled resource release across API and background tasks**
   → *Mitigation*: Row locking (`with_for_update`) within a single database transaction combining release claim and queue promotion guarantees strict serialization across all entry points.
 - **[Risk] Transient database failure during forced teardown**
-  → *Mitigation*: Explicit `self.retry(exc=exc)` in `teardown_vm_task` ensures transient DB errors are retried up to `max_retries`. On retry, cloud destroy handles missing resources gracefully and re-attempts the database update.
+  → *Mitigation*: Explicitly tracked via Redis counter `teardown-db-attempts:{booking_id}` and retried up to `TEARDOWN_MAX_DB_RETRIES = 2` via `self.retry(exc=exc)`. On exhaustion, reraises original persistence exception, ensuring DB errors are never swallowed or reported as success while remaining independently bounded from contention and destroy retries.

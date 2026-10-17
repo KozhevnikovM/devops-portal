@@ -10,23 +10,25 @@ In a distributed infrastructure orchestration system with asynchronous Celery wo
   - Workers acquire a unique owner token via atomic `SET ... NX EX` and release exclusively via token-checked compare-and-delete (CAS Lua script) to prevent deleting subsequent locks upon lease loss.
   - Active lease renewal / heartbeat runs during `terraform.destroy()`, failing closed (aborting destroy subprocess without status updates) if renewal or ownership is lost, ensuring a long-running destroy never loses exclusive mutual exclusion or permits concurrent execution.
   - State lock force-unlocking is strictly guarded by requiring the worker to hold the active lease token, preventing concurrent workers from force-unlocking live Terraform state locks.
-  - Competing deliveries polling on an active lease that time out before reaching a terminal status reschedule via Celery retry (countdown) without acknowledging success or consuming failure retry limits.
+  - `teardown_vm_task` configures task-level unlimited retries (`max_retries=None` on `@celery_app.task`) to decouple contention wait rescheduling from failure budgets. Competing deliveries polling on an active lease that time out before reaching a terminal status reschedule via Celery retry (`countdown=30`) without acknowledging success and without consuming destroy failure retry limits.
+  - Cloud destroy failures are tracked in an explicit, separately persisted Redis counter (`teardown-destroy-attempts:{booking_id}`) capped at 2 retries, ensuring failure limits remain intact regardless of preceding contention retries.
 - Guarantee that releasing pooled resources (namespaces and static VMs) executes the release claim and queue promotion within a single atomic database transaction across all release entry points (Celery worker, use case, and beat TTL task). The atomic operation preserves the parent-before-child lock order (`_async_release_target` / `_sync_release_target`) to serialize environment child releases with deployment reporting and extensions, and enforces active/free pool eligibility checks (`_free_resource_stmt`) so that queued waiters are promoted only when eligible active capacity exists, while preserving the public API's existing 409 Conflict behavior for repeated release requests.
 - Ensure `ReleaseEnvironmentUseCase` guards in-flight child bookings: child bookings already in `RELEASING` status are not re-dispatched for teardown on repeated environment release calls, reserving forced re-dispatch exclusively for explicit administrative recovery.
 - Clarify failure semantics: distinguish successfully freed resources (`RELEASED`) from failed states (`FAILED` where cloud resources may still linger), and specify administrative force-release recovery for failed teardown children.
-- Scope exception suppression during forced teardown (`force=True`) strictly to cloud provider destroy errors (e.g. missing vApp/VM or API failures), ensuring that database persistence failures (updating status to `RELEASED`) explicitly invoke bounded Celery retries via `self.retry` (reraising the underlying exception at exhaustion) and are never swallowed or falsely reported as successful releases.
-- Formalize retry semantics for VM teardown failures: transient errors retry up to `max_retries` while maintaining `RELEASING` status, and retry exhaustion converges deterministically to `FAILED` with an informative status message.
+- Scope exception suppression during forced teardown (`force=True`) strictly to cloud provider destroy errors (e.g. missing vApp/VM or API failures). Database persistence failures (updating status to `RELEASED`) are tracked via an explicit, separately persisted Redis counter (`teardown-db-attempts:{booking_id}`) and retried up to 2 times via `self.retry`, reraising the underlying exception at exhaustion so failures are never swallowed or falsely reported as successful releases.
+- Formalize retry semantics for VM teardown failures: transient errors retry up to 2 attempts via the persisted failure counter while maintaining `RELEASING` status, and retry exhaustion converges deterministically to `FAILED` with an informative status message.
 - Add comprehensive unit, orchestration, and concurrent integration test suites covering:
   - Releasing the same booking or environment twice.
   - Concurrently releasing the same provisioned VM across two workers, asserting mutual exclusion with only one active destroy and safe redelivery after a crash.
   - Long-running destroy exceeding initial lease TTL with active heartbeat maintaining exclusive ownership.
   - Stale worker losing lease failing closed without deleting competitor's lock or force-unlocking competitor's state lock.
   - Contention wait timeout rescheduling via Celery retry without acknowledging success.
+  - More than 2 contention timeouts followed by a transient destroy failure, asserting the full 2-retry destroy failure budget remains intact.
   - Concurrently releasing the same pooled resource across workers with queued bookings waiting.
   - Retrying teardown after transient or partial cloud failure.
   - Executing teardown when the cloud resource is already free or missing.
   - Executing teardown when the booking is already `RELEASED` or `FAILED`.
-  - Persistence failure during forced teardown triggering Celery `self.retry` and failing upon retry exhaustion.
+  - Persistence failure during forced teardown retrying via separately persisted counter and reraising exception on retry exhaustion.
   - Failure/crash between release claim and promotion followed by redelivery.
   - Releasing a held pooled resource that was deactivated while held without promoting queued waiters to retired capacity.
   - Racing API release against worker and TTL releases on pooled resources.
