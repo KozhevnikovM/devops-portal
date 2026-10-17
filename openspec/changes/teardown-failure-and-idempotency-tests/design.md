@@ -50,15 +50,22 @@ Several concrete hazards exist in the current implementation:
         - **Safe counter lifetime**: The counter MUST NOT use a short expiration (such as 3600s). Cloud provider operations during Terraform destroy can run for over an hour (the VCD provider retry timeout is 1800s, and multi-VM destruction can accumulate); an arbitrary short TTL could expire while a subsequent attempt is executing or delayed, resetting the counter to 1 and creating an infinite retry loop with task-level `max_retries=None`. Instead, the counter survives the entire teardown lifecycle by using an explicitly safe multi-day retention lifetime (`settings.TEARDOWN_COUNTER_TTL = 7 * 86400` / 604,800s), actively refreshed alongside the execution lease heartbeat while the task runs.
         - **Terminal and recovery cleanup**:
           * When `attempt <= TEARDOWN_MAX_DESTROY_RETRIES`: worker records the failure in `status_message` ("Teardown failed: attempt X/2 — see audit log") and the DB audit log, and invokes `raise self.retry(exc=exc, countdown=30)`.
-          * When `attempt > TEARDOWN_MAX_DESTROY_RETRIES`: worker cleans up the Redis counter (`redis.delete`), transitions the booking to `FAILED` with an audit message ("Teardown failed — see audit log"), and reraises `exc`.
-          * On successful release (`RELEASED`), the Redis key is deleted.
+          * When `attempt > TEARDOWN_MAX_DESTROY_RETRIES`:
+            - **Durable commit before cleanup**: The worker MUST commit the terminal `FAILED` status and audit entry ("Teardown failed — see audit log") to PostgreSQL *before* deleting the failure counter from Redis.
+            - **Fault tolerance and redelivery reconciliation**: If the database commit fails (e.g. connection drop, database write error, or worker crash):
+              1. The counter is NOT deleted; it remains preserved in Redis with value `attempt > TEARDOWN_MAX_DESTROY_RETRIES` (exhausted).
+              2. The database write error triggers a bounded retry via `raise self.retry(exc=exc, countdown=30)` tracked by `teardown-db-attempts:{booking_id}` (capped at 2 retries).
+              3. On redelivery, the task inspects `teardown-destroy-attempts:{booking_id}`, recognizes that cloud destroy retries are already exhausted, skips `terraform.destroy()`, and directly attempts to commit `FAILED` to PostgreSQL.
+            - Only once the database transaction commits `FAILED` does the worker delete the Redis counter (`redis.delete("teardown-destroy-attempts:{booking_id}")`).
+            - Finally, it reraises `exc` to mark the Celery task as `FAILURE`.
+          * On successful release (`RELEASED`), the database transition is committed to PostgreSQL *before* deleting the Redis keys (`teardown-destroy-attempts:{booking_id}` and `teardown-db-attempts:{booking_id}`).
           * On administrative recovery (`ForceReleaseBookingUseCase` or startup recovery), any lingering failure counters in Redis are deleted so administrative intervention starts with a clean retry budget.
         - Contention retries (`self.retry(countdown=30)`) never touch this counter. Even after >2 contention timeouts, a newly promoted worker that encounters a transient destroy failure has its full 2-attempt destroy retry budget intact.
      3. **Explicit separately persisted DB-persistence counter with safe lifecycle lifetime**:
         In forced teardown (`force=True`), database persistence failures are bounded strictly to `TEARDOWN_MAX_DB_RETRIES = 2` using an explicit Redis counter `teardown-db-attempts:{booking_id}` (atomic `INCR`, safe 7-day retention).
         - If `db_attempt <= TEARDOWN_MAX_DB_RETRIES`: worker calls `raise self.retry(exc=exc, countdown=30)`.
-        - If `db_attempt > TEARDOWN_MAX_DB_RETRIES`: worker cleans up the Redis counter and reraises the persistence exception `exc`, marking the Celery task as `FAILURE`.
-        - On successful commit to `RELEASED`, the Redis key is deleted.
+        - If `db_attempt > TEARDOWN_MAX_DB_RETRIES`: worker reraises the persistence exception `exc`, marking the Celery task as `FAILURE`. The counter remains retained in Redis without premature deletion so repeated attempts do not cycle retries.
+        - On successful commit to `RELEASED`, the Redis key is deleted strictly post-commit.
         - On administrative recovery, the Redis counter is deleted.
      4. **Contention wait behavior**: If a competing task arrives and finds the lease held by another worker:
         - It polls with bounded wait (e.g. 15–30s) for the active destroy to complete.
@@ -123,8 +130,8 @@ In `teardown_vm_task(force=True)`:
   - Because `teardown_vm_task` has task-level `max_retries=None`, database persistence failures are bounded strictly to `TEARDOWN_MAX_DB_RETRIES = 2` using an explicit Redis counter `teardown-db-attempts:{booking_id}` (atomic `INCR`, safe 7-day retention with terminal/recovery cleanup).
   - When database persistence fails:
     - If `db_attempt <= TEARDOWN_MAX_DB_RETRIES`: worker invokes `raise self.retry(exc=exc, countdown=30)`.
-    - If `db_attempt > TEARDOWN_MAX_DB_RETRIES`: worker cleans up the Redis counter and reraises the original persistence exception `exc`, marking the Celery task as `FAILURE`.
-  - On successful commit to `RELEASED`, the Redis counter is deleted.
+    - If `db_attempt > TEARDOWN_MAX_DB_RETRIES`: worker reraises the original persistence exception `exc`, marking the Celery task as `FAILURE`. The counter remains retained in Redis without premature deletion.
+  - On successful commit to `RELEASED`, the Redis counter is deleted strictly post-commit.
   - On administrative recovery, the Redis counter is deleted.
   - Do not use blanket `except Exception: pass`, which falsely acknowledges task completion while database state remains unreleased.
   - Do not allow database persistence exceptions to escape unhandled without retry, because Celery would terminate the task with `FAILURE` immediately without attempting configured retries.
@@ -146,6 +153,7 @@ In `teardown_vm_task(force=True)`:
    - Decoupled contention and destroy failure retries: verify that after >2 contention timeouts (e.g. 3 contention retries), when the waiting worker takes over and encounters a transient destroy failure, its full 2-retry destroy failure budget (`teardown-destroy-attempts`) remains intact.
    - Long delay / long-running destroy (>3600s) between teardown failures: verify that delay between destroy failures does not expire or reset `teardown-destroy-attempts`, strictly capping failure retries at 2 and converging to `FAILED`.
    - Delay between forced teardown persistence failures: verify that delay between persistence retries does not reset `teardown-db-attempts`, strictly capping persistence retries at 2 and reraising the exception to Celery.
+   - Crash or persistence failure between retry-budget exhaustion and `FAILED` database commit: simulate worker crash or database write error immediately after retry budget exhaustion, asserting that the exhausted counter in Redis is retained, and redelivery observes exhaustion, skips `terraform.destroy()`, completes the `FAILED` commit to PostgreSQL, and cleans up the Redis counter only post-commit.
    - Worker crash recovery during VM teardown: simulate worker crash while holding the execution lease, verify redelivery acquires the lease after TTL expiration and completes teardown to `RELEASED`.
    - Duplicate delivery on `RELEASED` pooled resource (verifying no duplicate promotion).
    - Transient cloud destroy error retry and convergence to `FAILED` on retry exhaustion via `teardown-destroy-attempts`.
@@ -163,8 +171,8 @@ In `teardown_vm_task(force=True)`:
 ## Risks / Trade-offs
 
 - **[Risk] Concurrent duplicate VM teardown deliveries racing Terraform destroy**
-  → *Mitigation*: Redis-backed teardown execution lease (`teardown-lock:{booking_id}`) with bounded TTL, token-checked CAS release, heartbeat renewal with fail-closed cancellation, state-lock protection requiring lease token, and contention retry rescheduling with task-level `max_retries=None` and separately persisted counters (`teardown-destroy-attempts`, `teardown-db-attempts` with safe 7-day retention and terminal/recovery cleanup) guarantees mutual exclusion without retry budget conflation or premature counter expiration.
+  → *Mitigation*: Redis-backed teardown execution lease (`teardown-lock:{booking_id}`) with bounded TTL, token-checked CAS release, heartbeat renewal with fail-closed cancellation, state-lock protection requiring lease token, contention retry rescheduling with task-level `max_retries=None`, and separately persisted counters (`teardown-destroy-attempts`, `teardown-db-attempts` with safe 7-day retention, durable PostgreSQL commit before Redis cleanup, and recovery cleanup) guarantees mutual exclusion without retry budget conflation or premature counter expiration.
 - **[Risk] High concurrency on pooled resource release across API and background tasks**
   → *Mitigation*: Row locking (`with_for_update`) within a single database transaction combining release claim and queue promotion guarantees strict serialization across all entry points.
 - **[Risk] Transient database failure during forced teardown**
-  → *Mitigation*: Explicitly tracked via Redis counter `teardown-db-attempts:{booking_id}` (safe 7-day retention) and retried up to `TEARDOWN_MAX_DB_RETRIES = 2` via `self.retry(exc=exc)`. On exhaustion, reraises original persistence exception, ensuring DB errors are never swallowed or reported as success while remaining independently bounded from contention and destroy retries.
+  → *Mitigation*: Explicitly tracked via Redis counter `teardown-db-attempts:{booking_id}` (safe 7-day retention) and retried up to `TEARDOWN_MAX_DB_RETRIES = 2` via `self.retry(exc=exc)`. On exhaustion, reraises original persistence exception with Redis cleanup occurring strictly post-commit, ensuring DB errors are never swallowed or reported as success while remaining independently bounded from contention and destroy retries.
