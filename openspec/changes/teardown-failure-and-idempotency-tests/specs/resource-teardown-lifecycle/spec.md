@@ -39,6 +39,12 @@ If another worker actively holds the teardown execution lease upon task delivery
 - If the active holder terminates unexpectedly and its lease expires without renewal, the waiting task SHALL acquire the lease and execute teardown to completion.
 - If the bounded contention wait expires while the holder is still active and heartbeating, the competing task SHALL NOT acknowledge completion or report success; instead, it SHALL reschedule execution via Celery retry with a countdown (`self.retry(countdown=30)`), without consuming the task's destruction failure retry budget.
 
+`teardown_vm_task` SHALL be configured with late message acknowledgment (`task_acks_late=True` and `task_reject_on_worker_lost=True`) so that a hard worker crash causes Celery to reject and redeliver the message rather than silently losing it. The broker visibility timeout (`CELERY_VISIBILITY_TIMEOUT`) SHALL be configured to be greater than or equal to `settings.VCD_TOKEN_LOCK_TTL` to prevent premature redelivery while a worker is still actively destroying.
+
+The system SHALL also provide an idempotent startup reconciler in `app/main.py` lifespan and a periodic beat task `reap_stale_teardown` that scan for `RELEASING` bookings whose teardown execution lease (`teardown-lock:{booking_id}`) is absent in Redis, and re-dispatch teardown to ensure eventual completion without requiring admin intervention.
+
+The system SHALL NOT force-unlock a Terraform state lock if the `provisioning-lock:{booking_id}` key is present in Redis, indicating an active provisioning apply is in progress. Forced teardown SHALL always wait for any in-progress provisioning apply to complete (or its lock to expire) before proceeding, and SHALL raise `TeardownBlockedByActiveProvisioningError` (or equivalent) if the provisioning lock persists beyond the wait budget, rather than proceeding to force-unlock the apply's state lock.
+
 #### Scenario: Concurrent duplicate teardown deliveries for RELEASING VM
 - **WHEN** two worker tasks concurrently execute teardown for the same provisioned VM in `RELEASING` status
 - **THEN** exactly one task acquires the execution lease and executes `terraform.destroy()`
@@ -75,6 +81,35 @@ If another worker actively holds the teardown execution lease upon task delivery
 - **WHEN** a worker executing VM teardown terminates unexpectedly while holding the execution lease before database status is updated to `RELEASED`
 - **THEN** heartbeat renewal ceases and the execution lease expires after its bounded TTL
 - **AND** a redelivered teardown task acquires the lease and transitions the booking to `RELEASED`
+
+#### Scenario: Worker killed after early ack is redelivered with late-ack ON
+- **WHEN** a worker is killed immediately after Celery would have acknowledged the teardown message, with `task_acks_late=True` and `task_reject_on_worker_lost=True` configured
+- **THEN** Celery rejects and redelivers the message rather than silently dropping it
+- **AND** the booking eventually reaches `RELEASED` without admin intervention
+
+#### Scenario: Startup recovery of stranded RELEASING booking with no active teardown lease
+- **WHEN** a booking is left in `RELEASING` status with no active teardown lease (simulating a crash where neither late-ack nor broker redelivery fired)
+- **AND** the application restarts
+- **THEN** the startup reconciler in `app/main.py` detects the stranded booking and re-dispatches teardown
+- **AND** the booking eventually reaches `RELEASED` without admin intervention
+
+#### Scenario: Periodic stale teardown reaper re-dispatches stranded RELEASING booking
+- **WHEN** a booking is stuck in `RELEASING` beyond `STALE_TEARDOWN_THRESHOLD_MINUTES` without an active teardown execution lease
+- **THEN** the `reap_stale_teardown` beat task re-dispatches teardown for the booking
+- **AND** the booking eventually reaches `RELEASED` without admin intervention
+
+#### Scenario: Force-unlock blocked when provisioning apply lock is present
+- **WHEN** `TerraformVcdAdapter._destroy_state()` is invoked while the `provisioning-lock:{booking_id}` key is present in Redis (indicating an active provisioning apply is in progress)
+- **THEN** the adapter does NOT issue `terraform force-unlock`, even when the teardown execution lease is held
+- **AND** the adapter raises `TeardownBlockedByActiveProvisioningError`
+
+#### Scenario: Force teardown with active provisioning apply beyond TTL does not force-unlock apply state lock
+- **WHEN** force teardown is initiated for a booking
+- **AND** a provisioning apply is still running (its `provisioning-lock:{booking_id}` key persists in Redis)
+- **AND** `_wait_for_apply_to_finish()` times out after `VCD_TOKEN_LOCK_TTL`
+- **THEN** the teardown adapter raises `TeardownBlockedByActiveProvisioningError` and does NOT issue `terraform force-unlock` against the apply's live state lock
+
+
 
 ### Requirement: Pooled resource release uses an atomic transition claim and never double-promotes
 Releasing a pooled resource (namespace or static VM) SHALL return the allocated resource to the available pool. If an active, eligible resource is free in the pool, the system SHALL promote the oldest queued booking for that resource type at most once. The transition to `RELEASED` and any resulting queue promotion SHALL be executed within a single atomic database transaction. All release entry points—including asynchronous Celery workers (`teardown_vm_task`), synchronous/async use cases (`ReleaseBookingUseCase`), and periodic TTL sweeps (`_release_child_sync`)—SHALL execute pooled release and queue promotion through this atomic single-transaction operation.
