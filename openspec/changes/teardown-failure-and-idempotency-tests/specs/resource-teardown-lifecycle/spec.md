@@ -35,7 +35,7 @@ In `ProvisionBooking`, the worker SHALL acquire `workspace-lock:{booking_id}` *b
 In `teardown_vm_task`, before initiating Terraform destruction, the worker SHALL attempt to acquire `workspace-lock:{booking_id}`:
 - If held by an active provisioning worker or another teardown worker, the competing task SHALL wait with bounded backoff and reschedule via Celery retry with countdown (`self.retry(countdown=30)`) upon contention timeout, without consuming the destruction failure retry budget.
 - When teardown completes and commits `RELEASED` to PostgreSQL, any subsequent or deferred provisioning worker that eventually acquires `workspace-lock:{booking_id}` SHALL query booking status under the lease, observe `RELEASED`, release the lease, and exit cleanly as `SKIPPED_RELEASED` without running `terraform.apply()`, structurally preventing late apply from mutating Terraform or recreating infrastructure after release.
-- In forced teardown (`force=True`), the worker SHALL also acquire `workspace-lock:{booking_id}`; if held by an active live worker, it waits for completion, and if the holder crashed without renewal, acquires the lease upon TTL expiration.
+- In forced teardown (`force=True`), the worker SHALL also acquire `workspace-lock:{booking_id}`; if held by an active Terraform process group, it waits for completion; worker heartbeat loss or Redis TTL expiry alone SHALL NOT permit takeover, and the supervisor must confirm the previous process group is fully dead and reaped.
 
 While `terraform.apply()` or `terraform.destroy()` is executing, the active worker SHALL actively renew `workspace-lock:{booking_id}` via a periodic heartbeat loop. If renewal fails or ownership is lost, the worker SHALL fail closed: immediately aborting the active Terraform subprocess and exiting without performing database status updates (`READY`, `RELEASED`, or `FAILED`).
 
@@ -49,12 +49,12 @@ Redis workspace lease ownership or expiry alone SHALL NOT be considered proof th
 
 If another worker actively holds the workspace execution lease upon teardown task delivery, the competing task SHALL wait with bounded backoff for the in-flight operation to finish:
 - If the holder completes and commits `RELEASED` (or settles in `FAILED` for non-forced teardown), the competing task SHALL observe the terminal status and complete cleanly as an acknowledged no-op.
-- If the active holder terminates unexpectedly and its lease expires without renewal, the waiting task SHALL acquire the lease and execute teardown to completion.
+- If the worker terminates but a supervised Terraform child remains alive, the supervisor SHALL retain the reservation and the waiting task SHALL defer. The task may acquire the reservation and execute teardown only after the supervisor confirms that the matching process group is fully dead and reaped.
 - If the bounded contention wait expires while the holder is still active and heartbeating, the competing task SHALL NOT acknowledge completion or report success; instead, it SHALL reschedule execution via Celery retry with a countdown (`self.retry(countdown=30)`), without consuming the task's destruction failure retry budget.
 
 `teardown_vm_task` SHALL be configured with late message acknowledgment (`task_acks_late=True` and `task_reject_on_worker_lost=True`) so that a hard worker crash causes Celery to reject and redeliver the message upon worker loss rather than silently losing it. The broker visibility timeout (`CELERY_VISIBILITY_TIMEOUT`) SHALL be configured to be greater than or equal to `settings.TEARDOWN_MAX_DURATION_SECONDS` (documenting the maximum expected single teardown attempt duration across long-running destroys, rather than the base lease TTL) to prevent premature redelivery while a worker is actively destroying.
 
-The system SHALL also provide an idempotent startup reconciler in `app/main.py` lifespan and a periodic beat task `reap_stale_teardown` that scan for `RELEASING` bookings whose workspace execution lease (`workspace-lock:{booking_id}`) is absent in Redis, and re-dispatch teardown to ensure eventual completion without requiring admin intervention. Automatic startup and beat reconcilers SHALL NOT reset or delete existing Redis failure counters (`teardown-destroy-attempts`, `teardown-db-attempts`); if a re-dispatched booking has already exhausted destroy retries, the task SHALL skip repeating `terraform.destroy()` and complete the `FAILED` database commit. When forced teardown is initiated, the system SHALL durably record force intent (`teardown-force:{booking_id}`); automatic reconcilers SHALL inspect this intent (or booking status `FAILED`) and re-dispatch with `force=True`. Only explicit administrative force release (`ForceReleaseBookingUseCase`) SHALL reset failure counters and force-intent keys.
+The system SHALL also provide an idempotent startup reconciler in `app/main.py` lifespan and a periodic beat task `reap_stale_teardown` that scan for `RELEASING` bookings whose the supervisor confirms there is no active Terraform process group or workspace reservation, and re-dispatch teardown to ensure eventual completion without requiring admin intervention. Automatic startup and beat reconcilers SHALL NOT reset or delete existing Redis failure counters (`teardown-destroy-attempts`, `teardown-db-attempts`); if a re-dispatched booking has already exhausted destroy retries, the task SHALL skip repeating `terraform.destroy()` and complete the `FAILED` database commit. When forced teardown is initiated, the system SHALL durably record force intent (`teardown-force:{booking_id}`); automatic reconcilers SHALL inspect this intent (or booking status `FAILED`) and re-dispatch with `force=True`. Only explicit administrative force release (`ForceReleaseBookingUseCase`) SHALL reset failure counters and force-intent keys.
 
 #### Scenario: Concurrent duplicate teardown deliveries for RELEASING VM
 - **WHEN** two worker tasks concurrently execute teardown for the same provisioned VM in `RELEASING` status
@@ -88,10 +88,10 @@ The system SHALL also provide an idempotent startup reconciler in `app/main.py` 
 - **THEN** the failure counter does not expire or reset to 1
 - **AND** the second failure increments the persisted count to 2 (and the third failure marks `FAILED`), strictly enforcing the two-retry ceiling
 
-#### Scenario: Worker crash during VM teardown allows safe redelivery after lease expiry
-- **WHEN** a worker executing VM teardown terminates unexpectedly while holding the execution lease before database status is updated to `RELEASED`
-- **THEN** heartbeat renewal ceases and the execution lease expires after its bounded TTL
-- **AND** a redelivered teardown task acquires the lease and transitions the booking to `RELEASED`
+#### Scenario: Worker crash during VM teardown keeps live Terraform process protected
+- **WHEN** a worker executing VM teardown terminates unexpectedly while its supervised Terraform child remains alive and the booking is not yet `RELEASED`
+- **THEN** the supervisor retains the workspace reservation and a redelivered task cannot start a second Terraform operation
+- **AND** teardown resumes only after the supervisor terminates/reaps the process group or confirms it has exited
 
 #### Scenario: Worker killed after task start is redelivered with late-ack ON
 - **WHEN** a worker is killed after task receipt/start but before Celery issues late acknowledgment, with `task_acks_late=True` and `task_reject_on_worker_lost=True` configured
