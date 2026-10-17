@@ -13,7 +13,7 @@ import asyncio
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
-from unittest.mock import MagicMock
+from unittest.mock import ANY, AsyncMock, MagicMock
 from uuid import UUID, uuid4
 
 import pytest
@@ -94,6 +94,42 @@ async def _isolate_scarce_resource(
                     update(model_cls)
                     .where(model_cls.id.in_(deactivated_ids))
                     .values(is_active=True)
+                )
+                await session.commit()
+
+
+@asynccontextmanager
+async def _isolate_queued_bookings(
+    engine: AsyncEngine, resource_type: ResourceType, test_booking_ids: set[UUID]
+) -> AsyncGenerator[None, None]:
+    """Temporarily shift pre-existing QUEUED bookings away so test_booking_ids are the only candidates."""
+    shifted_ids: list[UUID] = []
+    async with AsyncSession(engine, expire_on_commit=False) as session:
+        result = await session.execute(
+            select(BookingModel.id).where(
+                BookingModel.status == BookingStatus.QUEUED.value,
+                BookingModel.resource_type == resource_type.value,
+                BookingModel.id.not_in(test_booking_ids),
+            )
+        )
+        shifted_ids = list(result.scalars().all())
+        if shifted_ids:
+            await session.execute(
+                update(BookingModel)
+                .where(BookingModel.id.in_(shifted_ids))
+                .values(status=BookingStatus.PENDING.value)
+            )
+            await session.commit()
+
+    try:
+        yield
+    finally:
+        if shifted_ids:
+            async with AsyncSession(engine, expire_on_commit=False) as session:
+                await session.execute(
+                    update(BookingModel)
+                    .where(BookingModel.id.in_(shifted_ids))
+                    .values(status=BookingStatus.QUEUED.value)
                 )
                 await session.commit()
 
@@ -528,17 +564,11 @@ async def test_concurrent_worker_queue_promotion(
         ns_ids = []
         svm_ids = [res_id]
 
-    # Clean up any pre-existing QUEUED bookings for this type and seed two QUEUED bookings
+    # Seed two QUEUED bookings
     now = datetime.now(UTC)
     q1_id = uuid4()
     q2_id = uuid4()
     async with AsyncSession(async_engine, expire_on_commit=False) as session:
-        await session.execute(
-            delete(BookingModel).where(
-                BookingModel.status == BookingStatus.QUEUED.value,
-                BookingModel.resource_type == resource_type.value,
-            )
-        )
         session.add(
             BookingModel(
                 id=q1_id,
@@ -571,7 +601,10 @@ async def test_concurrent_worker_queue_promotion(
     created_bookings.extend([q1_id, q2_id])
 
     try:
-        async with _isolate_scarce_resource(async_engine, resource_type, res_id):
+        async with (
+            _isolate_scarce_resource(async_engine, resource_type, res_id),
+            _isolate_queued_bookings(async_engine, resource_type, {q1_id, q2_id}),
+        ):
             repo = BookingRepository()
             w1_locked = asyncio.Event()
             w2_done = asyncio.Event()
@@ -729,72 +762,85 @@ async def test_concurrent_environment_release(async_engine: AsyncEngine):
     created_bookings = [vm_child_id, pooled_child_id]
 
     try:
-        dispatcher = MagicMock(spec=TaskDispatcher)
-        booking_repo = BookingRepository()
-        env_repo = EnvironmentRepository()
-        release_booking_uc = ReleaseBookingUseCase(booking_repo, dispatcher)
+        async with _isolate_scarce_resource(
+            async_engine, ResourceType.NAMESPACE, ns_id
+        ):
+            dispatcher = MagicMock(spec=TaskDispatcher)
+            booking_repo = BookingRepository()
+            orig_promote = booking_repo.promote_next_queued
+            promote_spy = AsyncMock(wraps=orig_promote)
+            booking_repo.promote_next_queued = promote_spy
+            env_repo = EnvironmentRepository()
+            release_booking_uc = ReleaseBookingUseCase(booking_repo, dispatcher)
 
-        barrier = asyncio.Barrier(2)
+            barrier = asyncio.Barrier(2)
 
-        async def run_env_release():
-            async with AsyncSession(async_engine, expire_on_commit=False) as session:
-                pid = (
-                    await session.execute(text("SELECT pg_backend_pid()"))
+            async def run_env_release():
+                async with AsyncSession(
+                    async_engine, expire_on_commit=False
+                ) as session:
+                    pid = (
+                        await session.execute(text("SELECT pg_backend_pid()"))
+                    ).scalar_one()
+                    await asyncio.wait_for(barrier.wait(), timeout=_TIMEOUT)
+                    uc = ReleaseEnvironmentUseCase(env_repo, release_booking_uc)
+                    res = await uc.execute(session, env_id, user)
+                    return pid, res
+
+            results = await asyncio.gather(
+                run_env_release(), run_env_release(), return_exceptions=True
+            )
+            unexpected = [r for r in results if isinstance(r, Exception)]
+            assert unexpected == [], (
+                f"Unexpected error during concurrent environment release: {unexpected}"
+            )
+
+            (pid1, env1), (pid2, env2) = results
+            assert pid1 != pid2
+
+            # Phase 1 Assertions:
+            assert env1.id == env_id
+            assert env2.id == env_id
+
+            # Dispatch teardown must have been called EXACTLY ONCE for the VM child
+            dispatcher.dispatch_teardown.assert_called_once_with(
+                str(vm_child_id), request_id=None
+            )
+
+            # Queue promotion must have been emitted EXACTLY ONCE for the pooled child
+            promote_spy.assert_awaited_once_with(ANY, ResourceType.NAMESPACE.value)
+
+            async with AsyncSession(async_engine, expire_on_commit=False) as check_sess:
+                vm_db = (
+                    await check_sess.execute(
+                        select(BookingModel).where(BookingModel.id == vm_child_id)
+                    )
                 ).scalar_one()
-                await asyncio.wait_for(barrier.wait(), timeout=_TIMEOUT)
-                uc = ReleaseEnvironmentUseCase(env_repo, release_booking_uc)
-                res = await uc.execute(session, env_id, user)
-                return pid, res
+                pooled_db = (
+                    await check_sess.execute(
+                        select(BookingModel).where(BookingModel.id == pooled_child_id)
+                    )
+                ).scalar_one()
+                assert vm_db.status == BookingStatus.RELEASING.value
+                assert pooled_db.status == BookingStatus.RELEASED.value
 
-        results = await asyncio.gather(
-            run_env_release(), run_env_release(), return_exceptions=True
-        )
-        unexpected = [r for r in results if isinstance(r, Exception)]
-        assert unexpected == [], (
-            f"Unexpected error during concurrent environment release: {unexpected}"
-        )
-
-        (pid1, env1), (pid2, env2) = results
-        assert pid1 != pid2
-
-        # Phase 1 Assertions:
-        assert env1.id == env_id
-        assert env2.id == env_id
-
-        # Dispatch teardown must have been called EXACTLY ONCE for the VM child
-        dispatcher.dispatch_teardown.assert_called_once_with(
-            str(vm_child_id), request_id=None
-        )
-
-        async with AsyncSession(async_engine, expire_on_commit=False) as check_sess:
-            vm_db = (
-                await check_sess.execute(
-                    select(BookingModel).where(BookingModel.id == vm_child_id)
+            # Phase 2 Assertions (Convergence):
+            # Simulate VM teardown completion
+            async with AsyncSession(
+                async_engine, expire_on_commit=False
+            ) as teardown_sess:
+                await booking_repo.update_status(
+                    teardown_sess, vm_child_id, BookingStatus.RELEASED
                 )
-            ).scalar_one()
-            pooled_db = (
-                await check_sess.execute(
-                    select(BookingModel).where(BookingModel.id == pooled_child_id)
+
+            async with AsyncSession(async_engine, expire_on_commit=False) as final_sess:
+                final_env = await env_repo.get(final_sess, env_id)
+                assert (
+                    derive_environment_status(b.status for b in final_env.bookings)
+                    == BookingStatus.RELEASED
                 )
-            ).scalar_one()
-            assert vm_db.status == BookingStatus.RELEASING.value
-            assert pooled_db.status == BookingStatus.RELEASED.value
-
-        # Phase 2 Assertions (Convergence):
-        # Simulate VM teardown completion
-        async with AsyncSession(async_engine, expire_on_commit=False) as teardown_sess:
-            await booking_repo.update_status(
-                teardown_sess, vm_child_id, BookingStatus.RELEASED
-            )
-
-        async with AsyncSession(async_engine, expire_on_commit=False) as final_sess:
-            final_env = await env_repo.get(final_sess, env_id)
-            assert (
-                derive_environment_status(b.status for b in final_env.bookings)
-                == BookingStatus.RELEASED
-            )
-            for child in final_env.bookings:
-                assert child.status == BookingStatus.RELEASED
+                for child in final_env.bookings:
+                    assert child.status == BookingStatus.RELEASED
     finally:
         await _cleanup(
             async_engine,
@@ -978,12 +1024,33 @@ async def test_allocation_races_with_release(
             booking_repo = BookingRepository()
             release_uc = ReleaseBookingUseCase(booking_repo, dispatcher)
 
+            pool_repo = (
+                NamespaceRepository()
+                if resource_type == ResourceType.NAMESPACE
+                else StaticVMRepository()
+            )
             if resource_type == ResourceType.NAMESPACE:
-                reserve_uc = BookNamespaceUseCase(booking_repo, NamespaceRepository())
+                reserve_uc = BookNamespaceUseCase(booking_repo, pool_repo)
             else:
-                reserve_uc = ReserveStaticVMUseCase(booking_repo, StaticVMRepository())
+                reserve_uc = ReserveStaticVMUseCase(booking_repo, pool_repo)
 
-            barrier = asyncio.Barrier(2)
+            rel_in_flight = asyncio.Event()
+            alloc_evaluating = asyncio.Event()
+            rel_committed = False
+
+            orig_lock_next = pool_repo.lock_next_available
+
+            async def hooked_lock_next(sess):
+                await asyncio.wait_for(rel_in_flight.wait(), timeout=_TIMEOUT)
+                assert not rel_committed, (
+                    "Release transaction already committed before allocation queried"
+                )
+                try:
+                    return await orig_lock_next(sess)
+                finally:
+                    alloc_evaluating.set()
+
+            pool_repo.lock_next_available = hooked_lock_next
 
             async def run_release():
                 async with AsyncSession(
@@ -992,9 +1059,25 @@ async def test_allocation_races_with_release(
                     pid_rel = (
                         await session_rel.execute(text("SELECT pg_backend_pid()"))
                     ).scalar_one()
-                    await asyncio.wait_for(barrier.wait(), timeout=_TIMEOUT)
-                    res = await release_uc.execute(session_rel, held_booking_id, user)
-                    return pid_rel, res
+                    orig_commit = session_rel.commit
+
+                    async def hooked_commit():
+                        rel_in_flight.set()
+                        await asyncio.wait_for(
+                            alloc_evaluating.wait(), timeout=_TIMEOUT
+                        )
+                        await orig_commit()
+                        nonlocal rel_committed
+                        rel_committed = True
+
+                    session_rel.commit = hooked_commit
+                    try:
+                        res = await release_uc.execute(
+                            session_rel, held_booking_id, user
+                        )
+                        return pid_rel, res
+                    finally:
+                        rel_in_flight.set()
 
             async def run_allocation():
                 async with AsyncSession(
@@ -1003,11 +1086,13 @@ async def test_allocation_races_with_release(
                     pid_alloc = (
                         await session_alloc.execute(text("SELECT pg_backend_pid()"))
                     ).scalar_one()
-                    await asyncio.wait_for(barrier.wait(), timeout=_TIMEOUT)
-                    res = await reserve_uc.execute(
-                        session_alloc, ttl_minutes=60, user_id=str(user.id)
-                    )
-                    return pid_alloc, res
+                    try:
+                        res = await reserve_uc.execute(
+                            session_alloc, ttl_minutes=60, user_id=str(user.id)
+                        )
+                        return pid_alloc, res
+                    finally:
+                        alloc_evaluating.set()
 
             results = await asyncio.gather(
                 run_release(), run_allocation(), return_exceptions=True

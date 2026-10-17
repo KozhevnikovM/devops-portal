@@ -1,4 +1,3 @@
-from collections.abc import Collection
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -41,33 +40,6 @@ class ReleaseBookingUseCase:
         self._repo = repo
         self._dispatcher = dispatcher
 
-    async def _claim_or_update(
-        self,
-        session: AsyncSession,
-        booking_id: UUID,
-        target_status: BookingStatus,
-        eligible_statuses: Collection[BookingStatus],
-        actor_id: str,
-    ) -> bool:
-        if hasattr(self._repo, "claim_status_transition"):
-            try:
-                return await self._repo.claim_status_transition(
-                    session,
-                    booking_id,
-                    target_status,
-                    eligible_statuses,
-                    actor_id=actor_id,
-                )
-            except TypeError:
-                await self._repo.update_status(
-                    session, booking_id, target_status, actor_id=actor_id
-                )
-                return True
-        await self._repo.update_status(
-            session, booking_id, target_status, actor_id=actor_id
-        )
-        return True
-
     async def execute(
         self,
         session: AsyncSession,
@@ -101,7 +73,7 @@ class ReleaseBookingUseCase:
 
         if booking.status == BookingStatus.QUEUED:
             # Cancel the queue slot — holds no resource, so nothing to tear down or promote.
-            await self._claim_or_update(
+            await self._repo.claim_status_transition(
                 session,
                 booking_id,
                 BookingStatus.RELEASED,
@@ -132,7 +104,7 @@ class ReleaseBookingUseCase:
                     if is_admin_force_delete
                     else _RELEASABLE_STATUSES
                 )
-                claimed = await self._claim_or_update(
+                claimed = await self._repo.claim_status_transition(
                     session,
                     booking_id,
                     BookingStatus.RELEASED,
@@ -153,7 +125,7 @@ class ReleaseBookingUseCase:
                     if is_admin_force_delete
                     else _RELEASABLE_STATUSES
                 )
-                claimed = await self._claim_or_update(
+                claimed = await self._repo.claim_status_transition(
                     session,
                     booking_id,
                     BookingStatus.RELEASING,

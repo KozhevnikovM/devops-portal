@@ -1,4 +1,4 @@
-from datetime import datetime, timezone, timedelta
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
@@ -11,7 +11,7 @@ from app.domain.enums import BookingStatus, ResourceType
 
 
 def _booking(status, resource_type=ResourceType.STATIC_VM, **kw) -> Booking:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     return Booking(
         id=kw.get("id", uuid4()),
         user_id=kw.get("user_id", "dev-user"),
@@ -25,9 +25,9 @@ def _booking(status, resource_type=ResourceType.STATIC_VM, **kw) -> Booking:
 
 @pytest.fixture
 def client():
-    from app.main import app
     from app.infrastructure.auth import require_user
     from app.infrastructure.database.session import get_async_session
+    from app.main import app
     from tests.conftest import make_fake_admin
 
     session_mock = AsyncMock()
@@ -40,11 +40,13 @@ def client():
 
 # ── enum ──────────────────────────────────────────────────────────────────────
 
+
 def test_queued_status_exists():
     assert BookingStatus.QUEUED.value == "QUEUED"
 
 
 # ── Use cases enqueue when the pool is empty ────────────────────────────────────
+
 
 @pytest.mark.asyncio
 async def test_namespace_use_case_queues_when_empty():
@@ -55,7 +57,9 @@ async def test_namespace_use_case_queues_when_empty():
     ns_repo = MagicMock()
     ns_repo.lock_next_available = AsyncMock(return_value=None)
 
-    booking = await BookNamespaceUseCase(repo, ns_repo).execute(AsyncMock(), 240, user_id="u1")
+    booking = await BookNamespaceUseCase(repo, ns_repo).execute(
+        AsyncMock(), 240, user_id="u1"
+    )
 
     assert booking.status == BookingStatus.QUEUED
 
@@ -71,7 +75,9 @@ async def test_queued_booking_carries_far_future_placeholder():
     repo.create = AsyncMock(side_effect=lambda session, booking: booking)
     ns_repo = MagicMock(lock_next_available=AsyncMock(return_value=None))
 
-    booking = await BookNamespaceUseCase(repo, ns_repo).execute(AsyncMock(), 240, user_id="u1")
+    booking = await BookNamespaceUseCase(repo, ns_repo).execute(
+        AsyncMock(), 240, user_id="u1"
+    )
 
     assert booking.status == BookingStatus.QUEUED
     assert booking.expires_at == PERMANENT_EXPIRES_AT
@@ -82,32 +88,43 @@ async def test_queued_booking_carries_far_future_placeholder():
 
 # ── promote_next_queued (repo) ──────────────────────────────────────────────────
 
+
 @pytest.mark.asyncio
 async def test_promote_assigns_resource_and_sets_ready():
     from app.infrastructure.repositories import booking_repo as mod
 
     queued = SimpleNamespace(
-        id=uuid4(), status=BookingStatus.QUEUED.value, ttl_minutes=240,
-        static_vm_id=None, namespace_id=None, expires_at=None, environment_id=None,
-        user_id="owner-1", created_by=None,
+        id=uuid4(),
+        status=BookingStatus.QUEUED.value,
+        ttl_minutes=240,
+        static_vm_id=None,
+        namespace_id=None,
+        expires_at=None,
+        environment_id=None,
+        user_id="owner-1",
+        created_by=None,
     )
     free_vm = SimpleNamespace(id=uuid4(), name="vm-1")
 
     session = AsyncMock()
     # first execute() → oldest queued booking; second → free resource
-    r1 = MagicMock(); r1.scalar_one_or_none = lambda: queued
-    r2 = MagicMock(); r2.scalar_one_or_none = lambda: free_vm
+    r1 = MagicMock()
+    r1.scalar_one_or_none = lambda: queued
+    r2 = MagicMock()
+    r2.scalar_one_or_none = lambda: free_vm
     session.execute = AsyncMock(side_effect=[r1, r2])
     session.add = MagicMock()
     session.refresh = AsyncMock()
 
     with patch.object(mod, "_to_entity", lambda m: m):
-        await mod.BookingRepository().promote_next_queued(session, ResourceType.STATIC_VM.value)
+        await mod.BookingRepository().promote_next_queued(
+            session, ResourceType.STATIC_VM.value
+        )
 
     assert queued.status == BookingStatus.READY.value
     assert queued.static_vm_id == free_vm.id
-    assert queued.expires_at is not None        # TTL started on promotion
-    session.add.assert_called_once()            # STATUS_CHANGED audit row
+    assert queued.expires_at is not None  # TTL started on promotion
+    session.add.assert_called_once()  # STATUS_CHANGED audit row
     session.commit.assert_awaited_once()
 
 
@@ -116,10 +133,13 @@ async def test_promote_noop_when_no_queued():
     from app.infrastructure.repositories import booking_repo as mod
 
     session = AsyncMock()
-    r = MagicMock(); r.scalar_one_or_none = lambda: None
+    r = MagicMock()
+    r.scalar_one_or_none = lambda: None
     session.execute = AsyncMock(return_value=r)
 
-    out = await mod.BookingRepository().promote_next_queued(session, ResourceType.NAMESPACE.value)
+    out = await mod.BookingRepository().promote_next_queued(
+        session, ResourceType.NAMESPACE.value
+    )
     assert out is None
     session.commit.assert_not_called()
 
@@ -128,14 +148,24 @@ async def test_promote_noop_when_no_queued():
 async def test_promote_noop_when_no_free_resource():
     from app.infrastructure.repositories import booking_repo as mod
 
-    queued = SimpleNamespace(id=uuid4(), status=BookingStatus.QUEUED.value, ttl_minutes=10,
-                             static_vm_id=None, namespace_id=None, expires_at=None)
+    queued = SimpleNamespace(
+        id=uuid4(),
+        status=BookingStatus.QUEUED.value,
+        ttl_minutes=10,
+        static_vm_id=None,
+        namespace_id=None,
+        expires_at=None,
+    )
     session = AsyncMock()
-    r1 = MagicMock(); r1.scalar_one_or_none = lambda: queued
-    r2 = MagicMock(); r2.scalar_one_or_none = lambda: None  # nothing free
+    r1 = MagicMock()
+    r1.scalar_one_or_none = lambda: queued
+    r2 = MagicMock()
+    r2.scalar_one_or_none = lambda: None  # nothing free
     session.execute = AsyncMock(side_effect=[r1, r2])
 
-    out = await mod.BookingRepository().promote_next_queued(session, ResourceType.STATIC_VM.value)
+    out = await mod.BookingRepository().promote_next_queued(
+        session, ResourceType.STATIC_VM.value
+    )
     assert out is None
     assert queued.status == BookingStatus.QUEUED.value  # untouched
     session.commit.assert_not_called()
@@ -143,37 +173,45 @@ async def test_promote_noop_when_no_free_resource():
 
 # ── Cancel a queued booking ─────────────────────────────────────────────────────
 
+
 def test_cancel_queued_booking_releases_without_promote(client):
     cl, fake_user = client
     queued = _booking(BookingStatus.QUEUED, user_id=str(fake_user.id))
     released = _booking(BookingStatus.RELEASED, id=queued.id, user_id=str(fake_user.id))
 
     from app.presentation.routes import api_bookings
+
     mock_repo = MagicMock()
     mock_repo.get = AsyncMock(side_effect=[queued, released])
+    mock_repo.claim_status_transition = AsyncMock(return_value=True)
     mock_repo.update_status = AsyncMock()
     mock_repo.promote_next_queued = AsyncMock()
     mock_dispatcher = MagicMock()
-    with patch.object(api_bookings._release_use_case, "_repo", mock_repo), \
-         patch.object(api_bookings._release_use_case, "_dispatcher", mock_dispatcher):
+    with (
+        patch.object(api_bookings._release_use_case, "_repo", mock_repo),
+        patch.object(api_bookings._release_use_case, "_dispatcher", mock_dispatcher),
+    ):
         resp = cl.delete(f"/api/bookings/{queued.id}")
 
     assert resp.status_code == 202
     assert resp.json()["status"] == "RELEASED"
-    assert mock_repo.update_status.call_args.args[2] == BookingStatus.RELEASED
+    assert mock_repo.claim_status_transition.call_args.args[2] == BookingStatus.RELEASED
     mock_dispatcher.dispatch_teardown.assert_not_called()  # nothing to tear down
     mock_repo.promote_next_queued.assert_not_called()  # cancelling frees no resource
 
 
 # ── Teardown/TTL path promotes the next queued booking ──────────────────────────
 
+
 def test_teardown_pooled_release_promotes_next():
     from app.tasks import teardown as teardown_mod
 
     booking = _booking(BookingStatus.READY, resource_type=ResourceType.STATIC_VM)
-    with patch.object(teardown_mod, "repo") as mock_repo, \
-         patch.object(teardown_mod, "terraform") as mock_tf, \
-         patch.object(teardown_mod, "SyncSessionLocal") as mock_sl:
+    with (
+        patch.object(teardown_mod, "repo") as mock_repo,
+        patch.object(teardown_mod, "terraform") as mock_tf,
+        patch.object(teardown_mod, "SyncSessionLocal") as mock_sl,
+    ):
         mock_sl.return_value.__enter__.return_value = MagicMock()
         mock_repo.sync_get = MagicMock(return_value=booking)
         mock_repo.sync_update_status = MagicMock()
@@ -190,6 +228,7 @@ def test_teardown_pooled_release_promotes_next():
 
 # ── QUEUED row rendering ────────────────────────────────────────────────────────
 
+
 def test_queued_row_shows_position_and_cancel(client):
     cl, fake_user = client
     queued = _booking(BookingStatus.QUEUED, user_id=str(fake_user.id))
@@ -197,7 +236,9 @@ def test_queued_row_shows_position_and_cancel(client):
 
     with patch("app.presentation.routes.bookings._repo") as mock_repo:
         mock_repo.get = AsyncMock(return_value=queued)
-        mock_repo.queue_positions = AsyncMock(side_effect=lambda session, bookings: {b.id: 2 for b in bookings})
+        mock_repo.queue_positions = AsyncMock(
+            side_effect=lambda session, bookings: {b.id: 2 for b in bookings}
+        )
         resp = cl.get(f"/bookings/{queued.id}/row")
 
     assert resp.status_code == 200
@@ -205,4 +246,4 @@ def test_queued_row_shows_position_and_cancel(client):
     assert "Cancel" in resp.text
     # QUEUED is in flight → live and reconciled by the page, with no per-row poll (#497)
     assert 'data-live="inflight"' in resp.text
-    assert 'hx-trigger=' not in resp.text
+    assert "hx-trigger=" not in resp.text
