@@ -30,9 +30,9 @@ While `terraform.destroy()` is executing, the worker SHALL actively renew the ex
 
 The system SHALL NOT force-unlock a Terraform state lock during teardown unless the worker actively holds the valid teardown execution lease token, preventing concurrent workers from force-unlocking live state locks.
 
-`teardown_vm_task` SHALL declare task-level unlimited retries (`max_retries=None` on the Celery task decorator) so that Celery's shared internal retry counter (`request.retries`) does not impose a hard limit on contention wait rescheduling. To prevent conflation of contention waiting with infrastructure failures:
-- Cloud destroy failures SHALL be tracked via an explicit, separately persisted Redis counter (`teardown-destroy-attempts:{booking_id}` with TTL), allowing up to 2 failure retries (`TEARDOWN_MAX_DESTROY_RETRIES`). Contention rescheduling SHALL NOT increment this counter.
-- Database persistence failures in forced teardown SHALL be tracked via an explicit, separately persisted Redis counter (`teardown-db-attempts:{booking_id}` with TTL), allowing up to 2 persistence retries (`TEARDOWN_MAX_DB_RETRIES`).
+`teardown_vm_task` SHALL declare task-level unlimited retries (`max_retries=None` on the Celery task decorator) so that Celery's shared internal retry counter (`request.retries`) does not impose a hard limit on contention wait rescheduling. To prevent conflation of contention waiting with infrastructure failures and ensure strictly bounded failure retries:
+- Cloud destroy failures SHALL be tracked via an explicit, separately persisted Redis counter (`teardown-destroy-attempts:{booking_id}`) with an explicitly safe multi-day lifetime (7 days, refreshed by the lease heartbeat during execution) that survives the full teardown lifecycle without premature expiration between failed attempts. The counter SHALL be cleared upon reaching terminal status (`RELEASED` or `FAILED`) and upon administrative force-release recovery. The task SHALL allow at most `TEARDOWN_MAX_DESTROY_RETRIES` (2) destroy failure retries before converging to `FAILED`. Contention rescheduling SHALL NOT increment this counter.
+- Database persistence failures in forced teardown SHALL be tracked via an explicit, separately persisted Redis counter (`teardown-db-attempts:{booking_id}`) with an explicitly safe multi-day lifetime (7 days), cleared upon reaching `RELEASED` or upon retry exhaustion before reraising `exc`, allowing at most `TEARDOWN_MAX_DB_RETRIES` (2) persistence retries.
 
 If another worker actively holds the teardown execution lease upon task delivery, the competing task SHALL wait with bounded backoff for the in-flight teardown to finish:
 - If the holder completes and commits `RELEASED` (or settles in `FAILED` for non-forced teardown), the competing task SHALL observe the terminal status and complete cleanly as an acknowledged no-op.
@@ -64,6 +64,12 @@ If another worker actively holds the teardown execution lease upon task delivery
 - **AND** the active worker subsequently terminates, allowing the waiting task to acquire the lease and execute `terraform.destroy()`
 - **AND** `terraform.destroy()` fails with a transient cloud error
 - **THEN** the task retries with its full destroy failure retry budget intact without raising `MaxRetriesExceededError`
+
+#### Scenario: Long delay between failed destroy attempts does not reset retry counter
+- **WHEN** a provisioned VM teardown attempt fails and records an initial destroy failure in the persisted counter
+- **AND** the subsequent destroy attempt runs for longer than 3600 seconds or is delayed before failing
+- **THEN** the failure counter does not expire or reset to 1
+- **AND** the second failure increments the persisted count to 2 (and the third failure marks `FAILED`), strictly enforcing the two-retry ceiling
 
 #### Scenario: Worker crash during VM teardown allows safe redelivery after lease expiry
 - **WHEN** a worker executing VM teardown terminates unexpectedly while holding the execution lease before database status is updated to `RELEASED`
@@ -119,7 +125,7 @@ When teardown of a provisioned VM encounters a cloud provider or infrastructure 
 ### Requirement: Force teardown suppresses cloud destroy errors but retries persistence failures
 When force teardown is executed for a VM booking, the system SHALL suppress and log cloud provider destroy errors (including missing resources, out-of-band deletions, or provider API errors), ensuring the teardown can proceed even when the cloud infrastructure is absent or broken.
 
-However, the system SHALL NOT suppress database persistence errors during forced teardown. If the database update to `RELEASED` or clearing the status message fails, the task SHALL track persistence failures in an explicit, separately persisted Redis counter (`teardown-db-attempts:{booking_id}`) and explicitly invoke task retries via Celery (`raise self.retry(exc=exc)`), bounded by `TEARDOWN_MAX_DB_RETRIES` (2). The task SHALL NOT return successfully when the database record failed to reach `RELEASED`, and SHALL NOT allow persistence exceptions to escape without scheduling a bounded retry. When persistence retries are exhausted on persistent database failure, Celery SHALL reraise the original persistence exception and mark the task as failed.
+However, the system SHALL NOT suppress database persistence errors during forced teardown. If the database update to `RELEASED` or clearing the status message fails, the task SHALL track persistence failures in an explicit, separately persisted Redis counter (`teardown-db-attempts:{booking_id}`) with an explicitly safe multi-day lifetime (7 days) and explicitly invoke task retries via Celery (`raise self.retry(exc=exc)`), bounded by `TEARDOWN_MAX_DB_RETRIES` (2). The task SHALL NOT return successfully when the database record failed to reach `RELEASED`, and SHALL NOT allow persistence exceptions to escape without scheduling a bounded retry. When persistence retries are exhausted on persistent database failure, the Redis counter SHALL be cleared and Celery SHALL reraise the original persistence exception and mark the task as failed.
 
 #### Scenario: Force teardown when cloud resource is already destroyed or missing
 - **WHEN** force teardown is executed for a booking whose underlying cloud resource does not exist or raises an error indicating the resource is gone
@@ -136,6 +142,11 @@ However, the system SHALL NOT suppress database persistence errors during forced
 #### Scenario: Exhausted retries on persistent database failure in forced teardown
 - **WHEN** forced teardown persistently fails database updates exceeding the separately persisted persistence retry limit (2 retries)
 - **THEN** Celery reraises the underlying database persistence exception and records task failure without reporting a successful release
+
+#### Scenario: Delay between forced teardown persistence retries does not reset persistence counter
+- **WHEN** forced teardown encounters a database persistence failure
+- **AND** a long delay occurs before the subsequent persistence retry fails
+- **THEN** the persistence failure counter retains its count and exhausts after 2 retries, reraising the persistence exception
 
 ### Requirement: Repeated release requests for bookings and environments behave safely
 When a user or API caller requests the release of a booking that is already in `RELEASED` or `RELEASING` status without force privileges, the system SHALL reject the request with a conflict error without changing booking status or dispatching redundant tasks.
