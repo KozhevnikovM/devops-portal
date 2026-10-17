@@ -38,15 +38,21 @@ Several concrete hazards exist in the current implementation:
 2. **Per-booking execution lease and mutual exclusion (concurrent deliveries):**
    Simply skipping `RELEASING` is invalid because API/TTL marks the booking `RELEASING` prior to task dispatch. To prevent concurrent duplicate deliveries from executing simultaneous `terraform.destroy()` calls:
    - Introduce a Redis-backed teardown execution lease (`teardown-lock:{booking_id}`) with bounded TTL `settings.VCD_TOKEN_LOCK_TTL`, mirroring `provisioning_lock`.
-   - Before executing `terraform.destroy()`, `teardown_vm_task` attempts to acquire the lease atomically (`SET key token NX EX VCD_TOKEN_LOCK_TTL`).
-   - If the lease is held by another live worker: the competing task does not execute destroy and does not force-unlock the state lock. It polls with bounded wait for the active destroy to complete. Once the holder commits `RELEASED`, the competing task re-reads status, observes `RELEASED`, and exits cleanly as a no-op.
-   - Crash recovery: If a worker terminates unexpectedly (OOM, SIGKILL, container restart) while holding the teardown lease before reaching `RELEASED`, the lease expires automatically upon TTL expiration. Subsequent redeliveries or administrative recovery acquire the lease and drive teardown to completion.
-   - The execution lease is released in a `finally` block on task completion or failure.
+   - **Unique token and acquisition**: Before executing `terraform.destroy()`, `teardown_vm_task` generates a unique owner token (`uuid.uuid4().hex`) and attempts to acquire the lease atomically (`SET key token NX EX VCD_TOKEN_LOCK_TTL`).
+   - **Compare-and-delete (CAS) on release**: Releasing the lease in the `finally` block MUST NOT use an unconditional `DEL`. It executes an atomic Lua script verifying token ownership before deleting (`if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end`). This prevents a delayed or stale worker whose lease expired from inadvertently deleting a newer worker's active lease.
+   - **Heartbeat renewal and fail-closed semantics**: Cloud destroy operations can take several minutes and may exceed the base lease TTL. While `terraform.destroy()` executes, a background heartbeat periodically renews the lease TTL (e.g. extending every `VCD_TOKEN_LOCK_TTL // 3` seconds via Lua token check). If renewal fails or lease ownership is lost (e.g. network partition or node eviction), the worker fails closed: it immediately aborts the active destroy subprocess (SIGTERM/SIGKILL) and exits without updating database status (`RELEASED` or `FAILED`) and without deleting the Redis key, ensuring a stale worker never overwrites state or destroys resources while another worker has taken over.
+   - **State lock protection**: `TerraformVcdAdapter._destroy_state()` force-unlocks reported state locks to recover from stale locks left by crashes. To prevent concurrent workers from force-unlocking each other's live locks, force-unlock execution is strictly guarded: the adapter must verify that the active worker holds the valid teardown execution lease token. Workers lacking the active lease token are strictly forbidden from issuing `terraform force-unlock`.
+   - **Contention wait and Celery retry rescheduling**: If a competing task arrives and finds the lease held by another worker, it polls with bounded wait for the active destroy to complete:
+     - If the holder completes and commits `RELEASED` (or settles in `FAILED` for non-forced teardown), the competing task observes the terminal status and exits cleanly as an acknowledged no-op.
+     - If the holder crashes and its lease expires without renewal, the waiting task acquires the lease and executes teardown to completion.
+     - If the contention wait budget expires while the holder is still actively destroying (`booking.status == BookingStatus.RELEASING`), the competing task MUST NOT return success or treat the task as finished, as doing so would prematurely acknowledge message delivery while release is ongoing. Instead, it reschedules itself via Celery retry (`raise self.retry(countdown=30)`) with a dedicated contention retry budget decoupled from destroy failure retries (`max_retries=None` or dedicated counter), ensuring it does not consume `max_retries=2` intended for infrastructure failures.
 
 *Alternatives considered:*
 - Catching `IllegalStatusTransitionError`: Rejected because it invokes error handling, increments retry counters, and attempts to write `FAILED`.
 - Skipping `RELEASING` bookings: Rejected because legitimate release requests mark the booking `RELEASING` before dispatching the teardown task.
-- Relying solely on Terraform state locks: Rejected because `TerraformVcdAdapter._destroy_state()` force-unlocks state locks to recover from stale locks, which would force-unlock a live competing worker.
+- Unconditional `DEL` on release: Rejected because a stale worker whose lease timed out can delete a newer worker's valid lease, breaking mutual exclusion.
+- Relying solely on Terraform state locks: Rejected because `TerraformVcdAdapter._destroy_state()` force-unlocks state locks to recover from stale locks, which would force-unlock a live competing worker without execution lease token validation.
+- Acknowledging success upon contention timeout: Rejected because duplicate delivery would silently drop while teardown is still in progress and may fail.
 
 ### Decision 2: Atomic Single-Transaction Claim and Promotion for Pooled Resources Across All Entry Points
 Instead of relying on a read check prior to calling independent status update and promotion methods that commit separately, pooled resource release and queue promotion must execute atomically in a single database transaction:
@@ -108,6 +114,9 @@ In `teardown_vm_task(force=True)`:
    - Duplicate Celery delivery on `RELEASED` VM booking (verifying no-op).
    - Duplicate non-forced Celery delivery on `FAILED` VM booking (verifying no-op).
    - Concurrent duplicate Celery deliveries for the same `RELEASING` VM booking: verify teardown execution lease ensures only one worker executes `terraform.destroy()`, the competing delivery waits and cleanly exits as a no-op upon `RELEASED`, and no concurrent state-lock force-unlock occurs.
+   - Long-running destroy exceeding initial lease TTL: verify active heartbeat renewal maintains exclusive lease ownership throughout destroy execution.
+   - Stale worker losing lease fails closed: verify that when lease ownership is lost during destroy, the stale worker aborts destroy subprocess, skips DB status updates, does not delete competitor's lease token via CAS, and does not force-unlock competitor's live Terraform state lock.
+   - Contention wait timeout rescheduling: verify competing task on an active teardown does not acknowledge success when wait budget expires, and reschedules via Celery retry with countdown without consuming destruction failure retry budget.
    - Worker crash recovery during VM teardown: simulate worker crash while holding the execution lease, verify redelivery acquires the lease after TTL expiration and completes teardown to `RELEASED`.
    - Duplicate delivery on `RELEASED` pooled resource (verifying no duplicate promotion).
    - Transient cloud destroy error retry and convergence to `FAILED` on retry exhaustion.
@@ -125,7 +134,7 @@ In `teardown_vm_task(force=True)`:
 ## Risks / Trade-offs
 
 - **[Risk] Concurrent duplicate VM teardown deliveries racing Terraform destroy**
-  → *Mitigation*: Redis-backed teardown execution lease (`teardown-lock:{booking_id}`) with bounded TTL guarantees mutual exclusion, preventing concurrent `terraform.destroy()` invocations and avoiding destructive state-lock force-unlock races while enabling automatic recovery on worker crashes.
+  → *Mitigation*: Redis-backed teardown execution lease (`teardown-lock:{booking_id}`) with bounded TTL, token-checked CAS release, heartbeat renewal with fail-closed cancellation, state-lock protection requiring lease token, and contention retry rescheduling guarantees mutual exclusion, preventing concurrent `terraform.destroy()` invocations and avoiding destructive state-lock force-unlock races while enabling safe redelivery.
 - **[Risk] High concurrency on pooled resource release across API and background tasks**
   → *Mitigation*: Row locking (`with_for_update`) within a single database transaction combining release claim and queue promotion guarantees strict serialization across all entry points.
 - **[Risk] Transient database failure during forced teardown**

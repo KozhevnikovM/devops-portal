@@ -24,18 +24,40 @@ When a non-forced teardown task executes for a booking that is in `FAILED` statu
 ### Requirement: Concurrent VM teardown execution enforces mutual exclusion via execution lease
 The system SHALL enforce per-booking mutual exclusion during provisioned VM teardown so that concurrent duplicate task deliveries cannot execute simultaneous `terraform.destroy()` operations on the same workspace.
 
-Before initiating Terraform destruction, `teardown_vm_task` SHALL acquire a bounded teardown execution lease (with TTL `VCD_TOKEN_LOCK_TTL`) for the target booking. If another worker actively holds the teardown lease, the competing delivery SHALL NOT execute `terraform.destroy()` and SHALL NOT attempt to force-unlock the state lock. The competing task SHALL wait with bounded backoff for the in-flight teardown to finish, and upon completion of the holder, SHALL observe the `RELEASED` status and complete cleanly as a no-op.
+Before initiating Terraform destruction, `teardown_vm_task` SHALL acquire a bounded teardown execution lease with a unique owner token for the target booking. The lease SHALL be released exclusively via an atomic token-checked compare-and-delete (CAS) operation, preventing a stale worker from deleting a subsequent worker's lease.
 
-If a worker crashes, is terminated, or encounters an unhandled runtime error while holding the teardown execution lease, the lease SHALL expire automatically after its bounded TTL. Following lease expiration, a redelivered teardown task or administrative force-release SHALL be permitted to acquire the lease and execute teardown to completion.
+While `terraform.destroy()` is executing, the worker SHALL actively renew the execution lease via a periodic heartbeat loop. If lease renewal fails or ownership is lost, the worker SHALL fail closed: immediately aborting the active destroy subprocess and exiting without performing database status updates (`RELEASED` or `FAILED`).
+
+The system SHALL NOT force-unlock a Terraform state lock during teardown unless the worker actively holds the valid teardown execution lease token, preventing concurrent workers from force-unlocking live state locks.
+
+If another worker actively holds the teardown execution lease upon task delivery, the competing task SHALL wait with bounded backoff for the in-flight teardown to finish:
+- If the holder completes and commits `RELEASED` (or settles in `FAILED` for non-forced teardown), the competing task SHALL observe the terminal status and complete cleanly as an acknowledged no-op.
+- If the active holder terminates unexpectedly and its lease expires without renewal, the waiting task SHALL acquire the lease and execute teardown to completion.
+- If the bounded contention wait expires while the holder is still active and heartbeating, the competing task SHALL NOT acknowledge completion or report success; instead, it SHALL reschedule execution via Celery retry with a countdown, without consuming the task's destruction failure retry budget (`max_retries`).
 
 #### Scenario: Concurrent duplicate teardown deliveries for RELEASING VM
 - **WHEN** two worker tasks concurrently execute teardown for the same provisioned VM in `RELEASING` status
 - **THEN** exactly one task acquires the execution lease and executes `terraform.destroy()`
 - **AND** the competing task waits for the lease, observes the subsequent `RELEASED` transition, and exits as a no-op without running a concurrent destroy or force-unlocking the active state lock
 
+#### Scenario: Long-running destroy maintains exclusive lease via heartbeat renewal
+- **WHEN** a provisioned VM teardown runs longer than the base lease TTL
+- **THEN** the active worker renews the lease periodically via heartbeat, maintaining exclusive mutual exclusion throughout the destroy
+
+#### Scenario: Worker losing lease fails closed and avoids deleting competitor lease or state lock
+- **WHEN** an active worker loses lease ownership due to simulated heartbeat renewal failure while a second worker acquires the lease
+- **THEN** the stale worker aborts its destroy subprocess and skips database updates
+- **AND** the stale worker's release handler does not delete the second worker's lease token via compare-and-delete
+- **AND** the stale worker does not force-unlock the second worker's live Terraform state lock
+
+#### Scenario: Contention wait timeout reschedules task via Celery retry
+- **WHEN** a competing teardown task's bounded wait budget expires while the holder is still actively destroying the VM
+- **THEN** the competing task does not acknowledge success or return early
+- **AND** the task reschedules itself via Celery retry with a countdown without consuming the destruction failure retry budget
+
 #### Scenario: Worker crash during VM teardown allows safe redelivery after lease expiry
 - **WHEN** a worker executing VM teardown terminates unexpectedly while holding the execution lease before database status is updated to `RELEASED`
-- **THEN** the execution lease expires after its bounded TTL
+- **THEN** heartbeat renewal ceases and the execution lease expires after its bounded TTL
 - **AND** a redelivered teardown task acquires the lease and transitions the booking to `RELEASED`
 
 ### Requirement: Pooled resource release uses an atomic transition claim and never double-promotes

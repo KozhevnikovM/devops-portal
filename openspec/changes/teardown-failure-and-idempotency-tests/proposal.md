@@ -6,7 +6,11 @@ In a distributed infrastructure orchestration system with asynchronous Celery wo
 
 - Specify and test idempotency guarantees for teardown execution across all resource types: provisioned VMs, static VMs, and namespaces.
 - Require `teardown_vm_task` to handle bookings already in `RELEASED` status, or non-forced executions on already `FAILED` bookings, as safe no-ops, preventing illegal transitions and unnecessary task retries upon duplicate Celery delivery.
-- Enforce per-booking mutual exclusion and an execution lease with crash recovery during provisioned VM teardown, ensuring that concurrent duplicate Celery deliveries on `RELEASING` bookings never execute simultaneous `terraform.destroy()` operations on the same workspace and never force-unlock each other's live Terraform state locks.
+- Enforce per-booking mutual exclusion and a heartbeated execution lease with crash recovery during provisioned VM teardown:
+  - Workers acquire a unique owner token via atomic `SET ... NX EX` and release exclusively via token-checked compare-and-delete (CAS Lua script) to prevent deleting subsequent locks upon lease loss.
+  - Active lease renewal / heartbeat runs during `terraform.destroy()`, failing closed (aborting destroy subprocess without status updates) if renewal or ownership is lost, ensuring a long-running destroy never loses exclusive mutual exclusion or permits concurrent execution.
+  - State lock force-unlocking is strictly guarded by requiring the worker to hold the active lease token, preventing concurrent workers from force-unlocking live Terraform state locks.
+  - Competing deliveries polling on an active lease that time out before reaching a terminal status reschedule via Celery retry (countdown) without acknowledging success or consuming failure retry limits.
 - Guarantee that releasing pooled resources (namespaces and static VMs) executes the release claim and queue promotion within a single atomic database transaction across all release entry points (Celery worker, use case, and beat TTL task). The atomic operation preserves the parent-before-child lock order (`_async_release_target` / `_sync_release_target`) to serialize environment child releases with deployment reporting and extensions, and enforces active/free pool eligibility checks (`_free_resource_stmt`) so that queued waiters are promoted only when eligible active capacity exists, while preserving the public API's existing 409 Conflict behavior for repeated release requests.
 - Ensure `ReleaseEnvironmentUseCase` guards in-flight child bookings: child bookings already in `RELEASING` status are not re-dispatched for teardown on repeated environment release calls, reserving forced re-dispatch exclusively for explicit administrative recovery.
 - Clarify failure semantics: distinguish successfully freed resources (`RELEASED`) from failed states (`FAILED` where cloud resources may still linger), and specify administrative force-release recovery for failed teardown children.
@@ -15,6 +19,9 @@ In a distributed infrastructure orchestration system with asynchronous Celery wo
 - Add comprehensive unit, orchestration, and concurrent integration test suites covering:
   - Releasing the same booking or environment twice.
   - Concurrently releasing the same provisioned VM across two workers, asserting mutual exclusion with only one active destroy and safe redelivery after a crash.
+  - Long-running destroy exceeding initial lease TTL with active heartbeat maintaining exclusive ownership.
+  - Stale worker losing lease failing closed without deleting competitor's lock or force-unlocking competitor's state lock.
+  - Contention wait timeout rescheduling via Celery retry without acknowledging success.
   - Concurrently releasing the same pooled resource across workers with queued bookings waiting.
   - Retrying teardown after transient or partial cloud failure.
   - Executing teardown when the cloud resource is already free or missing.
