@@ -16,7 +16,7 @@
 
 - [x] 3.1 Run the repaired test ≥50 consecutive iterations in Chromium with zero failures
 - [x] 3.2 Run the full browser suite in required mode (`REQUIRE_BROWSER_TESTS=1 pytest tests/ -m browser`) and confirm it passes
-- [ ] 3.3 Confirm a green `browser-tests` run on the PR in CI; if the flake recurs, reopen with the captured failure state rather than adding waits
+- [x] 3.3 Confirm a green `browser-tests` run on the PR in CI; if the flake recurs, reopen with the captured failure state rather than adding waits
 
 ## 4. Quality gates and validation
 
