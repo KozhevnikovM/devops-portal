@@ -29,8 +29,9 @@ Every worker SHALL acquire the lease using a unique owner token (`uuid.uuid4().h
 In `ProvisionBooking`, the worker SHALL acquire `workspace-lock:{booking_id}` *before* evaluating the booking's post-slot status guard, ensuring the entire sequence from status check through status update and `terraform.apply()` execution is guarded by the lease:
 - If acquisition fails because another task holds the lease, provisioning SHALL defer and reschedule execution.
 - Under the protection of the held lease, `ProvisionBooking` SHALL query the booking status from the database. If `booking.status in _TERMINAL_OR_RELEASING` (including `RELEASING`, `RELEASED`, `FAILED`), the worker SHALL release the lease via CAS and skip execution as `SKIPPED_RELEASED`.
-- If eligible, the worker SHALL update status to `PROVISIONING`, launch lease heartbeat renewal, and proceed to `terraform.apply()`.
-- On completion (or exception), the worker SHALL release `workspace-lock:{booking_id}` via CAS.
+- Immediately after acquiring the lease, the worker SHALL start token-checked heartbeat renewal before status queries, DB writes, configuration assembly, or other setup.
+- Before launching `terraform.apply()`, and before final status/audit writes after apply, the worker SHALL atomically verify the same lease token/epoch is still owned. Heartbeat renewal SHALL continue through output processing and the final database commit.
+- The worker SHALL release `workspace-lock:{booking_id}` via CAS only after the entire protected critical section completes.
 
 In `teardown_vm_task`, before initiating Terraform destruction, the worker SHALL attempt to acquire `workspace-lock:{booking_id}`:
 - If held by an active provisioning worker or another teardown worker, the competing task SHALL wait with bounded backoff and reschedule via Celery retry with countdown (`self.retry(countdown=30)`) upon contention timeout, without consuming the destruction failure retry budget.
@@ -54,7 +55,7 @@ If another worker actively holds the workspace execution lease upon teardown tas
 
 `teardown_vm_task` SHALL be configured with late message acknowledgment (`task_acks_late=True` and `task_reject_on_worker_lost=True`) so that a hard worker crash causes Celery to reject and redeliver the message upon worker loss rather than silently losing it. The broker visibility timeout (`CELERY_VISIBILITY_TIMEOUT`) SHALL be configured to be greater than or equal to `settings.TEARDOWN_MAX_DURATION_SECONDS` (documenting the maximum expected single teardown attempt duration across long-running destroys, rather than the base lease TTL) to prevent premature redelivery while a worker is actively destroying.
 
-The system SHALL also provide an idempotent startup reconciler in `app/main.py` lifespan and a periodic beat task `reap_stale_teardown` that scan for `RELEASING` bookings whose the supervisor confirms there is no active Terraform process group or workspace reservation, and re-dispatch teardown to ensure eventual completion without requiring admin intervention. Automatic startup and beat reconcilers SHALL NOT reset or delete existing Redis failure counters (`teardown-destroy-attempts`, `teardown-db-attempts`); if a re-dispatched booking has already exhausted destroy retries, the task SHALL skip repeating `terraform.destroy()` and complete the `FAILED` database commit. When forced teardown is initiated, the system SHALL durably record force intent (`teardown-force:{booking_id}`); automatic reconcilers SHALL inspect this intent (or booking status `FAILED`) and re-dispatch with `force=True`. Only explicit administrative force release (`ForceReleaseBookingUseCase`) SHALL reset failure counters and force-intent keys.
+The system SHALL also provide an idempotent startup reconciler in `app/main.py` lifespan and a periodic beat task `reap_stale_teardown` that scan for `RELEASING` bookings only after the supervisor confirms there is no active Terraform process group or workspace reservation, and re-dispatch teardown to ensure eventual completion without requiring admin intervention. Automatic startup and beat reconcilers SHALL NOT reset or delete existing Redis failure counters (`teardown-destroy-attempts`, `teardown-db-attempts`); if a re-dispatched booking has already exhausted destroy retries, the task SHALL skip repeating `terraform.destroy()` and complete the `FAILED` database commit. When forced teardown is initiated, the system SHALL durably record force intent (`teardown-force:{booking_id}`); automatic reconcilers SHALL inspect this intent (or booking status `FAILED`) and re-dispatch with `force=True`. Only explicit administrative force release (`ForceReleaseBookingUseCase`) SHALL reset failure counters and force-intent keys.
 
 #### Scenario: Concurrent duplicate teardown deliveries for RELEASING VM
 - **WHEN** two worker tasks concurrently execute teardown for the same provisioned VM in `RELEASING` status
@@ -115,7 +116,7 @@ The system SHALL also provide an idempotent startup reconciler in `app/main.py` 
 - **WHEN** a worker crashes during forced teardown of a booking with a broken/missing cloud resource, where `teardown-force:{booking_id}` was recorded in Redis
 - **AND** startup recovery or the beat reaper re-dispatches teardown
 - **THEN** the reconciler observes the persisted force intent and re-dispatches with `force=True`
-- **AND** forced teardown suppresses cloud errors and commits `RELEASED`
+- **AND** forced teardown suppresses only bona fide cloud deletion errors and commits `RELEASED` after supervisor confirmation that no conflicting Terraform process remains
 
 #### Scenario: Periodic stale teardown reaper re-dispatches stranded RELEASING booking
 - **WHEN** a booking is stuck in `RELEASING` beyond `STALE_TEARDOWN_THRESHOLD_MINUTES` without an active workspace execution lease
@@ -207,17 +208,24 @@ When teardown of a provisioned VM encounters a cloud provider or infrastructure 
 - **AND** the Redis counter is deleted only after the `FAILED` status transition commits
 
 ### Requirement: Force teardown suppresses cloud destroy errors but retries persistence failures
-When force teardown is executed for a VM booking, the system SHALL suppress and log cloud provider destroy errors (including missing resources, out-of-band deletions, or provider API errors), ensuring the teardown can proceed even when the cloud infrastructure is absent or broken.
+When force teardown is executed for a VM booking, the system SHALL suppress and log only bona fide cloud/provider destroy errors (including missing resources, out-of-band deletions, or provider API errors), and only after the supervisor establishes that no conflicting Terraform process is live.
+
+Supervisor/fencing failures (including an unavailable supervisor, unknown process liveness, lost lease ownership, or an active prior Terraform process) SHALL use a distinct non-suppressible safety error category. Even with `force=True`, the task SHALL NOT suppress these failures or transition the booking to `RELEASED`; it SHALL retain the current booking state and report/retry the safety failure until authoritative supervisor confirmation permits recovery.
 
 However, the system SHALL NOT suppress database persistence errors during forced teardown. If the database update to `RELEASED` or clearing the status message fails, the task SHALL track persistence failures in an explicit, separately persisted Redis counter (`teardown-db-attempts:{booking_id}`) with an explicitly safe multi-day lifetime (7 days) and explicitly invoke task retries via Celery (`raise self.retry(exc=exc)`), bounded by `TEARDOWN_MAX_DB_RETRIES` (2). The task SHALL NOT return successfully when the database record failed to reach `RELEASED`, and SHALL NOT allow persistence exceptions to escape without scheduling a bounded retry. The Redis counter SHALL be deleted only after the database update to `RELEASED` has been durably committed to PostgreSQL, or upon administrative recovery. When persistence retries are exhausted on persistent database failure, Celery SHALL reraise the original persistence exception and mark the task as failed without prematurely deleting the counter or reporting success.
 
 #### Scenario: Force teardown when cloud resource is already destroyed or missing
 - **WHEN** force teardown is executed for a booking whose underlying cloud resource does not exist or raises an error indicating the resource is gone
-- **THEN** the booking status transitions to `RELEASED` in the database and any cloud destroy error is suppressed
+- **THEN** if supervisor checks confirm no conflicting Terraform process, the booking status transitions to `RELEASED` and the bona fide cloud destroy error is suppressed
 
 #### Scenario: Force teardown clears failure message
 - **WHEN** force teardown is executed for a booking currently in `FAILED` status with an error status message
 - **THEN** the booking transitions to `RELEASED` and the status message is cleared
+
+#### Scenario: Forced teardown with unknown supervisor status fails closed
+- **WHEN** `force=True` is requested while the supervisor is unavailable, process liveness is unknown, or a prior Terraform process remains active
+- **THEN** the adapter raises a distinct non-suppressible safety error
+- **AND** the task does not mark the booking `RELEASED` or report successful teardown
 
 #### Scenario: Database persistence failure during forced teardown triggers Celery retry
 - **WHEN** force teardown is executed and the cloud destroy finishes (or is suppressed), but the database update to `RELEASED` encounters a transient database error
